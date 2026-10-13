@@ -1,0 +1,31 @@
+/* Design tokens */
+:root {
+  --page-bg: #f3f4f6; /* light slate background */
+  --surface: #ffffff; /* content surfaces */
+  --nav-bg: #0b1220; /* dark navy */
+  --primary: #0d9488; /* teal */
+  --primary-600: #0f766e;
+  --amber: #f59e0b;
+  --danger: #ef4444;
+  --muted: #6b7280;
+  --border: #e6edf0;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --shadow-sm: 0 6px 18px rgba(12, 15, 20, 0.06);
+  --gap: 16px;
+  --max-content-width: 1200px;
+  --text-dark: #0f172a;
+  --text-muted: #475569;
+  --success: #16a34a;
+  --glass: rgba(255,255,255,0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #0b0f14;
+    --surface: #0f1724;
+    --nav-bg: #061021;
+    --text-dark: #e6eef6;
+    --text-muted: #93a0b2;
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "sales",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
+    "@supabase/supabase-js": "^2.117.3",
+    "axios": "^1.20.0",
+    "dayjs": "^1.11.23",
+    "lucide-react": "^1.55.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-hook-form": "^7.90.0",
+    "react-router-dom": "^6.30.6",
+    "recharts": "^3.10.1",
+    "zod": "^4.6.6"
+  }
+}

@@ -1,0 +1,53 @@
+.responsive-select,
+.responsive-input {
+  display: inline-block;
+  vertical-align: middle;
+  min-width: 160px;
+  max-width: 320px;
+  width: auto;
+  padding: 8px 10px;
+  border: 1px solid #e6edf0;
+  border-radius: 8px;
+  background: #fff;
+  color: #173642;
+  font: inherit;
+  line-height: 1.2;
+  box-shadow: none;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .08s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+/* add a custom arrow using background SVG, aligns right */
+.responsive-select {
+  padding-right: 36px;
+  background-image: linear-gradient(45deg, transparent 50%, #6b7280 50%), linear-gradient(135deg, #6b7280 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(50% - 6px), calc(100% - 14px) calc(50% - 6px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.responsive-select:focus,
+.responsive-input:focus {
+  border-color: #36a39a;
+  box-shadow: 0 0 0 3px rgba(15, 136, 125, .08);
+  outline: none;
+}
+
+/* responsive behaviour: full width on narrow screens */
+@media (max-width: 720px) {
+  .responsive-select,
+  .responsive-input {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+/* tighter size when used in compact filter bars */
+.filter-compact .responsive-select,
+.filter-compact .responsive-input {
+  min-width: 140px;
+  max-width: 220px;
+}
