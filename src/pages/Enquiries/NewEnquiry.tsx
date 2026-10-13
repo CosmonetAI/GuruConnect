@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { NewEnquirySchema, type NewEnquiryForm } from '../../schemas/enquirySchema'
 import { createEnquiry, getDemoSalesOptions } from '../../services/demoService'
+import { getWalkinVisit, isWalkinDemoMode, markWalkinConverted } from '../../services/walkinService'
 import ConversationRecorder from './ConversationRecorder'
 import './NewEnquiry.css'
 
@@ -176,8 +177,53 @@ function SectionHeader({
 
 export default function NewEnquiry() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const walkinConversion = (location.state as {
+    walkinConversion?: {
+      visitId: string
+      visitNumber: string
+      customerName: string
+      phone: string
+      email: string
+      company: string
+      assignedExecutive: string
+      purpose: string
+      productOrService: string
+      quantity: string
+      budget: string
+      timeline: string
+      requirements: string
+      notes: string
+      followUpDate: string
+    }
+  } | null)?.walkinConversion
   const [draft] = useState(readDraft)
-  const [form, setForm] = useState<NewEnquiryForm>(draft.values)
+  const [form, setForm] = useState<NewEnquiryForm>(() => {
+    if (!walkinConversion) return draft.values
+    const product = walkinConversion.productOrService
+    return {
+      ...draft.values,
+      customerName: walkinConversion.customerName,
+      phone: walkinConversion.phone,
+      email: walkinConversion.email,
+      channel: 'Retail Walk-in',
+      assignedExecutive: walkinConversion.assignedExecutive,
+      company: walkinConversion.company,
+      customerNotes: `${walkinConversion.purpose} · Visit ${walkinConversion.visitNumber}\n${walkinConversion.notes}`.trim(),
+      requirementsSummary: walkinConversion.requirements,
+      followUpDate: walkinConversion.followUpDate,
+      productRequirements: [{
+        ...defaultValues.productRequirements[0],
+        product,
+        quantity: /^\d+$/.test(walkinConversion.quantity) && Number(walkinConversion.quantity) > 0
+          ? Number(walkinConversion.quantity)
+          : 0,
+        budget: walkinConversion.budget,
+        timeline: walkinConversion.timeline,
+        notes: walkinConversion.requirements,
+      }],
+    }
+  })
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formMessage, setFormMessage] = useState(draft.warning)
   const [isSaving, setIsSaving] = useState(false)
@@ -246,6 +292,17 @@ export default function NewEnquiry() {
     setIsSaving(true)
     try {
       const data = parsed.data
+      if (walkinConversion) {
+        if (!isWalkinDemoMode()) {
+          throw new Error('The existing enquiry service is demo-only. Configure its production API before converting a walk-in.')
+        }
+        const visit = await getWalkinVisit(walkinConversion.visitId)
+        if (!visit) throw new Error('The source walk-in visit could not be found. The enquiry was not created.')
+        if (visit.convertedEnquiryReference) {
+          navigate(`/walkins/${walkinConversion.visitId}`, { state: { confirmation: `This visit was already converted to enquiry ${visit.convertedEnquiryReference}.` } })
+          return
+        }
+      }
       const created = createEnquiry({
         customerName: data.customerName,
         phone: data.phone,
@@ -267,7 +324,9 @@ export default function NewEnquiry() {
         followUpDate: data.followUpDate,
         followUpOwner: data.followUpOwner,
         priority: data.priority,
+        sourceWalkinId: walkinConversion?.visitId,
       })
+      if (walkinConversion) await markWalkinConverted(walkinConversion.visitId, created.id)
       let draftCleanupMessage = ''
       try {
         sessionStorage.removeItem(draftStorageKey)
@@ -276,7 +335,7 @@ export default function NewEnquiry() {
       }
       navigate('/enquiries', {
         state: {
-          confirmation: `Enquiry ${created.id} was added to demo data in this browser session.${draftCleanupMessage}`,
+          confirmation: `Enquiry ${created.id} was added to demo data in this browser session.${walkinConversion ? ` Linked to walk-in ${walkinConversion.visitNumber}.` : ''}${draftCleanupMessage}`,
         },
       })
     } catch (error) {
@@ -337,6 +396,10 @@ export default function NewEnquiry() {
         <CircleHelp size={17} />
         <p><strong>Demo mode.</strong> Enquiries are kept in browser memory and reset on reload. Drafts are saved only for this browser tab. No database, audio storage, or transcription service is configured.</p>
       </div>
+      {walkinConversion && <div className="demo-notice" role="status">
+        <ClipboardList size={17} />
+        <p><strong>Review before converting.</strong> Customer and requirement details were transferred from walk-in {walkinConversion.visitNumber}. Confirm the branch, customer type, product, quantity, and all requirements before saving. The conversion is linked to the source visit and duplicate submissions are prevented.</p>
+      </div>}
 
       <div className="enquiry-workspace">
         <div className="enquiry-main-column">
@@ -445,7 +508,7 @@ export default function NewEnquiry() {
                       <input id={`sku-${index}`} placeholder="Not verified" value={item.sku} onChange={(event) => updateProduct(index, 'sku', event.target.value)} />
                     </Field>
                     <Field label="Quantity" htmlFor={`quantity-${index}`} error={errors[`productRequirements.${index}.quantity`]}>
-                      <input id={`quantity-${index}`} type="number" min="1" step="1" value={item.quantity} onChange={(event) => updateProduct(index, 'quantity', event.target.value === '' ? 0 : Number(event.target.value))} />
+                      <input id={`quantity-${index}`} type="number" min="1" step="1" placeholder="Confirm with customer" value={item.quantity || ''} onChange={(event) => updateProduct(index, 'quantity', event.target.value === '' ? 0 : Number(event.target.value))} />
                     </Field>
                     <Field label="Unit" htmlFor={`unit-${index}`}>
                       <select id={`unit-${index}`} value={item.unit} onChange={(event) => updateProduct(index, 'unit', event.target.value)}>
