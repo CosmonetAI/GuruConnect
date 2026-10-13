@@ -3,8 +3,8 @@
   --page-bg: #f3f4f6; /* light slate background */
   --surface: #ffffff; /* content surfaces */
   --nav-bg: #0b1220; /* dark navy */
-  --primary: #0d9488; /* teal */
-  --primary-600: #0f766e;
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
   --amber: #f59e0b;
   --danger: #ef4444;
   --muted: #6b7280;
@@ -20,12 +20,4 @@
   --glass: rgba(255,255,255,0.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page-bg: #0b0f14;
-    --surface: #0f1724;
-    --nav-bg: #061021;
-    --text-dark: #e6eef6;
-    --text-muted: #93a0b2;
-  }
-}
+:root { color-scheme: light; }

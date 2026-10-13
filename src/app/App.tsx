@@ -1,22 +1,30 @@
-import { type FC, type ReactNode } from 'react'
+import { lazy, Suspense, type FC, type ReactNode } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import AppLayout from '../layouts/AppLayout'
 import '../styles/forms.css'
-import Dashboard from '../pages/Dashboard/Dashboard'
-import EnquiriesList from '../pages/Enquiries/EnquiriesList'
-import NewEnquiry from '../pages/Enquiries/NewEnquiry'
-import EnquiryDetail from '../pages/Enquiries/EnquiryDetail'
-import Analytics from '../pages/Analytics'
-import Settings from '../pages/Settings'
+const Dashboard = lazy(() => import('../pages/Dashboard/Dashboard'))
+const EnquiriesList = lazy(() => import('../pages/Enquiries/EnquiriesList'))
+const NewEnquiry = lazy(() => import('../pages/Enquiries/NewEnquiry'))
+const EnquiryDetail = lazy(() => import('../pages/Enquiries/EnquiryDetail'))
+const Analytics = lazy(() => import('../pages/Analytics'))
+const Settings = lazy(() => import('../pages/Settings'))
+import Welcome from '../pages/Welcome'
+import ResetPassword from '../pages/ResetPassword'
+const Integrations = lazy(() => import('../pages/Integrations'))
+const Recordings = lazy(() => import('../pages/Recordings'))
+import { useOffice } from '../contexts/OfficeContext'
 
 const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
-  // Placeholder for real auth. Allow access in demo mode.
+  const { configured, user, workspace, loading, workspacesLoading } = useOffice()
+  if (!configured || loading || !user || workspacesLoading || !workspace) return <Welcome />
   return <>{children}</>
 }
 
 export default function App() {
   return (
-    <Routes>
+    <Suspense fallback={<p role="status" className="flow-panel">Opening screen…</p>}><Routes>
+      <Route path="/reset" element={<ResetPassword />} />
+      <Route path="/auth/callback" element={<Navigate to="/" replace />} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route
         path="/"
@@ -30,17 +38,13 @@ export default function App() {
         <Route path="enquiries" element={<EnquiriesList />} />
         <Route path="enquiries/new" element={<NewEnquiry />} />
         <Route path="enquiries/:id" element={<EnquiryDetail />} />
-        <Route path="review-queue" element={<div style={{padding:20}}>Review Queue (TODO)</div>} />
-        <Route path="quotations" element={<div style={{padding:20}}>Quotations (TODO)</div>} />
-        <Route path="quotations/new" element={<div style={{padding:20}}>New Quotation (TODO)</div>} />
-        <Route path="quotations/:id" element={<div style={{padding:20}}>Quotation detail (TODO)</div>} />
-        <Route path="follow-ups" element={<div style={{padding:20}}>Follow-ups (TODO)</div>} />
         <Route path="analytics" element={<Analytics />} />
-        <Route path="products" element={<div style={{padding:20}}>Products (TODO)</div>} />
-        <Route path="integrations" element={<div style={{padding:20}}>Integrations (TODO)</div>} />
+        <Route path="integrations" element={<Integrations />} />
+        <Route path="recordings" element={<Recordings />} />
+        <Route path="recordings/:id" element={<Recordings />} />
         <Route path="settings" element={<Settings />} />
       </Route>
-      <Route path="*" element={<div style={{padding:20}}>Not Found</div>} />
-    </Routes>
+      <Route path="*" element={<div style={{padding:20}}>Page not found. Open Overview or Enquiries from the navigation.</div>} />
+    </Routes></Suspense>
   )
 }

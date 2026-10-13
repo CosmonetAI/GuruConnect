@@ -1,410 +1,281 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
-import { AudioLines, Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Upload, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Upload } from 'lucide-react'
+import { useOffice } from '../../contexts/OfficeContext'
+import { duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
+import { recordingHooks } from '../../recording/apiHooks'
+import { listRecoveries, RecorderSession, recoverRecording, type CaptureState } from '../../recording/session'
+import type { Recovery } from '../../recording/outbox'
+import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
+import '../../styles/recording.css'
 
-type RecorderState = 'idle' | 'requesting' | 'recording' | 'paused' | 'finalizing' | 'ready' | 'error'
-type ClipInfo = { duration: number; name: string; consentTimestamp: string }
-
-const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+export interface ConversationRecorderProps {
+  customerName: string
+  title?: string
+  initialConversationId?: string | null
+  onConversationChange: (id: string | null) => void
+  onBusyChange?: (busy: boolean) => void
+  onSaved?: (id: string) => void
 }
+const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
+type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
+type Lease = { part_id: string; lease_token: string }
 
-function permissionMessage(error: unknown) {
-  if (error instanceof DOMException) {
-    if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-      return 'Microphone access was denied. Allow microphone access in your browser settings, then try again.'
-    }
-    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-      return 'No microphone was found. Connect a microphone and try again.'
-    }
-    if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-      return 'The microphone is unavailable or being used by another application.'
-    }
+export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved }: ConversationRecorderProps) {
+  const { user, workspace, loading, error: authError } = useOffice()
+  const [consent, setConsent] = useState(false)
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [capture, setCapture] = useState<CaptureState>(emptyCapture)
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState('')
+  const [source, setSource] = useState<'microphone' | 'upload'>('microphone')
+  const [conversationId, setConversationId] = useState<string | null>(initialConversationId || null)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  const [policy, setPolicy] = useState<{ engineId: string | null; ready: boolean } | null>(null)
+  const [policyLoading, setPolicyLoading] = useState(true)
+  const [recoveries, setRecoveries] = useState<Recovery[]>([])
+  const [progress, setProgress] = useState<UploadProgress | null>(null)
+  const [retryFile, setRetryFile] = useState(false)
+  const [operation, setOperation] = useState(false)
+  const mounted = useRef(false)
+  const generation = useRef(0)
+  const active = useRef<RecorderSession | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  const operationRef = useRef(false)
+  const idRef = useRef<string | null>(initialConversationId || null)
+  const notifiedSaved = useRef<string | null>(null)
+  const creation = useRef<{ key: string; body: object } | null>(null)
+  const tabId = useRef(crypto.randomUUID())
+  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved })
+  callbacks.current = { onConversationChange, onBusyChange, onSaved }
+  const captureActive = capture.capture === 'recording' || capture.capture === 'paused'
+  const unfinished = !!conversationId && !saved
+  const busy = operation || captureActive || capture.saving || unfinished || (!!file && !saved)
+  const blocked = loading || !user || !workspace || policyLoading || !policy?.ready
+
+  function disposeCapture() {
+    const session = active.current; active.current = null
+    void session?.dispose().catch(() => undefined)
   }
-  return error instanceof Error ? `Recording could not start: ${error.message}` : 'Recording could not start. Check your microphone and try again.'
-}
 
-export default function ConversationRecorder({ onClipChange, stopRef, isRecordingRef, onRecordingChange }: { onClipChange: (clip: ClipInfo | null) => void, stopRef?: MutableRefObject<(() => void) | null>, isRecordingRef?: MutableRefObject<boolean | null>, onRecordingChange?: (isRecording: boolean) => void }) {
-  const [recorderState, setRecorderState] = useState<RecorderState>('idle')
-  const [consentGiven, setConsentGiven] = useState(false)
-  const [consentTimestamp, setConsentTimestamp] = useState('')
-  const [clipInfo, setClipInfo] = useState<ClipInfo | null>(null)
-  const [previewUrl, setPreviewUrl] = useState('')
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [recordingError, setRecordingError] = useState('')
-  const [audioError, setAudioError] = useState('')
-  const streamRef = useRef<MediaStream | null>(null)
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const startTimeRef = useRef(0)
-  const carriedMillisecondsRef = useRef(0)
-  const busyRef = useRef(false)
-  const discardRef = useRef(false)
-  const activeConsentRef = useRef('')
-  const pausedRef = useRef(false)
-  const mountedRef = useRef(true)
-
-  const releaseTracks = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop())
-    streamRef.current = null
+  function showSaved(id: string) {
+    if (!mounted.current) return
+    setConversationId(id); idRef.current = id; setSaved(true); setPhase('saved'); setError(''); setRetryFile(false)
+    callbacks.current.onConversationChange(id)
+    if (notifiedSaved.current !== id) { notifiedSaved.current = id; callbacks.current.onSaved?.(id) }
   }
-
+  async function refreshRecoveries() {
+    if (!user || !workspace) return
+    const rows = await listRecoveries({ userId: user.id, workspaceId: workspace.id })
+    if (mounted.current) setRecoveries(rows)
+  }
   useEffect(() => {
-    if (recorderState !== 'recording') return
-    const interval = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((carriedMillisecondsRef.current + Date.now() - startTimeRef.current) / 1000))
-    }, 250)
-    return () => window.clearInterval(interval)
-  }, [recorderState])
-
-  useEffect(() => () => {
-    mountedRef.current = false
-    const recorder = recorderRef.current
-    if (recorder) {
-      recorder.ondataavailable = null
-      recorder.onstop = null
-      recorder.onerror = null
-      if (recorder.state !== 'inactive') {
-        try {
-          recorder.stop()
-        } catch {
-          // The component is unmounting; the tracks are still released below.
-        }
-      }
+    mounted.current = true
+    return () => {
+      mounted.current = false; generation.current++
+      abort.current?.abort(); disposeCapture()
+      callbacks.current.onBusyChange?.(false)
     }
-    releaseTracks()
   }, [])
-
+  useEffect(() => { callbacks.current.onBusyChange?.(busy) }, [busy])
   useEffect(() => {
-    if (!previewUrl) return
-    return () => URL.revokeObjectURL(previewUrl)
-  }, [previewUrl])
+    if (!file) { setPreview(''); return }
+    const url = URL.createObjectURL(file); setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+  useEffect(() => {
+    let current = true
+    if (!workspace || !user) { setPolicy(null); setPolicyLoading(false); return }
+    const controller = new AbortController(); setPolicyLoading(true); setError('')
+    void Promise.all([
+      request<EngineSettings>('/engine-settings', workspace.id, { signal: controller.signal }),
+      request<Page<Connection>>('/connections', workspace.id, { signal: controller.signal }),
+      listRecoveries({ userId: user.id, workspaceId: workspace.id }),
+    ]).then(([settings, connections, rows]) => {
+      if (!current) return
+      const engineId = settings.default_engine_id
+      setPolicy({ engineId, ready: localMode || (!!engineId && connections.items.some(item => item.engine_id === engineId && item.enabled && item.state === 'connected')) })
+      setRecoveries(rows)
+    }).catch(err => { if (current) { setPolicy(null); setError(message(err)) } }).finally(() => { if (current) setPolicyLoading(false) })
+    return () => { current = false; controller.abort(); generation.current++; abort.current?.abort(); disposeCapture() }
+  }, [user?.id, workspace?.id])
+  useEffect(() => {
+    if (!initialConversationId || !workspace || !user) return
+    const controller = new AbortController()
+    void request<Conversation>(`/conversations/${encodeURIComponent(initialConversationId)}`, workspace.id, { signal: controller.signal }).then(conversation => {
+      if (mounted.current && !controller.signal.aborted) {
+        idRef.current = conversation.id; setConversationId(conversation.id)
+        if (conversation.upload_state === 'saved') showSaved(conversation.id)
+      }
+    }).catch(err => { if (!controller.signal.aborted && mounted.current) setError(message(err)) })
+    return () => controller.abort()
+  }, [initialConversationId, user?.id, workspace?.id])
+  useEffect(() => {
+    if (!busy) return
+    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    const leave = (event: MouseEvent) => {
+      const target = event.target
+      const link = target instanceof Element ? target.closest('a') : null
+      if (link && link.getAttribute('href')?.startsWith('/')) { event.preventDefault(); event.stopPropagation(); setError('Finish saving or recover this audio before leaving the enquiry.') }
+    }
+    window.addEventListener('beforeunload', unload); document.addEventListener('click', leave, true)
+    return () => { window.removeEventListener('beforeunload', unload); document.removeEventListener('click', leave, true) }
+  }, [busy])
+  useEffect(() => {
+    if (capture.capture === 'stopped' && !capture.saving && !capture.error && capture.samples > 0 && idRef.current) showSaved(idRef.current)
+  }, [capture.capture, capture.saving, capture.error, capture.samples])
 
-  const clearClip = () => {
-    onClipChange(null)
-    setClipInfo(null)
-    setPreviewUrl('')
-    setElapsedSeconds(0)
-    setConsentTimestamp('')
-    activeConsentRef.current = ''
-    setAudioError('')
-    setRecordingError('')
-    setRecorderState('idle')
+  function validateStart() {
+    if (!consent) throw new Error('Confirm participant consent before recording or uploading audio.')
+    if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
+    if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
+    if (!policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
   }
-
-  const startRecording = async () => {
-    if (busyRef.current || recorderState === 'recording' || recorderState === 'paused') return
-    setRecordingError('')
-    if (!consentGiven) {
-      setRecordingError('Confirm that everyone on the call has agreed to recording before you start.')
-      return
+  async function createConversation(signal: AbortSignal) {
+    if (idRef.current) return idRef.current
+    if (!creation.current) creation.current = {
+      key: crypto.randomUUID(),
+      body: { customer_name: customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false },
     }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setRecorderState('error')
-      setRecordingError('Audio recording is not supported in this browser. You can still attach an audio file for local preview.')
-      return
-    }
-    busyRef.current = true
-    setRecorderState('requesting')
+    const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal })
+    signal.throwIfAborted()
+    idRef.current = conversation.id; setConversationId(conversation.id); callbacks.current.onConversationChange(conversation.id)
+    return conversation.id
+  }
+  function begin() {
+    generation.current++; abort.current?.abort(); disposeCapture()
+    operationRef.current = true; setOperation(true); setError('')
+    const controller = new AbortController(); abort.current = controller
+    return { controller, epoch: generation.current }
+  }
+  function isCurrent(epoch: number, controller: AbortController) { return mounted.current && epoch === generation.current && !controller.signal.aborted }
+  function finish(epoch: number, controller: AbortController) {
+    operationRef.current = false
+    if (isCurrent(epoch, controller)) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
+  }
+  async function startMicrophone() {
+    if (operationRef.current || captureActive || saved) return
+    try { validateStart() } catch (err) { setError(message(err)); return }
+    const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      if (!mountedRef.current) {
-        stream.getTracks().forEach((track) => track.stop())
-        return
-      }
-      streamRef.current = stream
-      const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type))
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-      const confirmedAt = new Date().toISOString()
-      activeConsentRef.current = confirmedAt
-      setConsentTimestamp(confirmedAt)
-      chunksRef.current = []
-      carriedMillisecondsRef.current = 0
-      discardRef.current = false
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data)
-      }
-      recorder.onerror = () => {
-        discardRef.current = true
-        releaseTracks()
-        setRecorderState('error')
-        setRecordingError('The browser encountered an error while recording. Try again or choose an audio file.')
-      }
-      recorder.onstop = () => {
-        releaseTracks()
-        if (discardRef.current) {
-          discardRef.current = false
-          return
-        }
-        const duration = Math.max(0, Math.round((carriedMillisecondsRef.current + (pausedRef.current ? 0 : Date.now() - startTimeRef.current)) / 1000))
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || chunksRef.current[0]?.type || 'application/octet-stream' })
-        if (blob.size === 0) {
-          setRecorderState('error')
-          setRecordingError('The recording is empty. Check your microphone and try recording again.')
-          return
-        }
-        const extension = blob.type.split(';')[0].split('/')[1]?.replace(/^x-/, '') || 'audio'
-        const name = `conversation-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`
-        const url = URL.createObjectURL(blob)
-        setPreviewUrl(url)
-        const clip = { duration, name, consentTimestamp: activeConsentRef.current }
-        setClipInfo(clip)
-        setElapsedSeconds(duration)
-        onClipChange(clip)
-        setRecorderState('ready')
-      }
-      recorder.start(250)
-      recorderRef.current = recorder
-      startTimeRef.current = Date.now()
-      pausedRef.current = false
-      setElapsedSeconds(0)
-      setRecorderState('recording')
-    } catch (error) {
-      releaseTracks()
-      setRecorderState('error')
-      setRecordingError(permissionMessage(error))
+      const hadId = !!idRef.current
+      const id = await createConversation(controller.signal)
+      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: hadId }), signal: controller.signal })
+      controller.signal.throwIfAborted()
+      const session = new RecorderSession({
+        scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
+        onState: state => {
+          if (!isCurrent(epoch, controller)) return
+          setCapture(state)
+          if (state.capture === 'recording' || state.capture === 'paused') setPhase('recording')
+          else if (state.saving) setPhase('saving')
+          else if (state.error) { setPhase('error'); setError(state.error); void refreshRecoveries().catch(() => undefined) }
+        },
+      })
+      active.current = session
+      await session.start()
+      if (!isCurrent(epoch, controller)) await session.dispose()
+    } catch (err) { if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error') } }
+    finally { finish(epoch, controller) }
+  }
+  async function changeCapture(action: 'pause' | 'resume' | 'stop') {
+    if (operationRef.current || !active.current) return
+    operationRef.current = true; setOperation(true); setError('')
+    try {
+      await active.current[action]()
+      if (action === 'stop' && idRef.current && mounted.current) showSaved(idRef.current)
+    } catch (err) {
+      // Keep Stop available after a pause/resume error; the session still owns its stream.
+      if (mounted.current) { setError(message(err)); if (action === 'stop') setPhase('error') }
     } finally {
-      busyRef.current = false
+      operationRef.current = false
+      if (mounted.current) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
     }
   }
-
-  const pauseRecording = () => {
-    const recorder = recorderRef.current
-    if (!recorder || recorder.state !== 'recording') return
+  function chooseFile(next: File | null) {
+    if (operation || captureActive || capture.saving || saved || recoveries.some(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)) return
+    setError('')
+    if (next && (!next.size || next.size > MAX_AUDIO_FILE_BYTES)) { setFile(null); setError('Choose a nonempty audio file up to 100 MB.'); return }
+    setFile(next); setSource('upload'); setProgress(null); setRetryFile(!!conversationId)
+  }
+  async function uploadFile(retry = false) {
+    if (operationRef.current || !file || saved) return
+    try { validateStart() } catch (err) { setError(message(err)); return }
+    const { controller, epoch } = begin(); setPhase('preparing'); setRetryFile(false)
     try {
-      carriedMillisecondsRef.current += Date.now() - startTimeRef.current
-      pausedRef.current = true
-      recorder.pause()
-      setElapsedSeconds(Math.floor(carriedMillisecondsRef.current / 1000))
-      setRecorderState('paused')
-    } catch (error) {
-      setRecorderState('error')
-      setRecordingError(error instanceof Error ? `Recording could not be paused: ${error.message}` : 'Recording could not be paused.')
-    }
+      const audio = await prepareAudioFile(file)
+      controller.signal.throwIfAborted()
+      const id = await createConversation(controller.signal)
+      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: retry }), signal: controller.signal })
+      controller.signal.throwIfAborted(); setPhase('uploading')
+      await uploadAudioFile({
+        scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
+        onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
+      })
+      if (isCurrent(epoch, controller)) showSaved(id)
+    } catch (err) {
+      if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error'); setRetryFile(!(err instanceof AudioUploadError) || !err.preserved) }
+    } finally { finish(epoch, controller) }
   }
-
-  const resumeRecording = () => {
-    const recorder = recorderRef.current
-    if (!recorder || recorder.state !== 'paused') return
+  async function recover(recovery: Recovery) {
+    if (operationRef.current || captureActive || !workspace || !user) return
+    const { controller, epoch } = begin(); setPhase('saving')
     try {
-      startTimeRef.current = Date.now()
-      pausedRef.current = false
-      recorder.resume()
-      setRecorderState('recording')
-    } catch (error) {
-      setRecorderState('error')
-      setRecordingError(error instanceof Error ? `Recording could not resume: ${error.message}` : 'Recording could not resume.')
-    }
-  }
-
-  const stopRecording = () => {
-    const recorder = recorderRef.current
-    if (!recorder || recorder.state === 'inactive') return
-    setElapsedSeconds(Math.floor((carriedMillisecondsRef.current + (recorder.state === 'recording' ? Date.now() - startTimeRef.current : 0)) / 1000))
-    setRecorderState('finalizing')
-    try {
-      recorder.stop()
-    } catch (error) {
-      releaseTracks()
-      setRecorderState('error')
-      setRecordingError(error instanceof Error ? `Recording could not stop: ${error.message}` : 'Recording could not stop safely.')
-    }
-  }
-
-  const discardClip = () => {
-    if (!window.confirm('Discard this recording? This cannot be undone.')) return
-    const recorder = recorderRef.current
-    if (recorder && recorder.state !== 'inactive') {
-      discardRef.current = true
-      setRecorderState('finalizing')
-      try {
-        recorder.stop()
-      } catch (error) {
-        releaseTracks()
-        setRecordingError(error instanceof Error ? `Recording could not be discarded: ${error.message}` : 'Recording could not be discarded safely.')
+      const current = await request<Conversation>(`/conversations/${recovery.conversationId}`, workspace.id, { signal: controller.signal })
+      if (current.customer_name_snapshot && current.customer_name_snapshot !== customerName.trim() && !window.confirm(`This saved recording belongs to ${current.customer_name_snapshot}. Attach it to this enquiry?`)) {
+        setPhase('idle'); return
       }
-    }
-    releaseTracks()
-    clearClip()
+      let token = recovery.leaseToken
+      if (current.upload_state !== 'saved') {
+        const lease = await request<Lease>(`/conversations/${recovery.conversationId}/lease`, workspace.id, { ...json('POST', { tab_id: tabId.current, takeover: true, purpose: 'recover' }), signal: controller.signal })
+        token = lease.lease_token
+      }
+      controller.signal.throwIfAborted()
+      await recoverRecording({ userId: user.id, workspaceId: workspace.id }, recovery.conversationId, recordingHooks(recovery.conversationId, workspace.id, recovery.partId, token, tabId.current, controller.signal), token, controller.signal)
+      if (isCurrent(epoch, controller)) showSaved(recovery.conversationId)
+    } catch (err) { if (isCurrent(epoch, controller)) { setPhase('error'); setError(message(err)) } }
+    finally { finish(epoch, controller) }
   }
-
-  const selectAudioFile = (file?: File) => {
-    if (!file) return
-    setAudioError('')
-    if (clipInfo && !window.confirm('Replace the current audio preview?')) return
-    if (!file.type.startsWith('audio/')) {
-      setAudioError('Choose a valid audio file.')
-      return
-    }
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      setAudioError('Stop the current recording before attaching an audio file.')
-      return
-    }
-    clearClip()
-    const url = URL.createObjectURL(file)
-    setPreviewUrl(url)
-    const clip = { duration: 0, name: file.name, consentTimestamp: '' }
-    setClipInfo(clip)
-    onClipChange(clip)
-    setRecorderState('ready')
+  function removeAttachment() {
+    if (operation || captureActive || capture.saving) return
+    if (conversationId && !window.confirm('Detach this audio from the enquiry? Saved audio stays in the workspace, and pending audio stays on this device for recovery.')) return
+    generation.current++; abort.current?.abort(); disposeCapture()
+    setConversationId(null); idRef.current = null; creation.current = null; notifiedSaved.current = null
+    callbacks.current.onConversationChange(null); setSaved(false); setPhase('idle'); setCapture(emptyCapture); setFile(null); setSource('microphone'); setProgress(null); setError(''); setRetryFile(false)
   }
+  const applicableRecoveries = recoveries.filter(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)
+  const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : unfinished ? 'AUDIO NEEDS ATTENTION' : 'READY TO ADD AUDIO'
 
-  const rerecord = () => {
-    if (!consentGiven) {
-      setRecordingError('Confirm that everyone on the call has agreed to recording before you start again.')
-      return
-    }
-    if (!window.confirm('Discard this recording and start a new one?')) return
-    releaseTracks()
-    clearClip()
-    void startRecording()
-  }
-
-  const updateFileDuration = (duration: number) => {
-    if (!Number.isFinite(duration)) return
-    setClipInfo((previous) => {
-      if (!previous) return previous
-      const updated = { ...previous, duration: Math.round(duration) }
-      onClipChange(updated)
-      return updated
-    })
-  }
-
-  const recording = recorderState === 'recording' || recorderState === 'paused'
-  const hasClip = recorderState === 'ready' && clipInfo !== null && previewUrl !== ''
-
-  // expose stop function and recording state to parent via optional refs and callback
-  useEffect(() => {
-    if (stopRef) stopRef.current = stopRecording
-    if (isRecordingRef) isRecordingRef.current = recording
-    if (typeof onRecordingChange === 'function') {
-      try { onRecordingChange(recording) } catch {}
-    }
-  }, [recording, stopRef, isRecordingRef, onRecordingChange, stopRecording])
-
-  return (
-    <div className="recorder-content">
-      <div className={`recorder-panel${recording ? ' is-recording' : ''}${hasClip ? ' has-clip' : ''}`}>
-        <div className="recorder-visual">
-          <div className={`microphone-orbit${recording ? ' orbit-active' : ''}`}>
-            <div className="microphone-button"><Mic2 size={27} strokeWidth={1.8} /></div>
-          </div>
-          {recording && <span className="recording-pulse" aria-hidden="true" />}
-        </div>
-        <div className="recorder-copy">
-          {recorderState === 'recording' ? (
-            <>
-              <span className="recording-live"><span /> RECORDING IN PROGRESS</span>
-              <h3>Conversation is being captured</h3>
-              <p>Keep this tab open until you stop and preview the recording.</p>
-            </>
-          ) : recorderState === 'paused' ? (
-            <>
-              <span className="recording-paused">RECORDING PAUSED</span>
-              <h3>Take your time</h3>
-              <p>Resume when the conversation is ready to continue.</p>
-            </>
-          ) : recorderState === 'requesting' ? (
-            <>
-              <span className="recording-ready-label">MICROPHONE ACCESS</span>
-              <h3>Waiting for permission…</h3>
-              <p>Your browser will ask for microphone access now.</p>
-            </>
-          ) : recorderState === 'finalizing' ? (
-            <>
-              <span className="recording-ready-label">SAVING LOCAL CLIP</span>
-              <h3>Preparing your preview…</h3>
-              <p>Finishing the recording on this device.</p>
-            </>
-          ) : hasClip ? (
-            <>
-              <span className="recording-ready-label"><Check size={13} /> PREVIEW READY</span>
-              <h3>{clipInfo.name}</h3>
-              <p><FileAudio2 size={14} /> {clipInfo.duration ? `${formatDuration(clipInfo.duration)} · ` : ''}Available in this browser only</p>
-            </>
-          ) : (
-            <>
-              <span className="recording-ready-label"><span className="ready-indicator" /> READY TO RECORD</span>
-              <h3>Capture the conversation</h3>
-              <p>Capture sales-conversation context for this enquiry, or choose a file to preview locally.</p>
-            </>
-          )}
-          {(recording || recorderState === 'finalizing') && (
-            <div className="elapsed-timer" aria-live="off">{formatDuration(elapsedSeconds)}</div>
-          )}
-        </div>
-        <div className="recorder-controls">
-          {!recording && !hasClip && (
-            <button type="button" className="button button-primary record-start-button" onClick={startRecording} disabled={recorderState === 'requesting' || recorderState === 'finalizing'}>
-              <Mic2 size={16} /> {recorderState === 'requesting' ? 'Requesting access…' : 'Start recording'}
-            </button>
-          )}
-          {recorderState === 'recording' && (
-            <>
-              <button type="button" className="button button-secondary" onClick={pauseRecording}><Pause size={15} /> Pause</button>
-              <button type="button" className="button button-stop" onClick={stopRecording}><Square size={14} fill="currentColor" /> Stop</button>
-            </>
-          )}
-          {recorderState === 'paused' && (
-            <>
-              <button type="button" className="button button-secondary" onClick={resumeRecording}><Play size={15} fill="currentColor" /> Resume</button>
-              <button type="button" className="button button-stop" onClick={stopRecording}><Square size={14} fill="currentColor" /> Stop</button>
-            </>
-          )}
-          {hasClip && (
-            <>
-              <button type="button" className="button button-secondary" onClick={rerecord}><RotateCcw size={15} /> Record again</button>
-              <button type="button" className="icon-action-button" aria-label="Discard recording" onClick={discardClip}><X size={17} /></button>
-            </>
-          )}
-          {!hasClip && !recording && recorderState !== 'requesting' && (
-            <label className="button button-upload">
-              <Upload size={15} /> Choose audio file
-              <input type="file" accept="audio/*" onChange={(event) => { selectAudioFile(event.target.files?.[0]); event.currentTarget.value = '' }} />
-            </label>
-          )}
-        </div>
+  return <div className="recorder-content connected-recorder">
+    <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
+      <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>
+      <div className="recorder-copy">
+        <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
+        <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
+        <p>{saved ? 'Transcription and English translation run in the background. Open the saved enquiry to follow progress.' : 'Audio saves privately. ElevenLabs transcribes the original speech, then OpenAI translates it into English.'}</p>
+        {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
       </div>
-
-      <div className="recording-consent">
-        <label className="checkbox-field">
-          <input type="checkbox" checked={consentGiven} onChange={(event) => setConsentGiven(event.target.checked)} disabled={recording || recorderState === 'requesting'} />
-          <span>I confirm that everyone on this conversation has agreed to being recorded.</span>
-        </label>
-        <span className="consent-detail"><ShieldCheck size={14} /> Recording will not start until you confirm consent above.</span>
-        {consentTimestamp && (
-          <span className="consent-detail consent-confirmed"><Check size={14} /> Consent confirmed at {new Date(consentTimestamp).toLocaleString()}. Authenticated user and server audit are unavailable in demo mode.</span>
-        )}
+      <div className="recorder-controls">
+        {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={blocked || !consent || !!applicableRecoveries.length} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
+        {captureActive && <><button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button><button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button></>}
+        {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio and permission…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
+        {!operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
+        {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
+        {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
       </div>
-
-      {recordingError && <div className="recorder-error" role="alert"><X size={15} /> {recordingError}</div>}
-      {audioError && <div className="recorder-error" role="alert"><X size={15} /> {audioError}</div>}
-
-      {hasClip && previewUrl && (
-        <div className="audio-preview">
-          <div className="audio-preview-heading"><span><AudioLines size={16} /> Audio preview</span><span className="local-only-badge">LOCAL ONLY</span></div>
-          <audio
-            src={previewUrl}
-            controls
-            preload="metadata"
-            onLoadedMetadata={(event) => updateFileDuration(event.currentTarget.duration)}
-            onError={() => setAudioError('This audio format could not be previewed by your browser.')}
-          />
-          <div className="audio-storage-notice"><AlertCircleIcon /> Audio is not uploaded or linked to the enquiry. Secure storage is not configured.</div>
-          {clipInfo.consentTimestamp && <span className="consent-detail"><ShieldCheck size={13} /> Consent time held only in this page: {new Date(clipInfo.consentTimestamp).toLocaleString()}</span>}
-        </div>
-      )}
-
-      {!hasClip && (
-        <div className="transcription-unavailable"><span className="transcription-icon"><AudioLines size={15} /></span><div><strong>Transcription service not configured</strong><span>Audio stays on this device. No transcript or AI suggestions will be generated.</span></div></div>
-      )}
     </div>
-  )
-}
-
-function AlertCircleIcon() {
-  return <span aria-hidden="true" className="alert-circle-icon">!</span>
+    <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label><span className="consent-detail"><ShieldCheck size={14} />Consent is recorded by the authenticated backend before audio is captured or uploaded.</span></div>
+    {loading && <p role="status">Loading workspace…</p>}
+    {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
+    {!loading && user && workspace && policyLoading && <p role="status">Checking processing connections…</p>}
+    {!loading && user && workspace && !policyLoading && !policy?.ready && <div className="audio-storage-notice">Connect and test ElevenLabs and OpenAI in Settings. The default speech engine must be connected before recording or upload starts.</div>}
+    {localMode && <div className="audio-storage-notice"><ShieldCheck size={15} />Audio and enquiries save on this computer. Add ElevenLabs and OpenAI keys in Settings when you want transcription and English translation.</div>}
+    {error && <div className="recorder-error" role="alert">{error}</div>}
+    {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}
+    {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
+    {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
+    {!operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="audio-storage-notice connected-audio-recovery" key={row.key}><RotateCcw size={18} /><div><strong>Audio is waiting on this device</strong><p>Recording {row.conversationId.slice(0, 8)} · {duration(row.totalSamples / 16000)}. Recover it to attach its saved conversation to this enquiry.</p><button type="button" className="button button-secondary" onClick={() => void recover(row)}>Recover audio</button></div></div>)}
+  </div>
 }

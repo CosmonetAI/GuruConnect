@@ -1,45 +1,17 @@
-import StatCard from '../../components/StatCard/StatCard'
-import { getDashboardDemo } from '../../services/demoService'
-import { Funnel, FunnelChart, Tooltip, ResponsiveContainer } from 'recharts'
-
+import { Link } from 'react-router-dom'
+import { AudioLines, ArrowRight, Check, ClipboardList, Languages, PlugZap } from 'lucide-react'
+import { useOffice } from '../../contexts/OfficeContext'
+import { useScopedResource } from '../../hooks/useScopedResource'
+import { enquiryListPath, type EnquiryPage } from '../../services/enquiryService'
+import type { Connection, Page } from '../../services/officeApi'
 export default function Dashboard() {
-  const data = getDashboardDemo()
-  return (
-    <div className="dashboard-page">
-      <h1 className="page-title">Dashboard</h1>
-      <div className="stats-grid">
-        <StatCard title="Total enquiries" value={data.totals.totalEnquiries} />
-        <StatCard title="New enquiries awaiting action" value={data.totals.newEnquiries} />
-        <StatCard title="Quotations pending approval" value={data.totals.pendingApprovals} />
-        <StatCard title="Quotations sent" value={data.totals.sentQuotations} />
-        <StatCard title="Overdue follow-ups" value={data.totals.overdueFollowups} />
-        <StatCard title="Conversion rate" value={`${data.totals.conversionRate}%`} />
-      </div>
-
-      <div className="charts-row">
-        <div className="chart-card">
-          <h3>Enquiry funnel</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <FunnelChart>
-              <Tooltip />
-              <Funnel dataKey="value" data={data.funnel} />
-            </FunnelChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="recent-card">
-          <h3>Recent enquiries</h3>
-          <table className="recent-table">
-            <thead>
-              <tr><th>ID</th><th>Customer</th><th>Channel</th><th>Date</th></tr>
-            </thead>
-            <tbody>
-              {data.recent.map((r) => (
-                <tr key={r.id}><td>{r.id}</td><td>{r.customer}</td><td>{r.channel}</td><td>{r.date}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  )
+  const { workspace } = useOffice()
+  const enquiries = useScopedResource<EnquiryPage>(enquiryListPath({ pageSize: 5 }))
+  const connections = useScopedResource<Page<Connection>>('/connections')
+  const speech = connections.data?.items.some(item => item.engine_id === 'elevenlabs' && item.state === 'connected')
+  const translation = connections.data?.items.some(item => item.engine_id === 'openai-translator' && item.state === 'connected')
+  return <div className="dashboard-page"><header className="flow-page-header"><div><div className="page-kicker">{workspace?.name}</div><h1 className="page-title">Your conversations, connected</h1><p>Capture clearly. Review in English. Keep the details that matter.</p></div><Link to="/enquiries/new" className="button button-primary">New enquiry <ArrowRight size={16} /></Link></header>
+    <section className="flow-overview"><div><h2>From conversation to enquiry</h2><p>Every transcript stays linked to its source audio. Speaker labels are provisional until reviewed.</p></div><ol className="flow-steps"><li><span>01</span><AudioLines /><strong>Record or upload</strong><small>Confirm consent first</small></li><li><span>02</span><ClipboardList /><strong>Save the enquiry</strong><small>Keep customer details with audio</small></li><li><span>03</span><Languages /><strong>Review in English</strong><small>Follow actual processing progress</small></li></ol></section>
+    <div className="flow-summary-grid"><section className="flow-panel"><div className="flow-panel-heading"><h2>Enquiries</h2><ClipboardList size={20} /></div><strong className="metric-value">{enquiries.data?.total ?? '—'}</strong><p>Saved customer enquiries</p><Link to="/enquiries">View all enquiries <ArrowRight size={14} /></Link></section><section className="flow-panel"><div className="flow-panel-heading"><h2>Processing connections</h2><PlugZap size={20} /></div>{connections.loading && <p role="status">Checking connections…</p>}{connections.error && <p className="flow-error" role="alert">{connections.error}</p>}<p className="readiness-line">{speech ? <Check size={16} /> : <span className="draft-dot" />} ElevenLabs transcription {speech ? 'ready' : 'needs setup'}</p><p className="readiness-line">{translation ? <Check size={16} /> : <span className="draft-dot" />} OpenAI translation {translation ? 'ready' : 'needs setup'}</p><Link to="/integrations">{speech && translation ? 'Manage connections' : 'Set up your connections'} <ArrowRight size={14} /></Link></section></div>
+    <section className="flow-panel"><div className="flow-panel-heading"><h2>Recent enquiries</h2><Link to="/enquiries">View all</Link></div>{enquiries.error && <p role="alert" className="flow-error">{enquiries.error}</p>}{enquiries.loading && <p role="status">Loading enquiries…</p>}{enquiries.data?.items.map(item => <Link className="recent-enquiry-row" key={item.id} to={`/enquiries/${item.id}`}><span><strong>{item.customerName}</strong><small>{item.channel} · {item.branch}</small></span><span>{item.enquiryNumber}<ArrowRight size={16} /></span></Link>)}{!enquiries.loading && !enquiries.error && !enquiries.data?.items.length && <p>No saved enquiries yet. Connect your providers, then start your first conversation.</p>}</section></div>
 }

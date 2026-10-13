@@ -1,5 +1,11 @@
 export type Enquiry = {
   id: string
+  enquiryNumber?: string
+  conversationId?: string
+  customerNotes?: string
+  salespersonNotes?: string
+  requirementsSummary?: string
+  recording?: { captureState: string; uploadState: string; transcriptionState: string; englishState: string; speakerState: string; finalState: string; durationSeconds?: number }
   customerName: string
   phone?: string
   email?: string

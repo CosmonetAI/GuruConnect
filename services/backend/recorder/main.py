@@ -1,0 +1,148 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from psycopg import Error as DatabaseError
+from psycopg_pool import PoolTimeout
+
+from .config import get_settings
+from .connection_routes import router as connection_router
+from .db import Database, one
+from .enquiry_routes import router as enquiry_router
+from .internal_routes import router as internal_router
+from .recording_routes import router as recording_router
+from .routes import router as public_router
+from .security import JWTVerifier
+from .storage import Storage
+from .transcript_routes import router as transcript_router
+
+log = logging.getLogger("recorder.api")
+
+# Catalog probes do not invoke workspace creation or write rate-limit records.
+# The function from the final migration prevents a partially migrated database
+# from reporting ready merely because it can accept a connection.
+SCHEMA_READINESS_QUERY = """
+select
+    to_regclass('public.profiles') is not null
+    and to_regclass('public.organisations') is not null
+    and to_regclass('public.members') is not null
+    and to_regclass('public.invites') is not null
+    and to_regclass('public.engine_connections') is not null
+    and to_regclass('public.workspace_engine_settings') is not null
+    and to_regclass('public.audit_events') is not null
+    and to_regclass('public.transcript_versions') is not null
+    and to_regclass('public.guruconnect_enquiries') is not null
+    and to_regclass('recorder_private.conversation_requests') is not null
+    and to_regprocedure('public.create_workspace(uuid,text)') is not null
+    and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
+    and to_regprocedure('recorder_private.version_job_guard()') is not null
+    and to_regprocedure('public.resume_translation_job(uuid,uuid)') is not null
+    and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='input_tokens')
+    and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='output_tokens')
+    and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='provider_model')
+    as schema_ready
+"""
+
+
+def create_app(settings=None, *, allow_local=False):
+    settings = settings or get_settings()
+    if allow_local and settings.environment in {"development", "local"} and not settings.configured:
+        from .local_api import create_local_app
+        return create_local_app(settings)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        await app.state.db.open()
+        yield
+        await app.state.db.close()
+
+    app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.db = Database(settings)
+    app.state.verifier = JWTVerifier(settings)
+    app.state.storage = Storage(settings)
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
+                       allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+                       allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "Idempotency-Key"],
+                       expose_headers=["Content-Disposition"], max_age=600)
+
+    @app.middleware("http")
+    async def limits(request: Request, call_next):
+        if request.method in {"POST", "PATCH", "PUT"}:
+            try:
+                length = int(request.headers.get("content-length", "0"))
+            except ValueError:
+                return JSONResponse({"detail": {"code": "invalid_content_length"}}, 400)
+            max_request_bytes = 5_000_000 if request.url.path.startswith("/internal/v1/") else 1_000_000
+            if length > max_request_bytes:
+                return JSONResponse({"detail": {"code": "request_too_large"}}, 413)
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > max_request_bytes:
+                    return JSONResponse({"detail": {"code": "request_too_large"}}, 413)
+                body.extend(chunk)
+            # Starlette's CachedRequest forwards this bounded body downstream.
+            request._body = bytes(body)
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        if settings.environment == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        # Pydantic's default error includes the submitted credential/input value.
+        errors = [{"location": list(error["loc"]), "message": error["msg"], "type": error["type"]} for error in exc.errors()]
+        return JSONResponse({"detail": {"code": "validation_failed", "errors": errors}}, status_code=422)
+
+    @app.exception_handler(DatabaseError)
+    async def database_error(request, exc):
+        code = "database_unavailable"
+        status = 503
+        message = "Retry after refreshing the durable state"
+        if exc.sqlstate in {"23505", "23514", "23503", "40001", "40P01", "55P03"}:
+            code, status = "conflicting_state", 409
+        elif exc.sqlstate == "42501":
+            code, status = "access_denied", 403
+        elif exc.sqlstate in {"42P01", "42883", "42703"}:
+            code = "database_schema_missing"
+            message = "Apply all GuruConnect Supabase migrations, including 202610130007_guruconnect_enquiries.sql, then restart the API and worker"
+        log.warning("database_error code=%s sqlstate=%s", code, exc.sqlstate)
+        return JSONResponse({"detail": {"code": code, "message": message}}, status_code=status)
+
+    @app.exception_handler(PoolTimeout)
+    async def pool_error(request, exc):
+        return JSONResponse({"detail": {"code": "database_busy"}}, status_code=503, headers={"Retry-After": "3"})
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok", "service": "api", "version": "1.0.0"}
+
+    @app.get("/ready")
+    async def ready():
+        if not settings.configured:
+            return JSONResponse({"status": "not_ready", "code": "configuration_missing"}, 503)
+        try:
+            # Readiness must remain bounded even while the connection pool is
+            # waiting on an unreachable database or a stalled catalog query.
+            async with asyncio.timeout(3):
+                async with app.state.db.connection() as connection:
+                    schema = await one(connection, SCHEMA_READINESS_QUERY)
+            if not schema or not schema["schema_ready"]:
+                return JSONResponse({"status": "not_ready", "code": "database_schema_missing"}, 503)
+            return {"status": "ready"}
+        except Exception:
+            return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
+
+    for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router):
+        app.include_router(router)
+    return app
+
+
+app = create_app(allow_local=True)

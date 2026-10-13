@@ -11,6 +11,23 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+!**/.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+playwright-report/
+test-results/
+coverage/
+.local-data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Editor directories and files
 .vscode/*

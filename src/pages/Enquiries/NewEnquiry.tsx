@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useBlocker, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -8,9 +8,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
-  CircleHelp,
   ClipboardList,
-  FileAudio2,
   Headphones,
   Lightbulb,
   Mic2,
@@ -22,12 +20,13 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react'
-import { NewEnquirySchema, type NewEnquiryForm } from '../../schemas/enquirySchema'
-import { createEnquiry, getDemoSalesOptions } from '../../services/demoService'
+import { EnquiryDraftValuesSchema, NewEnquirySchema, productHasDetails, type NewEnquiryForm } from '../../schemas/enquirySchema'
+import { createEnquiry } from '../../services/enquiryService'
+import { message } from '../../services/officeApi'
+import { useOffice } from '../../contexts/OfficeContext'
 import ConversationRecorder from './ConversationRecorder'
 import './NewEnquiry.css'
 
-const draftStorageKey = 'guru-group:new-enquiry-draft'
 const enquirySources = [
   'Incoming Call',
   'Outgoing Call',
@@ -74,45 +73,21 @@ const defaultValues: NewEnquiryForm = {
 type EnquiryField = keyof NewEnquiryForm
 type FieldErrors = Record<string, string>
 
-function isEnquiryDraft(value: unknown): value is NewEnquiryForm {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Record<string, unknown>
-  const stringFields = [
-    'customerName', 'phone', 'email', 'branch', 'assignedExecutive', 'company', 'projectName',
-    'preferredContactMethod', 'customerNotes', 'salespersonNotes', 'requirementsSummary',
-    'followUpDate', 'followUpOwner',
-  ]
-  if (stringFields.some((field) => typeof candidate[field] !== 'string')) return false
-  if (!enquirySources.includes(candidate.channel as typeof enquirySources[number])) return false
-  if (!['Retail', 'Dealer', 'Project'].includes(String(candidate.customerType))) return false
-  if (!['Normal', 'High', 'Urgent'].includes(String(candidate.priority))) return false
-  if (!Array.isArray(candidate.productRequirements)) return false
-  return candidate.productRequirements.every((item: unknown) => {
-    if (!item || typeof item !== 'object') return false
-    const product = item as Record<string, unknown>
-    return ['product', 'sku', 'unit', 'customerSegment', 'budget', 'paymentPreference', 'timeline', 'notes']
-      .every((field) => typeof product[field] === 'string')
-      && typeof product.quantity === 'number'
-      && typeof product.stockCheck === 'boolean'
-  })
-}
-
-function readDraft(): { values: NewEnquiryForm; warning: string; restored: boolean } {
+interface Draft { values: NewEnquiryForm; conversationId: string | null; saveKey: string }
+const validId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+function readDraft(storageKey: string): Draft & { warning: string; restored: boolean } {
+  const fresh = () => ({ values: structuredClone(defaultValues), conversationId: null, saveKey: crypto.randomUUID(), warning: '', restored: false })
   try {
-    const saved = sessionStorage.getItem(draftStorageKey)
-    if (!saved) return { values: defaultValues, warning: '', restored: false }
-    const parsed: unknown = JSON.parse(saved)
-    if (!isEnquiryDraft(parsed)) {
-      return {
-        values: defaultValues,
-        warning: 'The saved draft could not be restored because its data is incomplete. You can start a new enquiry.',
-        restored: false,
-      }
-    }
-    return { values: parsed, warning: 'Your draft was restored from this browser tab.', restored: true }
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'browser storage is unavailable'
-    return { values: defaultValues, warning: `The saved draft could not be read (${reason}). You can continue with a new enquiry.`, restored: false }
+    const saved = sessionStorage.getItem(storageKey)
+    if (!saved) return fresh()
+    if (saved.length > 120_000) return { ...fresh(), warning: 'The saved draft is too large to restore. Start a new enquiry.' }
+    const parsed = JSON.parse(saved) as Record<string, unknown>
+    const values = EnquiryDraftValuesSchema.safeParse(parsed?.values)
+    if (!values.success || !validId(parsed.saveKey) || (parsed.conversationId !== null && !validId(parsed.conversationId))) return { ...fresh(), warning: 'The saved draft could not be restored. Start a new enquiry or recover saved audio below.' }
+    return { values: values.data, conversationId: parsed.conversationId as string | null, saveKey: parsed.saveKey,
+      warning: 'Your draft was restored for this workspace. Attached audio is checked before you can save.', restored: true }
+  } catch {
+    return { ...fresh(), warning: 'The saved draft could not be read. You can continue, but browser recovery may be unavailable.', restored: false }
   }
 }
 
@@ -140,8 +115,8 @@ function Field({
         {required && <span className="required-mark" aria-label="required"> *</span>}
       </label>
       {children}
-      {error && <span className="field-error" role="alert">{error}</span>}
-      {!error && hint && <span className="field-hint">{hint}</span>}
+      {error && <span id={`${htmlFor}-error`} className="field-error" role="alert">{error}</span>}
+      {!error && hint && <span id={`${htmlFor}-hint`} className="field-hint">{hint}</span>}
     </div>
   )
 }
@@ -175,19 +150,51 @@ function SectionHeader({
 }
 
 export default function NewEnquiry() {
+  const { user, workspace } = useOffice()
+  if (!user || !workspace) return <p role="status">Loading your workspace…</p>
+  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}`} />
+}
+
+function ScopedNewEnquiry({ storageKey }: { storageKey: string }) {
   const navigate = useNavigate()
-  const [draft] = useState(readDraft)
+  const { workspace, setCaptureBusy } = useOffice()
+  const [draft] = useState(() => readDraft(storageKey))
   const [form, setForm] = useState<NewEnquiryForm>(draft.values)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formMessage, setFormMessage] = useState(draft.warning)
   const [isSaving, setIsSaving] = useState(false)
   const [isDraftSaved, setIsDraftSaved] = useState(draft.restored)
   const savingRef = useRef(false)
-  const [recordingClip, setRecordingClip] = useState<{ duration: number; name: string } | null>(null)
-  const demoOptions = useMemo(() => getDemoSalesOptions(), [])
-  const recorderStopRef = useRef<(() => void) | null>(null)
-  const recorderIsRecordingRef = useRef<boolean | null>(null)
-  const [isRecording, setIsRecording] = useState(false)
+  const [conversationId, setConversationId] = useState<string | null>(draft.conversationId)
+  const conversationRef = useRef(draft.conversationId)
+  const [savedConversationId, setSavedConversationId] = useState<string | null>(null)
+  const [recordingBusy, setRecordingBusy] = useState(!!draft.conversationId)
+  const [saveKey, setSaveKey] = useState(draft.saveKey)
+  const allowLeave = useRef(false)
+  const audioBusyRef = useRef(recordingBusy)
+  audioBusyRef.current = recordingBusy
+  const hasUnfinishedAudio = recordingBusy || !!(conversationId && conversationId !== savedConversationId)
+  const blocker = useBlocker(() => !allowLeave.current && (audioBusyRef.current || savingRef.current || !!(conversationId && conversationId !== savedConversationId)))
+  useEffect(() => {
+    if (blocker.state === 'blocked') { setFormMessage('Finish saving or detach the audio before leaving. Your enquiry details stay on this page.'); blocker.reset() }
+  }, [blocker])
+  useEffect(() => { setCaptureBusy(hasUnfinishedAudio || isSaving); return () => setCaptureBusy(false) }, [hasUnfinishedAudio, isSaving, setCaptureBusy])
+  useEffect(() => {
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ values: form, conversationId, saveKey })); setIsDraftSaved(true) }
+    catch { setIsDraftSaved(false) }
+  }, [form, conversationId, saveKey, storageKey])
+  useEffect(() => {
+    if (!isSaving) return
+    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', prevent)
+    return () => window.removeEventListener('beforeunload', prevent)
+  }, [isSaving])
+  const changeConversation = useCallback((id: string | null) => {
+    if (conversationRef.current !== id) { conversationRef.current = id; setSaveKey(crypto.randomUUID()) }
+    setConversationId(id)
+    if (!id) setSavedConversationId(null)
+  }, [])
+  const audioSaved = useCallback((id: string) => { setConversationId(id); setSavedConversationId(id) }, [])
 
   const update = <K extends EnquiryField>(field: K, value: NewEnquiryForm[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
@@ -197,31 +204,32 @@ export default function NewEnquiry() {
       return next
     })
     setIsDraftSaved(false)
+    setSaveKey(crypto.randomUUID())
     setFormMessage('')
   }
 
-  const filledRequirements = form.productRequirements.filter((item) => item.product.trim() !== '')
+  const filledRequirements = form.productRequirements.filter(productHasDetails)
   const requiredValues = [form.customerName, form.phone, form.channel, form.branch, form.assignedExecutive]
   const completedRequired = requiredValues.filter((value) => value.trim() !== '').length
   const summaryProduct = filledRequirements.length
-    ? filledRequirements.map((item) => item.product).join(', ')
+    ? filledRequirements.map((item) => item.product || item.sku || 'Product name or SKU needed').join(', ')
     : 'Not specified yet'
 
   const saveDraft = () => {
     try {
-      sessionStorage.setItem(draftStorageKey, JSON.stringify(form))
+      sessionStorage.setItem(storageKey, JSON.stringify({ values: form, conversationId, saveKey }))
       setIsDraftSaved(true)
       setFormMessage('Draft saved for this browser session. No enquiry has been submitted.')
       setErrors({})
-    } catch (error) {
+    } catch {
       setIsDraftSaved(false)
-      const reason = error instanceof Error ? error.message : 'browser storage is unavailable'
-      setFormMessage(`This browser could not save the draft (${reason}). Your current entries are still on this page.`)
+      setFormMessage('This browser could not save the draft. Keep this page open; your current entries are still here.')
     }
   }
 
   const submitEnquiry = async () => {
-    if (savingRef.current) return
+    if (savingRef.current || !workspace) return
+    if (hasUnfinishedAudio) { setFormMessage('Finish saving or detach the audio before saving this enquiry.'); return }
     setFormMessage('')
     const parsed = NewEnquirySchema.safeParse({
       ...form,
@@ -246,41 +254,44 @@ export default function NewEnquiry() {
     setIsSaving(true)
     try {
       const data = parsed.data
-      const created = createEnquiry({
+      const requirements = data.productRequirements.filter(productHasDetails)
+      const firstProduct = requirements[0]
+      const created = await createEnquiry(workspace.id, {
         customerName: data.customerName,
         phone: data.phone,
         email: data.email || undefined,
         channel: data.channel,
         branch: data.branch,
         assignedExecutive: data.assignedExecutive,
-        product: data.productRequirements.find((item) => item.product.trim())?.product ?? '',
-        quantity: data.productRequirements.find((item) => item.product.trim())?.quantity ?? 1,
-        unit: data.productRequirements.find((item) => item.product.trim())?.unit ?? 'nos',
-        notes: [data.customerNotes, data.salespersonNotes, data.requirementsSummary]
-          .filter(Boolean)
-          .join('\n\n'),
+        product: firstProduct?.product || firstProduct?.sku || '',
+        quantity: firstProduct?.quantity ?? 1,
+        unit: firstProduct?.unit ?? 'nos',
+        notes: '',
+        customerNotes: data.customerNotes, salespersonNotes: data.salespersonNotes, requirementsSummary: data.requirementsSummary,
         customerType: data.customerType,
         company: data.company,
         projectName: data.projectName,
         preferredContactMethod: data.preferredContactMethod,
-        productRequirements: data.productRequirements.filter((item) => item.product.trim()),
+        productRequirements: requirements,
         followUpDate: data.followUpDate,
         followUpOwner: data.followUpOwner,
         priority: data.priority,
-      })
+        ...(conversationId ? { conversationId } : {}),
+      }, saveKey)
       let draftCleanupMessage = ''
       try {
-        sessionStorage.removeItem(draftStorageKey)
+        sessionStorage.removeItem(storageKey)
       } catch {
         draftCleanupMessage = ' The saved draft could not be removed from this browser tab.'
       }
-      navigate('/enquiries', {
+      allowLeave.current = true
+      navigate(`/enquiries/${encodeURIComponent(created.id)}`, {
         state: {
-          confirmation: `Enquiry ${created.id} was added to demo data in this browser session.${draftCleanupMessage}`,
+          confirmation: `Enquiry ${created.enquiryNumber || created.id} was saved in your workspace.${conversationId ? ' Transcription and English translation continue in the background.' : ''}${draftCleanupMessage}`,
         },
       })
     } catch (error) {
-      setFormMessage(error instanceof Error ? error.message : 'The enquiry could not be saved. Your entries are preserved.')
+      setFormMessage(`${message(error)} Your entries are preserved. Retry without changing the form to check the same save.`)
     } finally {
       savingRef.current = false
       setIsSaving(false)
@@ -288,6 +299,7 @@ export default function NewEnquiry() {
   }
 
   const addProduct = () => {
+    if (form.productRequirements.length >= 25) return
     update('productRequirements', [
       ...form.productRequirements,
       {
@@ -318,7 +330,7 @@ export default function NewEnquiry() {
   }
 
   return (
-    <form className="new-enquiry-page" onSubmit={(event) => { event.preventDefault(); void submitEnquiry() }}>
+    <form className="new-enquiry-page" noValidate onSubmit={(event) => { event.preventDefault(); void submitEnquiry() }}>
       <div className="enquiry-topline">
         <Link className="back-link" to="/enquiries"><ArrowLeft size={16} /> Back to enquiries</Link>
         <span className="enquiry-id-label"><span className="draft-dot" /> New enquiry</span>
@@ -334,10 +346,11 @@ export default function NewEnquiry() {
       </header>
 
       <div className="demo-notice" role="status">
-        <CircleHelp size={17} />
-        <p><strong>Demo mode.</strong> Enquiries are kept in browser memory and reset on reload. Drafts are saved only for this browser tab. No database, audio storage, or transcription service is configured.</p>
+        <AudioLines size={17} />
+        <p><strong>Customer → conversation → English transcript.</strong> Enter customer details, record or upload audio, then save the enquiry. Audio must finish saving first; transcription and translation can continue afterward.</p>
       </div>
 
+      <fieldset disabled={isSaving} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <div className="enquiry-workspace">
         <div className="enquiry-main-column">
           <section className="enquiry-card" aria-labelledby="customer-section-title">
@@ -350,27 +363,25 @@ export default function NewEnquiry() {
               step="01"
             />
             <div className="form-grid">
-              <Field label="Customer full name" htmlFor="customerName" required error={errors.customerName}>
-                <input id="customerName" autoComplete="name" placeholder="e.g. Priya Sharma" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} />
+              <Field label="Customer full name" htmlFor="customerName" required error={errors.customerName} hint={conversationId ? 'This name is linked to the recording. Detach audio before changing the customer.' : undefined}>
+                <input id="customerName" maxLength={200} disabled={!!conversationId} aria-describedby={conversationId ? 'customerName-hint' : errors.customerName ? 'customerName-error' : undefined} aria-invalid={!!errors.customerName} autoComplete="name" placeholder="e.g. Priya Sharma" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} />
               </Field>
               <Field label="Phone number" htmlFor="phone" required error={errors.phone}>
-                <input id="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+                <input id="phone" type="tel" maxLength={20} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
               </Field>
               <Field label="Email address" htmlFor="email" error={errors.email}>
-                <input id="email" type="email" autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
+                <input id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
               </Field>
               <Field label="Enquiry source" htmlFor="channel" required error={errors.channel}>
                 <select id="channel" value={form.channel} onChange={(event) => update('channel', event.target.value as NewEnquiryForm['channel'])}>
                   {enquirySources.map((source) => <option key={source}>{source}</option>)}
                 </select>
               </Field>
-              <Field label="Branch / showroom" htmlFor="branch" required hint={demoOptions.branches.length ? 'Options come from existing demo enquiry examples; you can enter another branch.' : undefined} error={errors.branch}>
-                <input id="branch" list="branch-options" autoComplete="organization" placeholder="Search or enter a branch" value={form.branch} onChange={(event) => update('branch', event.target.value)} />
-                <datalist id="branch-options">{demoOptions.branches.map((branch) => <option key={branch} value={branch} />)}</datalist>
+              <Field label="Branch / showroom" htmlFor="branch" required error={errors.branch}>
+                <input id="branch" maxLength={160} aria-invalid={!!errors.branch} aria-describedby={errors.branch ? 'branch-error' : undefined} autoComplete="organization" placeholder="Enter the branch or showroom" value={form.branch} onChange={(event) => update('branch', event.target.value)} />
               </Field>
-              <Field label="Assigned sales executive" htmlFor="assignedExecutive" required hint={demoOptions.executives.length ? 'Options come from existing demo enquiry examples; you can enter another name.' : undefined} error={errors.assignedExecutive}>
-                <input id="assignedExecutive" list="executive-options" autoComplete="off" placeholder="Search or enter a name" value={form.assignedExecutive} onChange={(event) => update('assignedExecutive', event.target.value)} />
-                <datalist id="executive-options">{demoOptions.executives.map((executive) => <option key={executive} value={executive} />)}</datalist>
+              <Field label="Assigned sales executive" htmlFor="assignedExecutive" required error={errors.assignedExecutive}>
+                <input id="assignedExecutive" maxLength={160} aria-invalid={!!errors.assignedExecutive} aria-describedby={errors.assignedExecutive ? 'assignedExecutive-error' : undefined} autoComplete="off" placeholder="Enter an executive name" value={form.assignedExecutive} onChange={(event) => update('assignedExecutive', event.target.value)} />
               </Field>
               <Field label="Customer type" htmlFor="customerType">
                 <select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as NewEnquiryForm['customerType'])}>
@@ -387,16 +398,16 @@ export default function NewEnquiry() {
               </Field>
               {(form.customerType === 'Dealer' || form.customerType === 'Project') && (
                 <Field label="Company / dealership name" htmlFor="company">
-                  <input id="company" autoComplete="organization" placeholder="Business or dealership name" value={form.company} onChange={(event) => update('company', event.target.value)} />
+                  <input id="company" maxLength={200} autoComplete="organization" placeholder="Business or dealership name" value={form.company} onChange={(event) => update('company', event.target.value)} />
                 </Field>
               )}
               {form.customerType === 'Project' && (
                 <Field label="Project / site name" htmlFor="projectName">
-                  <input id="projectName" placeholder="Project or site name" value={form.projectName} onChange={(event) => update('projectName', event.target.value)} />
+                  <input id="projectName" maxLength={200} placeholder="Project or site name" value={form.projectName} onChange={(event) => update('projectName', event.target.value)} />
                 </Field>
               )}
               <Field label="Additional customer notes" htmlFor="customerNotes" className="form-grid-wide">
-                <textarea id="customerNotes" rows={3} placeholder="Anything useful to remember about this customer…" value={form.customerNotes} onChange={(event) => update('customerNotes', event.target.value)} />
+                <textarea id="customerNotes" rows={3} maxLength={4000} placeholder="Anything useful to remember about this customer…" value={form.customerNotes} onChange={(event) => update('customerNotes', event.target.value)} />
               </Field>
             </div>
           </section>
@@ -410,7 +421,7 @@ export default function NewEnquiry() {
               description="Capture context now; review it later."
               step="02"
             />
-            <ConversationRecorder onClipChange={setRecordingClip} stopRef={recorderStopRef} isRecordingRef={recorderIsRecordingRef} onRecordingChange={setIsRecording} />
+            <ConversationRecorder customerName={form.customerName.trim().length >= 2 ? form.customerName : ''} title="Sales enquiry conversation" initialConversationId={conversationId} onConversationChange={changeConversation} onBusyChange={setRecordingBusy} onSaved={audioSaved} />
           </section>
 
           <section className="enquiry-card" aria-labelledby="products-section-title">
@@ -423,6 +434,7 @@ export default function NewEnquiry() {
               step="03"
             />
             <div className="catalogue-notice"><AlertCircle size={15} /> Product catalogue unavailable. Capture the customer’s requested product; verify SKU, pricing, and stock separately.</div>
+            {errors.productRequirements && <p className="field-error" role="alert">{errors.productRequirements}</p>}
             <div className="product-requirements">
               {form.productRequirements.map((item, index) => (
                 <div className="product-row" key={index}>
@@ -439,13 +451,13 @@ export default function NewEnquiry() {
                   </div>
                   <div className="form-grid product-grid">
                     <Field label="Product / model requested" htmlFor={`product-${index}`} error={errors[`productRequirements.${index}.product`]}>
-                      <input id={`product-${index}`} placeholder="Enter the model or product name" value={item.product} onChange={(event) => updateProduct(index, 'product', event.target.value)} />
+                      <input id={`product-${index}`} maxLength={200} aria-invalid={!!errors[`productRequirements.${index}.product`]} aria-describedby={errors[`productRequirements.${index}.product`] ? `product-${index}-error` : undefined} placeholder="Enter the model or product name" value={item.product} onChange={(event) => updateProduct(index, 'product', event.target.value)} />
                     </Field>
-                    <Field label="SKU (if known)" htmlFor={`sku-${index}`}>
-                      <input id={`sku-${index}`} placeholder="Not verified" value={item.sku} onChange={(event) => updateProduct(index, 'sku', event.target.value)} />
+                    <Field label="SKU (if known)" htmlFor={`sku-${index}`} error={errors[`productRequirements.${index}.sku`]}>
+                      <input id={`sku-${index}`} maxLength={80} placeholder="Not verified" value={item.sku} onChange={(event) => updateProduct(index, 'sku', event.target.value)} />
                     </Field>
                     <Field label="Quantity" htmlFor={`quantity-${index}`} error={errors[`productRequirements.${index}.quantity`]}>
-                      <input id={`quantity-${index}`} type="number" min="1" step="1" value={item.quantity} onChange={(event) => updateProduct(index, 'quantity', event.target.value === '' ? 0 : Number(event.target.value))} />
+                      <input id={`quantity-${index}`} type="number" min="1" max="1000000" step="1" value={item.quantity} onChange={(event) => { const number = Number(event.target.value); updateProduct(index, 'quantity', Number.isFinite(number) ? number : 0) }} />
                     </Field>
                     <Field label="Unit" htmlFor={`unit-${index}`}>
                       <select id={`unit-${index}`} value={item.unit} onChange={(event) => updateProduct(index, 'unit', event.target.value)}>
@@ -453,10 +465,10 @@ export default function NewEnquiry() {
                       </select>
                     </Field>
                     <Field label="Customer segment" htmlFor={`segment-${index}`}>
-                      <input id={`segment-${index}`} placeholder="e.g. Residential, hospitality" value={item.customerSegment} onChange={(event) => updateProduct(index, 'customerSegment', event.target.value)} />
+                      <input id={`segment-${index}`} maxLength={80} placeholder="e.g. Residential, hospitality" value={item.customerSegment} onChange={(event) => updateProduct(index, 'customerSegment', event.target.value)} />
                     </Field>
                     <Field label="Approximate budget (optional)" htmlFor={`budget-${index}`}>
-                      <input id={`budget-${index}`} inputMode="decimal" placeholder="As shared by customer" value={item.budget} onChange={(event) => updateProduct(index, 'budget', event.target.value)} />
+                      <input id={`budget-${index}`} maxLength={80} inputMode="decimal" placeholder="As shared by customer" value={item.budget} onChange={(event) => updateProduct(index, 'budget', event.target.value)} />
                     </Field>
                     <Field label="Payment preference" htmlFor={`payment-${index}`}>
                       <select id={`payment-${index}`} value={item.paymentPreference} onChange={(event) => updateProduct(index, 'paymentPreference', event.target.value)}>
@@ -473,13 +485,13 @@ export default function NewEnquiry() {
                       <span>Customer requested an availability / stock check</span>
                     </label>
                     <Field label="Additional product requirements" htmlFor={`product-notes-${index}`} className="form-grid-wide">
-                      <textarea id={`product-notes-${index}`} rows={2} placeholder="Size, finish, application, or other requirements…" value={item.notes} onChange={(event) => updateProduct(index, 'notes', event.target.value)} />
+                      <textarea id={`product-notes-${index}`} rows={2} maxLength={2000} placeholder="Size, finish, application, or other requirements…" value={item.notes} onChange={(event) => updateProduct(index, 'notes', event.target.value)} />
                     </Field>
                   </div>
                 </div>
               ))}
             </div>
-            <button type="button" className="add-product-button" onClick={addProduct}><Plus size={16} /> Add another product</button>
+            <button type="button" className="add-product-button" disabled={form.productRequirements.length >= 25} onClick={addProduct}><Plus size={16} /> Add another product</button>
           </section>
 
           <section className="enquiry-card" aria-labelledby="followup-section-title">
@@ -493,16 +505,16 @@ export default function NewEnquiry() {
             />
             <div className="form-grid">
               <Field label="Customer requirements summary" htmlFor="requirementsSummary" className="form-grid-wide">
-                <textarea id="requirementsSummary" rows={3} placeholder="Summarise what matters most to the customer…" value={form.requirementsSummary} onChange={(event) => update('requirementsSummary', event.target.value)} />
+                <textarea id="requirementsSummary" rows={3} maxLength={4000} placeholder="Summarise what matters most to the customer…" value={form.requirementsSummary} onChange={(event) => update('requirementsSummary', event.target.value)} />
               </Field>
               <Field label="Salesperson notes" htmlFor="salespersonNotes" className="form-grid-wide">
-                <textarea id="salespersonNotes" rows={3} placeholder="Internal notes for your team…" value={form.salespersonNotes} onChange={(event) => update('salespersonNotes', event.target.value)} />
+                <textarea id="salespersonNotes" rows={3} maxLength={4000} placeholder="Internal notes for your team…" value={form.salespersonNotes} onChange={(event) => update('salespersonNotes', event.target.value)} />
               </Field>
-              <Field label="Next follow-up date" htmlFor="followUpDate">
-                <input id="followUpDate" type="date" min={new Date().toISOString().slice(0, 10)} value={form.followUpDate} onChange={(event) => update('followUpDate', event.target.value)} />
+              <Field label="Next follow-up date" htmlFor="followUpDate" error={errors.followUpDate}>
+                <input id="followUpDate" type="date" aria-invalid={!!errors.followUpDate} value={form.followUpDate} onChange={(event) => update('followUpDate', event.target.value)} />
               </Field>
               <Field label="Follow-up owner" htmlFor="followUpOwner">
-                <input id="followUpOwner" list="executive-options" placeholder="Name of owner" value={form.followUpOwner} onChange={(event) => update('followUpOwner', event.target.value)} />
+                <input id="followUpOwner" maxLength={160} placeholder="Name of owner" value={form.followUpOwner} onChange={(event) => update('followUpOwner', event.target.value)} />
               </Field>
               <Field label="Priority" htmlFor="priority">
                 <select id="priority" value={form.priority} onChange={(event) => update('priority', event.target.value as NewEnquiryForm['priority'])}>
@@ -527,15 +539,15 @@ export default function NewEnquiry() {
               <div><dt>Branch</dt><dd>{form.branch || 'Not selected'}</dd></div>
               <div><dt>Assigned to</dt><dd>{form.assignedExecutive || 'Not assigned'}</dd></div>
               <div><dt>Interested in</dt><dd>{summaryProduct}</dd></div>
-              <div><dt>Recording</dt><dd>{recordingClip ? <span className="status-value"><Check size={13} /> Local preview ready</span> : 'Not attached'}</dd></div>
+              <div><dt>Recording</dt><dd>{savedConversationId ? <span className="status-value"><Check size={13} /> Audio saved</span> : hasUnfinishedAudio ? 'Finish saving audio' : 'Not attached'}</dd></div>
             </dl>
           </section>
 
           <section className="enquiry-card side-card processing-card">
             <div className="side-card-title"><span className="side-icon purple-side-icon"><AudioLines size={16} /></span><h2>Conversation insights</h2></div>
-            <div className="processing-state"><span className="state-indicator unavailable" /><div><strong>Transcription unavailable</strong><span>No transcription service is configured</span></div></div>
-            <div className="processing-state"><span className="state-indicator unavailable" /><div><strong>AI details unavailable</strong><span>Suggestions appear only after a real service response</span></div></div>
-            <div className="insight-note"><Lightbulb size={15} /><span>No transcript or AI-extracted details will be fabricated. Your typed notes are always yours to review.</span></div>
+            <div className="processing-state"><span className="state-indicator" /><div><strong>Original speech & speakers</strong><span>ElevenLabs transcribes saved conversation audio</span></div></div>
+            <div className="processing-state"><span className="state-indicator" /><div><strong>English translation</strong><span>OpenAI translates the original transcript while preserving its speaker turns</span></div></div>
+            <div className="insight-note"><Lightbulb size={15} /><span>{savedConversationId ? 'Save the enquiry to follow the actual transcript and processing status.' : 'Add consented audio to use transcription and translation. You can also save an enquiry without audio.'}</span></div>
           </section>
 
           <section className="enquiry-card side-card next-step-card">
@@ -545,9 +557,9 @@ export default function NewEnquiry() {
           </section>
 
           <div className="side-helper"><Headphones size={16} /><span>Need a hand? Your sales operations team can help with enquiry setup.</span></div>
-          {recordingClip && <span className="sr-only"><FileAudio2 size={1} /> {recordingClip.name}, {recordingClip.duration} seconds</span>}
         </aside>
       </div>
+      </fieldset>
 
       <div className="enquiry-action-bar">
         <div className="action-context">
@@ -555,12 +567,9 @@ export default function NewEnquiry() {
           {formMessage && <span className={`action-message${formMessage.startsWith('Check') ? ' error-message' : ''}`} role="status">{formMessage}</span>}
         </div>
         <div className="action-buttons">
-          <button type="button" className="button button-quiet" onClick={() => navigate('/enquiries')}>Cancel</button>
-        {isRecording && (
-          <button type="button" className="button button-stop" onClick={() => { recorderStopRef.current?.(); }} title="Stop recording">Stop recording</button>
-        )}
+          <button type="button" className="button button-quiet" disabled={isSaving || hasUnfinishedAudio} onClick={() => navigate('/enquiries')}>Cancel</button>
         <button type="button" className="button button-secondary" onClick={saveDraft} disabled={isSaving}><Save size={16} /> Save draft</button>
-        <button type="submit" className="button button-primary" disabled={isSaving}>
+        <button type="submit" className="button button-primary" disabled={isSaving || hasUnfinishedAudio}>
           {isSaving ? <span className="button-spinner" /> : <Check size={16} />}
           {isSaving ? 'Saving…' : 'Save enquiry'}
           <ChevronDown className="button-arrow" size={15} />
