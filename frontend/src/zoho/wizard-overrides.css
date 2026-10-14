@@ -87,8 +87,8 @@
 .product-card-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .product-card-actions { align-items: center; gap: 7px; flex-wrap: wrap; }
 .product-card-actions button { border: 1px solid #cbdbea; border-radius: 7px; padding: 7px 10px; background: #fff; color: #1762a5; cursor: pointer; font-size: 12px; font-weight: 700; }
-.detail-modal-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 6px; padding: 12px 14px; border: 1px solid #d7e5f2; border-radius: 12px; background: linear-gradient(135deg, #f7fbff, #eef6fd); box-shadow: 0 5px 14px rgba(24, 74, 119, .08); }
-.detail-modal-action::before { content: 'Document actions'; color: #5e7895; font-size: 12px; font-weight: 700; }
+.detail-modal-action { display: flex; align-items: center; justify-content: flex-start; gap: 16px; margin: 18px 0 6px; padding: 12px 14px; border: 1px solid #d7e5f2; border-radius: 12px; background: linear-gradient(135deg, #f7fbff, #eef6fd); box-shadow: 0 5px 14px rgba(24, 74, 119, .08); }
+.detail-modal-action::before { content: 'Document actions'; margin-right: auto; color: #5e7895; font-size: 12px; font-weight: 700; }
 .detail-modal-action .primary { min-height: 40px; padding: 0 18px; border-radius: 8px; background: #125a9c; box-shadow: 0 4px 10px rgba(18, 90, 156, .2); }
 .detail-modal-action .primary:hover { background: #0d4b84; transform: translateY(-1px); }
 .detail-modal-action .secondary { min-height: 40px; padding: 0 18px; border-radius: 8px; }

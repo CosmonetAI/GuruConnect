@@ -382,7 +382,8 @@ async def create_contact(payload: ContactIn):
         if payload.billing_address: data['billing_address'] = payload.billing_address
         if payload.gst_no.strip(): data['gst_no'] = payload.gst_no.strip()
         result = await zoho.create_books_contact(org, data)
-        return {'contact': result.get('contact'), 'response': result}
+        updated_contact = result.get('contact') or result.get('contact_person') or ((result.get('contact_persons') or [None])[0])
+        return {'contact': updated_contact, 'response': result}
     except HTTPException:
         raise
     except Exception as e:
@@ -439,7 +440,17 @@ async def update_contact(contact_id: str, payload: dict):
             raise HTTPException(409, 'Connect Zoho before updating contacts')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        result = await zoho.update_books_contact(org, contact_id, payload)
+        person_id = payload.pop('contact_person_id', None)
+        person_fields = {'first_name', 'last_name', 'email', 'phone', 'mobile', 'designation', 'department', 'skype', 'fax'}
+        person_payload = {key: value for key, value in payload.items() if key.lower() in person_fields}
+        aliases = {'First_Name': 'first_name', 'Last_Name': 'last_name', 'Email': 'email', 'Phone': 'phone', 'Mobile': 'mobile', 'Title': 'designation', 'Description': 'description'}
+        for key, value in list(payload.items()):
+            if key in aliases:
+                person_payload[aliases[key]] = value
+        if person_id and person_payload:
+            result = await zoho.update_books_contact_person(org, person_id, person_payload)
+        else:
+            result = await zoho.update_books_contact(org, contact_id, payload)
         return {'contact': result.get('contact'), 'response': result}
     except HTTPException:
         raise
