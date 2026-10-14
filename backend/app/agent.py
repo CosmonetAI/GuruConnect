@@ -243,11 +243,11 @@ async def route_node(state: AgentState) -> AgentState:
     if intent == 'customer_lookup':
         plan.append({'tool': 'bigin_contacts', 'reason': 'find the existing Bigin contact'})
     if intent in {'quotation', 'sales_order', 'follow_up'}:
-        plan.append({'tool': 'bigin_context', 'reason': 'prepare CRM enquiry context'})
+        plan.append({'tool': 'books_context', 'reason': 'create/update the customer context in Zoho Books'})
     if intent == 'order_status':
         plan.append({'tool': 'books_sales_orders', 'reason': 'read available order records'})
     if intent in {'general_enquiry', 'human_handoff'}:
-        plan.append({'tool': 'bigin_context', 'reason': 'retain the enquiry context'})
+        plan.append({'tool': 'books_context', 'reason': 'retain the customer context in Zoho Books'})
     state['plan'] = plan
     return state
 
@@ -385,7 +385,7 @@ async def execute_node(state: AgentState) -> AgentState:
             elif tool == 'books_sales_orders':
                 payload = await zoho.list_sales_orders(org) if org else {}
                 results.append({'tool': tool, 'success': True, 'data': {'orders': _extract_rows(payload, 'salesorders', 'data')[:20]}})
-            elif tool == 'bigin_context':
+            elif tool == 'books_context':
                 customer = state['customer']
                 contact_id = customer.get('books_contact_id')
                 if not contact_id:
