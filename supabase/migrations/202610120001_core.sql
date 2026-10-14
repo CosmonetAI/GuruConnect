@@ -34,14 +34,41 @@ create table public.invites (
   invited_by uuid not null references auth.users(id), accepted_by uuid references auth.users(id),
   expires_at timestamptz not null, accepted_at timestamptz, revoked_at timestamptz, created_at timestamptz not null default now()
 );
-create table public.customers (
-  id uuid primary key default gen_random_uuid(), organisation_id uuid not null, owner_id uuid not null,
-  name text not null check (length(name) between 1 and 200), is_unnamed boolean not null default false,
-  notes text not null default '' check (length(notes) <= 2000), created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(), deleted_at timestamptz,
-  foreign key (organisation_id,owner_id) references public.members(organisation_id,user_id),
-  unique (id,organisation_id,owner_id)
-);
+do $$
+begin
+  if to_regclass('public.customers') is null then
+    create table public.customers (
+      id uuid primary key default gen_random_uuid(), organisation_id uuid not null, owner_id uuid not null,
+      name text not null check (length(name) between 1 and 200), is_unnamed boolean not null default false,
+      notes text not null default '' check (length(notes) <= 2000), created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(), deleted_at timestamptz,
+      foreign key (organisation_id,owner_id) references public.members(organisation_id,user_id),
+      unique (id,organisation_id,owner_id)
+    );
+  else
+    -- GG Project may have created public.customers first. Preserve that table
+    -- and add the workspace fields required by the GuruConnect API.
+    alter table public.customers add column if not exists organisation_id uuid;
+    alter table public.customers add column if not exists owner_id uuid;
+    alter table public.customers add column if not exists is_unnamed boolean not null default false;
+    alter table public.customers add column if not exists notes text not null default '';
+    alter table public.customers add column if not exists deleted_at timestamptz;
+    if not exists (
+      select 1 from pg_constraint where conrelid = 'public.customers'::regclass
+        and conname = 'customers_organisation_owner_fk'
+    ) then
+      alter table public.customers add constraint customers_organisation_owner_fk
+        foreign key (organisation_id,owner_id) references public.members(organisation_id,user_id);
+    end if;
+    if not exists (
+      select 1 from pg_constraint where conrelid = 'public.customers'::regclass
+        and conname = 'customers_workspace_identity'
+    ) then
+      alter table public.customers add constraint customers_workspace_identity
+        unique (id,organisation_id,owner_id);
+    end if;
+  end if;
+end $$;
 create table public.engine_connections (
   id uuid primary key default gen_random_uuid(), organisation_id uuid not null references public.organisations(id),
   engine_id text not null check (engine_id in ('elevenlabs','faster-whisper','azure-translator')),
