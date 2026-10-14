@@ -1,4 +1,5 @@
 """Render/container API entrypoint. No shell interpolation or trusted proxy input."""
+import asyncio
 import os
 import sys
 
@@ -15,6 +16,12 @@ def main():
     except Exception:
         print("API startup rejected: verify backend configuration and PORT", file=sys.stderr)
         raise SystemExit(1) from None
+
+    # Psycopg's async connection pool is incompatible with the default
+    # ProactorEventLoop on Windows. Render/Linux keeps its normal policy.
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     uvicorn.run("recorder.main:app", host="0.0.0.0", port=port, proxy_headers=False,
                 access_log=False, timeout_keep_alive=5, timeout_graceful_shutdown=30,
                 server_header=False, date_header=True)

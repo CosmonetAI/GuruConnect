@@ -17,6 +17,13 @@ const WalkinRegistration = lazy(() => import('../pages/Walkins/WalkinRegistratio
 const WalkinDetail = lazy(() => import('../pages/Walkins/WalkinDetail'))
 const MyWalkins = lazy(() => import('../pages/Walkins/MyWalkins'))
 const WalkinHistory = lazy(() => import('../pages/Walkins/WalkinHistory'))
+const AIChats = lazy(() => import('../pages/GGPages').then(module => ({ default: module.AIChats })))
+const Products = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Products })))
+const Contacts = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Contacts })))
+const Quotes = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Quotes })))
+const SalesOrders = lazy(() => import('../pages/GGPages').then(module => ({ default: module.SalesOrders })))
+const PurchaseOrders = lazy(() => import('../pages/GGPages').then(module => ({ default: module.PurchaseOrders })))
+const Invoices = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Invoices })))
 import { useOffice } from '../contexts/OfficeContext'
 
 const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
@@ -54,6 +61,13 @@ export default function App() {
         <Route path="recordings" element={<Recordings />} />
         <Route path="recordings/:id" element={<Recordings />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="ai-chats" element={<AIChats />} />
+        <Route path="products" element={<Products />} />
+        <Route path="contacts" element={<Contacts />} />
+        <Route path="quotes" element={<Quotes />} />
+        <Route path="sales-orders" element={<SalesOrders />} />
+        <Route path="purchase-orders" element={<PurchaseOrders />} />
+        <Route path="invoices" element={<Invoices />} />
       </Route>
       <Route path="*" element={<div style={{padding:20}}>Page not found. Open Overview or Enquiries from the navigation.</div>} />
     </Routes></Suspense>

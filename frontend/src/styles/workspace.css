@@ -14,7 +14,7 @@ h3 { font-size: 16px; }
 input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .app-main { min-width: 0; }
 .app-content { width: 100%; max-width: 1392px; padding: 32px; margin: 0 auto; }
-.sidebar { position: sticky; top: 0; height: 100vh; width: 248px; flex: 0 0 248px; background: #102440; padding: 26px 16px; }
+.sidebar { position: sticky; top: 0; height: 100vh; width: 248px; flex: 0 0 248px; background: #102440; padding: 26px 16px; overflow-y: auto; }
 .sidebar-brand { gap: 10px; padding: 0 4px 28px; }
 .brand-title { font-size: 20px; font-weight: 750; letter-spacing: -.035em; }
 .sidebar-brand small { font-size: 10px; color: #bbcae0; }
