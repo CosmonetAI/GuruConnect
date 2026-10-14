@@ -71,8 +71,8 @@ class ZohoClient:
     async def search_bigin_contacts(self, query, search_by, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 40, 'page': page})
-    async def search_books_contacts(self, org, query, date=None, page=1):
-        params = {'organization_id': org, 'per_page': 10, 'page': page}
+    async def search_books_contacts(self, org, query, date=None, page=1, per_page=10):
+        params = {'organization_id': org, 'per_page': per_page, 'page': page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)

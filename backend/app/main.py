@@ -350,12 +350,35 @@ async def contacts(search: str = '', date: str = '', page: int = 1):
         if date_value:
             rows = [row for row in rows if str(row.get('Created_Time') or row.get('created_time') or '').startswith(date_value)]
         source = 'bigin'
-        if not rows and status.get('organization_id'):
-            books_payload = await zoho.search_books_contacts(status['organization_id'], query, date_value or None, page)
-            rows = books_payload.get('contacts', books_payload.get('data', []))
-            payload = books_payload
-            source = 'books'
-        rows = [{**row, '__source': source} for row in rows if isinstance(row, dict)]
+        if query:
+            if not rows and status.get('organization_id'):
+                books_payload = await zoho.search_books_contacts(status['organization_id'], query, date_value or None, page)
+                rows = books_payload.get('contacts', books_payload.get('data', []))
+                payload = books_payload
+                source = 'books'
+            rows = [{**row, '__source': source} for row in rows if isinstance(row, dict)]
+        else:
+            # Default contact-book view is a combined first page: Bigin records
+            # remain first, and Books fills any space up to the app's page size.
+            bigin_rows = [{**row, '__source': 'bigin'} for row in rows if isinstance(row, dict)]
+            books_rows = []
+            books_payload = {}
+            if len(bigin_rows) < 40 and status.get('organization_id'):
+                books_payload = await zoho.search_books_contacts(status['organization_id'], '', date_value or None, 1, per_page=40)
+                books_rows = [{**row, '__source': 'books'} for row in books_payload.get('contacts', books_payload.get('data', [])) if isinstance(row, dict)]
+            seen = set()
+            rows = []
+            for row in [*bigin_rows, *books_rows]:
+                key = row.get('id') or row.get('contact_id') or row.get('Full_Name') or row.get('contact_name')
+                if key in seen:
+                    continue
+                if key:
+                    seen.add(key)
+                rows.append(row)
+                if len(rows) == 40:
+                    break
+            if books_rows:
+                payload = books_payload
         info = payload.get('info', payload.get('page_context', {}))
         return {'contacts': rows[:40], 'info': info, 'search': query, 'page': page, 'has_more': bool(info.get('more_records') or info.get('has_more_page')), 'search_by': search_by, 'source': source}
     except HTTPException:
