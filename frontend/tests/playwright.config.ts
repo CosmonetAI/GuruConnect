@@ -9,7 +9,7 @@ const environment = {
   SUPABASE_ANON_KEY: '', CREDENTIAL_ENCRYPTION_KEY: '', LOCAL_DATA_DIR: data,
   CORS_ORIGINS: '["http://127.0.0.1:5177","http://localhost:5177"]',
   VITE_SUPABASE_URL: '', VITE_SUPABASE_PUBLISHABLE_KEY: '', VITE_SUPABASE_ANON_KEY: '',
-  VITE_API_BASE_URL: 'http://127.0.0.1:8011',
+      VITE_API_URL: 'http://127.0.0.1:8011',
 }
 export default defineConfig({
   testDir: './browser', fullyParallel: false, workers: 1, forbidOnly: !!process.env.CI,

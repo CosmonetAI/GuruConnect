@@ -7,7 +7,7 @@ const load = () => import('./officeApi')
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks()
   vi.stubEnv('VITE_SUPABASE_URL', ''); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', ''); vi.stubEnv('VITE_SUPABASE_ANON_KEY', '')
-  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8010'); vi.stubEnv('VITE_LOCAL_MODE', ''); vi.stubEnv('DEV', true)
+  vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:8010'); vi.stubEnv('VITE_LOCAL_MODE', ''); vi.stubEnv('DEV', true)
   vi.stubGlobal('location', { hostname: 'localhost' })
   mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'fixture-access-token' } } })
   mocks.createClient.mockReturnValue({ auth: { getSession: mocks.getSession } })
@@ -16,7 +16,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 function cloud() {
   vi.stubEnv('VITE_SUPABASE_URL', 'https://fixture.supabase.co'); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'fixture-public-key')
-  vi.stubEnv('VITE_API_BASE_URL', 'https://fixture-api.example.test')
+  vi.stubEnv('VITE_API_URL', 'https://fixture-api.example.test')
 }
 
 describe('local and authenticated request boundaries', () => {
@@ -39,7 +39,7 @@ describe('local and authenticated request boundaries', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
   it('prevents local requests to an external API address', async () => {
-    vi.stubEnv('VITE_API_BASE_URL', 'https://untrusted.example.test')
+  vi.stubEnv('VITE_API_URL', 'https://untrusted.example.test')
     const api = await load()
     await expect(api.request('/connections')).rejects.toMatchObject({ status: 503, code: 'configuration_missing' })
     expect(fetch).not.toHaveBeenCalled()

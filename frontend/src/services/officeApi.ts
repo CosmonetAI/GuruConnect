@@ -5,11 +5,11 @@ export type ChunkInput = components['schemas']['Chunk'];
 export type ManifestInput = components['schemas']['Manifest'];
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
-export const configured = !!url && !!key && !!import.meta.env.VITE_API_BASE_URL && !url.includes('YOUR_PROJECT');
+export const configured = !!url && !!key && !!import.meta.env.VITE_API_URL && !url.includes('YOUR_PROJECT');
 const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 export const localMode = !configured && loopback && (import.meta.env.DEV || import.meta.env.VITE_LOCAL_MODE === 'true');
 export const supabase = configured ? createClient(url!, key!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-export const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
+export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
 const serviceErrorMessages: Record<string, string> = {
   api_unreachable: localMode ? 'Local services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
   configuration_mismatch: 'The frontend is configured for Supabase but the API is running in local mode. Finish the backend setup for the same project, then restart the API.',

@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 
-const publicNames = new Set(['VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY', 'VITE_SUPABASE_ANON_KEY', 'VITE_API_BASE_URL', 'VITE_LOCAL_MODE']);
+const publicNames = new Set(['VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY', 'VITE_SUPABASE_ANON_KEY', 'VITE_API_URL', 'VITE_LOCAL_MODE']);
 
 function publicOrigin(value, name) {
   let url;
@@ -30,7 +30,7 @@ export function validateProductionConfig(environment) {
   }
   if (environment.VITE_LOCAL_MODE && environment.VITE_LOCAL_MODE !== 'false') throw new Error('Local mode is forbidden in a production release');
   const url = publicOrigin(environment.VITE_SUPABASE_URL, 'VITE_SUPABASE_URL');
-  const api = publicOrigin(environment.VITE_API_BASE_URL, 'VITE_API_BASE_URL');
+  const api = publicOrigin(environment.VITE_API_URL, 'VITE_API_URL');
   const key = publicKey(environment.VITE_SUPABASE_PUBLISHABLE_KEY || environment.VITE_SUPABASE_ANON_KEY || '');
   // Validate both values even when the publishable key takes precedence.
   if (environment.VITE_SUPABASE_ANON_KEY) publicKey(environment.VITE_SUPABASE_ANON_KEY);

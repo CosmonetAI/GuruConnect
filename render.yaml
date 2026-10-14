@@ -15,7 +15,7 @@ services:
         sync: false
       - key: VITE_SUPABASE_PUBLISHABLE_KEY
         sync: false
-      - key: VITE_API_BASE_URL
+      - key: VITE_API_URL
         sync: false
     routes:
       - type: rewrite
@@ -57,6 +57,8 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL
@@ -81,6 +83,18 @@ services:
         value: "20"
       - key: REQUIRE_ADMIN_MFA
         value: "true"
+      - key: ZOHO_ACCOUNTS_URL
+        value: https://accounts.zoho.com
+      - key: ZOHO_API_DOMAIN
+        value: https://www.zohoapis.com
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: ZOHO_REFRESH_CRON_SECRET
+        sync: false
   - type: worker
     name: guruconnect-worker
     runtime: docker
@@ -95,6 +109,8 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      - key: PYTHON_VERSION
+        value: "3.12.8"
       - key: DATABASE_URL
         fromService: {name: guruconnect-api, type: web, envVarKey: DATABASE_URL}
       - key: SUPABASE_URL

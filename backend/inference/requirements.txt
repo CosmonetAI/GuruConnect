@@ -1,0 +1,14 @@
+# DEPLOYMENT BLOCKED: Torch 2.8.0 has known advisories, including an unfixed
+# advisory in the 2026-10-14 scan. This experimental environment is excluded
+# from production Docker/Render. Do not install with customer data or secrets.
+# A compatible resolved dependency upgrade and model security/load tests are
+# required before enabling this optional Python 3.11 process.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+pyannote.audio==4.0.7
+torch==2.8.0
+torchaudio==2.8.0
+torchcodec==0.7.0
+huggingface-hub==0.36.0
+numpy==2.3.5
+httpx==0.28.1

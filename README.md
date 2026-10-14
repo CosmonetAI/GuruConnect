@@ -56,8 +56,8 @@ You can save and play local audio without provider credentials. The worker block
 Local mode remains available until credentials are supplied. The hosted path requires your **new GuruConnect project**; no credentials, recordings or provider settings were copied from Office Recorder.
 
 1. Create the project. Enable email/password Auth, email confirmation and asymmetric JWT signing. Add exact Site URL/callback/reset URLs for the frontend: development `http://127.0.0.1:5176`, `/auth/callback` and `/reset` (also allow localhost if used). Configure production SMTP and password policy before inviting a team.
-2. Copy `frontend/.env.example` to `frontend/.env`, then fill the project's public URL/publishable key, GuruConnect API URL, and (when using the Zoho UI) the GG API URL. Only public values belong in `VITE_` variables.
-3. Copy `backend/.env.guruconnect.example` to `backend/.env` for the existing GuruConnect recorder/worker. Copy `backend/.env.example` to the GG backend environment when running the standalone Zoho sales assistant. Fill the relevant project URL, service-role key, Postgres session-pooler connection URL, and server-only provider settings. Percent-encode password characters such as `@`, `#`, `%`, `/` and `?`. Use `sslmode=verify-full` with the bundled public `supabase-ca.crt`.
+2. Copy `frontend/.env.example` to `frontend/.env`, then fill the project's public URL/publishable key and the single combined backend URL. Only public values belong in `VITE_` variables. Both GuruConnect and Zoho use `VITE_API_URL`.
+3. Copy `backend/.env.example` to `backend/.env`. This is the single backend environment for the recorder, worker, GG chat, and Zoho services. Fill the project URL, service-role key, Postgres session-pooler connection URL, and server-only provider settings. Percent-encode password characters such as `@`, `#`, `%`, `/` and `?`. Use `sslmode=verify-full` with the bundled public `supabase-ca.crt`.
 4. Generate `CREDENTIAL_ENCRYPTION_KEY` with the command below and store it only in the backend environment. API and worker must use the same key. Keep CORS restricted to your exact frontend origins.
 
    ```sh
@@ -93,4 +93,15 @@ npm audit
 Backend tests require development Python requirements installed by setup; some isolation/concurrency checks require native PostgreSQL binaries. Browser tests use installed Chrome, a controlled microphone fixture, disposable local storage and mocked/absent provider credentials. They do not establish live provider accuracy or hosted Supabase deployment readiness. See `docs/VERIFICATION.md` for the actual completed checks and limits.
 
 For deployment, run the API and worker as separate supervised services, set `ENVIRONMENT=production`, apply all migrations, use HTTPS and explicit frontend CORS, configure backups/retention and monitor queue/errors/provider usage. Vite's dev server and localhost mode are not deployment services. Publish the frontend build from `frontend/dist/` with SPA navigation fallback.
+
+### Render backend settings
+
+Use `backend` as the service root directory. Keep one dependency file and use:
+
+```sh
+pip install -r requirements.txt
+python -m recorder.launch
+```
+
+The launch module validates configuration, reads Render’s `PORT`, and serves both GuruConnect `/api/v1/...` and GG/Zoho `/api/...` routes from the same process.
 
