@@ -387,22 +387,19 @@ async def execute_node(state: AgentState) -> AgentState:
                 results.append({'tool': tool, 'success': True, 'data': {'orders': _extract_rows(payload, 'salesorders', 'data')[:20]}})
             elif tool == 'bigin_context':
                 customer = state['customer']
-                contact_id = customer.get('bigin_contact_id')
+                contact_id = customer.get('books_contact_id')
                 if not contact_id:
                     name_parts = str(customer.get('name') or '').split()
-                    contact_payload = await zoho.create_bigin_contact({'First_Name': name_parts[0] if name_parts else customer['name'], 'Last_Name': ' '.join(name_parts[1:]) or '-', 'Email': customer.get('email'), 'Mobile': customer.get('phone'), 'Description': 'Captured through Guru Group AI Sales'})
-                    data = _extract_rows(contact_payload, 'data')
-                    details = data[0].get('details', {}) if data else {}
-                    contact_id = details.get('id')
+                    first_name = name_parts[0] if name_parts else customer['name']
+                    last_name = ' '.join(name_parts[1:])
+                    contact_payload = await zoho.create_books_contact(org, {'contact_name': customer.get('name'), 'contact_type': 'customer', 'customer_sub_type': 'business', 'contact_persons': [{'first_name': first_name, 'last_name': last_name, 'email': customer.get('email'), 'mobile': customer.get('phone'), 'is_primary_contact': True}], 'notes': 'Captured through Guru Group AI Sales'})
+                    contact = contact_payload.get('contact') or {}
+                    contact_id = contact.get('contact_id')
                     if contact_id:
                         with require_db() as db:
-                            db.execute(text('update customers set bigin_contact_id=:id,updated_at=now() where id=:customer'), {'id': contact_id, 'customer': customer['id']}); db.commit()
+                            db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer'), {'id': contact_id, 'customer': customer['id']}); db.commit()
                 note_id = None
-                if contact_id:
-                    note_payload = await zoho.create_note({'Note_Title': f"AI Sales Enquiry - {state['intent']}", 'Note_Content': f"Customer message: {state['message']}", 'Parent_Id': {'id': contact_id}})
-                    note_rows = _extract_rows(note_payload, 'data')
-                    note_id = (note_rows[0].get('details') or {}).get('id') if note_rows else None
-                results.append({'tool': tool, 'success': True, 'data': {'bigin_contact_id': contact_id, 'bigin_note_id': note_id, 'crm_context_created': bool(contact_id)}})
+                results.append({'tool': tool, 'success': True, 'data': {'books_contact_id': contact_id, 'crm_context_created': bool(contact_id)}})
     except Exception as exc:
         results.append({'tool': 'zoho', 'success': False, 'error': str(exc)[:300]})
     state['tool_results'] = results

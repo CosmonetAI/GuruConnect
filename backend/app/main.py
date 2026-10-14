@@ -90,6 +90,13 @@ class ContactIn(BaseModel):
     last_name:str=''
     title:str=''
     email:str=''
+    contact_name:str=''
+    company_name:str=''
+    contact_type:str='customer'
+    customer_sub_type:str='business'
+    billing_address:dict|None=None
+    gst_no:str=''
+    notes:str='Contact created through Cosmonet AI'
 def _db_http_error(error: Exception):
     detail = 'Database unavailable. Configure Render DATABASE_URL with the Supabase IPv4 pooler URI and redeploy.'
     if isinstance(error, OperationalError):
@@ -142,6 +149,21 @@ async def products(search: str = '', date: str = '', page: int = 1):
         raise
     except Exception as e:
         raise HTTPException(502, f'Unable to search Zoho Books items: {e}')
+@app.post('/api/products')
+async def create_product(payload: dict):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        item_name = str(payload.get('name') or payload.get('item_name') or '').strip()
+        if not item_name: raise HTTPException(422, 'Product name is required')
+        if payload.get('rate') in (None, ''): raise HTTPException(422, 'Selling rate is required')
+        data = {key: value for key, value in payload.items() if value not in (None, '')}
+        data['name'] = data['item_name'] = item_name; data['rate'] = float(data['rate'])
+        if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
+        result = await zoho.create_books_item(org, data)
+        return {'item': result.get('item'), 'response': result}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books item: {e}')
 @app.get('/api/books/customers')
 async def books_customers(search: str = '', date: str = ''):
     query = search.strip()
@@ -350,15 +372,21 @@ async def create_contact(payload: ContactIn):
     try:
         if not zoho.status().get('connected'):
             raise HTTPException(409, 'Connect Zoho before creating contacts')
-        data = {'First_Name': payload.first_name.strip(), 'Mobile': mobile, 'Description': 'Created via Cosmonet'}
-        for key, value in (('Last_Name', payload.last_name), ('Title', payload.title), ('Email', payload.email)):
-            if value and value.strip(): data[key] = value.strip()
-        result = await zoho.create_bigin_contact(data)
-        return {'contact': (result.get('data') or [None])[0], 'response': result}
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        first_name = payload.first_name.strip(); last_name = payload.last_name.strip()
+        data = {'contact_name': payload.contact_name.strip() or ' '.join(part for part in (first_name, last_name) if part), 'contact_type': payload.contact_type or 'customer', 'customer_sub_type': payload.customer_sub_type or 'business', 'contact_persons': [{'first_name': first_name, 'last_name': last_name, 'mobile': mobile, 'is_primary_contact': True}], 'notes': payload.notes or 'Contact created through Cosmonet AI'}
+        if payload.company_name.strip(): data['company_name'] = payload.company_name.strip()
+        if payload.email.strip(): data['contact_persons'][0]['email'] = payload.email.strip()
+        if payload.title.strip(): data['contact_persons'][0]['designation'] = payload.title.strip()
+        if payload.billing_address: data['billing_address'] = payload.billing_address
+        if payload.gst_no.strip(): data['gst_no'] = payload.gst_no.strip()
+        result = await zoho.create_books_contact(org, data)
+        return {'contact': result.get('contact'), 'response': result}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f'Unable to create Bigin contact: {e}')
+        raise HTTPException(502, f'Unable to create Zoho Books contact: {e}')
 async def _update_books_record(update_fn, record_id: str, payload: dict):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org:
@@ -375,22 +403,32 @@ async def _update_books_record(update_fn, record_id: str, payload: dict):
 @app.put('/api/products/{item_id}')
 async def update_product(item_id: str, payload: dict):
     return {'item': await _update_books_record(zoho.update_books_item, item_id, payload)}
+@app.delete('/api/products/{item_id}')
+async def delete_product(item_id: str): return await _delete_books_record(zoho.delete_books_item, item_id)
 
 @app.put('/api/quotes/{estimate_id}')
 async def update_quote(estimate_id: str, payload: dict):
     return {'quote': await _update_books_record(zoho.update_estimate, estimate_id, payload)}
+@app.delete('/api/quotes/{estimate_id}')
+async def delete_quote(estimate_id: str): return await _delete_books_record(zoho.delete_estimate, estimate_id)
 
 @app.put('/api/orders/{salesorder_id}')
 async def update_order(salesorder_id: str, payload: dict):
     return {'order': await _update_books_record(zoho.update_sales_order, salesorder_id, payload)}
+@app.delete('/api/orders/{salesorder_id}')
+async def delete_order(salesorder_id: str): return await _delete_books_record(zoho.delete_sales_order, salesorder_id)
 
 @app.put('/api/purchase-orders/{purchaseorder_id}')
 async def update_purchase_order(purchaseorder_id: str, payload: dict):
     return {'purchase_order': await _update_books_record(zoho.update_purchase_order, purchaseorder_id, payload)}
+@app.delete('/api/purchase-orders/{purchaseorder_id}')
+async def delete_purchase_order(purchaseorder_id: str): return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id)
 
 @app.put('/api/invoices/{invoice_id}')
 async def update_invoice(invoice_id: str, payload: dict):
     return {'invoice': await _update_books_record(zoho.update_invoice, invoice_id, payload)}
+@app.delete('/api/invoices/{invoice_id}')
+async def delete_invoice(invoice_id: str): return await _delete_books_record(zoho.delete_invoice, invoice_id)
 
 @app.put('/api/contacts/{contact_id}')
 async def update_contact(contact_id: str, payload: dict):
@@ -399,16 +437,26 @@ async def update_contact(contact_id: str, payload: dict):
     try:
         if not zoho.status().get('connected'):
             raise HTTPException(409, 'Connect Zoho before updating contacts')
-        result = await zoho.update_bigin_contact(contact_id, payload)
-        return {'contact': (result.get('data') or [None])[0], 'response': result}
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        result = await zoho.update_books_contact(org, contact_id, payload)
+        return {'contact': result.get('contact'), 'response': result}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f'Unable to update Bigin contact: {e}')
+        raise HTTPException(502, f'Unable to update Zoho Books contact: {e}')
 
 @app.put('/api/books/contacts/{contact_id}')
 async def update_books_contact(contact_id: str, payload: dict):
     return {'contact': await _update_books_record(zoho.update_books_contact, contact_id, payload)}
+async def _delete_books_record(delete_fn, record_id: str):
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    try: return await delete_fn(org, record_id)
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Books record: {e}')
+@app.delete('/api/contacts/{contact_id}')
+async def delete_contact(contact_id: str): return await _delete_books_record(zoho.delete_books_contact, contact_id)
 
 @app.post('/api/internal/zoho/refresh')
 async def zoho_refresh_cron(x_zoho_refresh_secret: str|None = Header(default=None)):

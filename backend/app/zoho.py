@@ -76,9 +76,9 @@ class ZohoClient:
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)
+    async def create_books_contact(self, org, data): return await self.request('POST','/books/v3/contacts',params={'organization_id':org},json=data)
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
-    async def create_bigin_contact(self,data): return await self.request('POST','/bigin/v2/Contacts',json={'data':[data]})
-    async def update_bigin_contact(self,contact_id,data): return await self.request('PUT',f'/bigin/v2/Contacts/{contact_id}',json={'data':[data]})
+    async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def list_pipelines(self): return await self.request('GET','/bigin/v2/Pipelines',params={'per_page':200,'page':1})
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
@@ -105,6 +105,8 @@ class ZohoClient:
         return await self.request('GET','/books/v3/items',params=params)
     async def books_item(self,org,item_id): return await self.request('GET',f'/books/v3/items/{item_id}',params={'organization_id':org})
     async def update_books_item(self,org,item_id,data): return await self.request('PUT',f'/books/v3/items/{item_id}',params={'organization_id':org},json=data)
+    async def create_books_item(self,org,data): return await self.request('POST','/books/v3/items',params={'organization_id':org},json=data)
+    async def delete_books_item(self,org,item_id): return await self.request('DELETE',f'/books/v3/items/{item_id}',params={'organization_id':org})
     async def books_item_masters(self,org,filters=None):
         params={'organization_id':org,'status':'active','per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'name_contains','search_text'}}); return await self.request('GET','/books/v3/itemmasters',params=params)
     async def books_item_variants(self,org,filters=None):
@@ -122,6 +124,7 @@ class ZohoClient:
     async def books_estimate(self,org,estimate_id): return await self.request('GET',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
     async def create_estimate(self,org,data): return await self.request('POST','/books/v3/estimates',params={'organization_id':org},json=data)
     async def update_estimate(self,org,estimate_id,data): return await self.request('PUT',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org},json=data)
+    async def delete_estimate(self,org,estimate_id): return await self.request('DELETE',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
     async def accept_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/accepted',params={'organization_id':org},json={})
     async def email_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json={})
     async def list_sales_orders(self,org): return await self.request('GET','/books/v3/salesorders',params={'organization_id':org,'per_page':200,'page':1})
@@ -142,12 +145,15 @@ class ZohoClient:
         return await self.request('GET','/books/v3/invoices',params=params)
     async def create_sales_order(self,org,data): return await self.request('POST','/books/v3/salesorders',params={'organization_id':org},json=data)
     async def update_sales_order(self,org,order_id,data): return await self.request('PUT',f'/books/v3/salesorders/{order_id}',params={'organization_id':org},json=data)
+    async def delete_sales_order(self,org,order_id): return await self.request('DELETE',f'/books/v3/salesorders/{order_id}',params={'organization_id':org})
     async def email_sales_order(self,org,order_id): return await self.request('POST',f'/books/v3/salesorders/{order_id}/email',params={'organization_id':org},json={})
     async def create_purchase_order(self,org,data): return await self.request('POST','/books/v3/purchaseorders',params={'organization_id':org},json=data)
     async def update_purchase_order(self,org,order_id,data): return await self.request('PUT',f'/books/v3/purchaseorders/{order_id}',params={'organization_id':org},json=data)
+    async def delete_purchase_order(self,org,order_id): return await self.request('DELETE',f'/books/v3/purchaseorders/{order_id}',params={'organization_id':org})
     async def email_purchase_order(self,org,order_id): return await self.request('POST',f'/books/v3/purchaseorders/{order_id}/email',params={'organization_id':org},json={})
     async def create_invoice(self,org,data): return await self.request('POST','/books/v3/invoices',params={'organization_id':org},json=data)
     async def update_invoice(self,org,invoice_id,data): return await self.request('PUT',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org},json=data)
+    async def delete_invoice(self,org,invoice_id): return await self.request('DELETE',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org})
     async def email_invoice(self,org,invoice_id): return await self.request('POST',f'/books/v3/invoices/{invoice_id}/email',params={'organization_id':org},json={})
     async def list_invoices(self,org): return await self.request('GET','/books/v3/invoices',params={'organization_id':org,'per_page':200,'page':1})
 
