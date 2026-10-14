@@ -1,6 +1,5 @@
 """Independent localhost persistence and exact recording API contracts."""
 import hashlib
-import json
 import os
 import time
 from uuid import uuid4
@@ -11,7 +10,7 @@ import pytest
 from recorder.audio import pcm_to_wav
 from recorder.config import Settings
 from recorder.local_api import create_local_app
-from recorder.local_store import LOCAL_WORKSPACE_ID, LocalStore
+from recorder.local_store import LOCAL_WORKSPACE_ID
 
 
 @pytest.fixture
@@ -129,8 +128,9 @@ def test_provider_keys_are_encrypted_private_and_omitted_from_all_responses(api)
     assert secret not in first.text + client.get("/api/v1/connections").text
     assert secret.encode() not in store.database.read_bytes()
     assert store.secrets("openai-translator")["api_key"] == secret
-    assert os.stat(settings.local_data_dir / "credentials.key").st_mode & 0o777 == 0o600
-    assert os.stat(settings.local_data_dir).st_mode & 0o777 == 0o700
+    if os.name == "posix":
+        assert os.stat(settings.local_data_dir / "credentials.key").st_mode & 0o777 == 0o600
+        assert os.stat(settings.local_data_dir).st_mode & 0o777 == 0o700
 
 
 def test_connection_rotations_reject_stale_generation_without_replacing_key(api):

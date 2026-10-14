@@ -35,7 +35,7 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <AppLayout />
+            <ScopedLayout />
           </ProtectedRoute>
         }
       >
@@ -57,4 +57,11 @@ export default function App() {
       <Route path="*" element={<div style={{padding:20}}>Page not found. Open Overview or Enquiries from the navigation.</div>} />
     </Routes></Suspense>
   )
+}
+
+function ScopedLayout() {
+  const { user, workspace } = useOffice()
+  // Tear down pending page state when the security context changes. Async hooks
+  // still check their identity tickets before accepting late responses.
+  return <AppLayout key={`${user?.id}:${workspace?.id}`} />
 }

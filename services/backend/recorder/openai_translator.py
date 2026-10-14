@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 
 import httpx
 
-from .providers import ProviderError, _TERMS, language_code
+from .providers import ProviderError, _TERMS, bounded_request, language_code
 
 MODEL = "gpt-5.6-luna"
 OPENAI_TRANSLATION_MODEL = MODEL
@@ -248,7 +248,9 @@ class OpenAITranslator:
             }
         try:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
-                response = await client.get(f"{API_ORIGIN}/models/{MODEL}", headers={"Authorization": f"Bearer {self.key}"})
+                response = await bounded_request(client, "GET", f"{API_ORIGIN}/models/{MODEL}",
+                                                 max_bytes=MAX_RESPONSE_BYTES, timeout=20,
+                                                 headers={"Authorization": f"Bearer {self.key}"})
         except httpx.RequestError:
             raise ProviderError("provider_connection_failed", retryable=True) from None
         model = _checked_response(response, paid=False)
@@ -305,7 +307,9 @@ class OpenAITranslator:
         }
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15), follow_redirects=False, trust_env=False) as client:
-                response = await client.post(f"{API_ORIGIN}/responses", headers={"Authorization": f"Bearer {self.key}"}, json=payload)
+                response = await bounded_request(client, "POST", f"{API_ORIGIN}/responses",
+                                                 max_bytes=MAX_RESPONSE_BYTES, paid=True, timeout=90,
+                                                 headers={"Authorization": f"Bearer {self.key}"}, json=payload)
         except (httpx.TimeoutException, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError):
             raise ProviderError("translator_execution_uncertain", uncertain=True) from None
         except httpx.RequestError:

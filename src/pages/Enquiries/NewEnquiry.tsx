@@ -266,7 +266,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
       const data = parsed.data
       const walkinService = conversion ? await import('../../services/walkinService') : null
       if (conversion) {
-        const visit = await walkinService!.getWalkinVisit(conversion.visitId)
+        const visit = await walkinService!.getWalkinVisit(workspace.id, conversion.visitId)
         if (!visit) throw new Error('The source walk-in visit was not found. Your enquiry has not been submitted.')
         if (visit.convertedEnquiryReference) { allowLeave.current = true; navigate(`/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}`); return }
         if (!['Requirements Captured', 'Follow-up Required'].includes(visit.status)) throw new Error('Save and review the walk-in requirements before creating its enquiry.')
@@ -297,7 +297,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
         ...(conversion ? { sourceEventId: `walkin:${conversion.visitId}` } : {}),
       }, conversion ? `walkin:${conversion.visitId}` : saveKey)
       let draftCleanupMessage = ''
-      if (conversion) { try { await walkinService!.markWalkinConverted(conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
+      if (conversion && walkinService!.isWalkinDemoMode()) { try { await walkinService!.markWalkinConverted(workspace.id, conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
       try {
         sessionStorage.removeItem(storageKey)
       } catch {

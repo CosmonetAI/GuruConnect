@@ -1,5 +1,7 @@
 import hashlib
 import json
+import math
+import re
 from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials
@@ -16,10 +18,16 @@ router = APIRouter(prefix="/internal/v1")
 async def internal_worker(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
     if not credentials or credentials.scheme.lower() != "bearer":
         fail("worker_authentication_required", 401)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,512}", credentials.credentials):
+        fail("worker_credentials_revoked_or_invalid", 401)
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "select w.* from inference_workers w join engine_connections c on c.id=w.connection_id where w.token_hash=%s and w.revoked_at is null and w.state<>'revoked' and w.connection_generation=c.generation and c.state in ('configured','checking','connected','degraded','disabled')", (token_hash(credentials.credentials),))
+        row = await one(connection, "select w.* from inference_workers w join engine_connections c on c.id=w.connection_id and c.organisation_id=w.organisation_id where w.token_hash=%s and w.revoked_at is null and w.state<>'revoked' and w.connection_generation=c.generation and c.engine_id='faster-whisper' and c.state in ('configured','checking','connected','degraded','disabled')", (token_hash(credentials.credentials),))
         if not row:
             fail("worker_credentials_revoked_or_invalid", 401)
+        allowance = await one(connection, "select allow_api_request(%s,%s,60) as allowed",
+                              (f"worker:{row['id']}", request.app.state.settings.rate_limit_per_minute))
+        if not allowance or not allowance["allowed"]:
+            fail("request_rate_limit", 429)
     return row
 
 
@@ -27,7 +35,7 @@ async def internal_worker(request: Request, credentials: HTTPAuthorizationCreden
 async def heartbeat(body: s.WorkerHeartbeat, request: Request, worker: dict = Depends(internal_worker)):
     if set(body.metrics) - {"gpu_memory_mb", "gpu_utilization", "queue_delay_seconds", "processing_seconds", "memory_mb"}:
         fail("unsupported_worker_metric")
-    if any(value < 0 or value > 1e9 for value in body.metrics.values()):
+    if any(not math.isfinite(value) or value < 0 or value > 1e9 for value in body.metrics.values()):
         fail("invalid_worker_metric")
     async with request.app.state.db.connection() as connection:
         await connection.execute("update inference_workers set state=%s,last_seen_at=now(),model_version=%s,metrics=%s where id=%s and revoked_at is null", ("ready" if body.ready else "degraded", body.model_version, Jsonb(body.metrics), worker["id"]))
@@ -87,10 +95,12 @@ async def artifact_confirm(job_id: UUID, body: s.ArtifactUpload, request: Reques
     if len(data) != body.bytes or hashlib.sha256(data).hexdigest() != body.sha256:
         fail("artifact_integrity_failed", 422)
     try:
-        content = json.loads(data)
+        def invalid_constant(_value):
+            raise ValueError()
+        content = json.loads(data, parse_constant=invalid_constant)
         if not isinstance(content, dict):
             raise ValueError()
-    except ValueError:
+    except (ValueError, RecursionError):
         fail("invalid_json_artifact", 422)
     async with request.app.state.db.connection() as connection:
         await active_worker_job(connection, worker, job_id, body)
@@ -114,12 +124,25 @@ async def renew(job_id: UUID, body: s.WorkerLease, request: Request, worker: dic
 
 @router.post("/jobs/{job_id}/result")
 async def result(job_id: UUID, body: s.WorkerResult, request: Request, worker: dict = Depends(internal_worker)):
+    # Source/English word lists share one aggregate allowance. Bounding only
+    # each segment permits a quadratic-sized payload and publication workload.
+    segments = (body.source_segments or []) + (body.english_segments or [])
+    if sum(len(segment.words or []) for segment in segments) > 50000:
+        fail("worker_result_too_large", 422)
+    try:
+        if len(json.dumps(body.provenance, allow_nan=False).encode()) > 8192:
+            fail("invalid_worker_provenance", 422)
+    except (ValueError, TypeError, RecursionError):
+        fail("invalid_worker_provenance", 422)
+    for field in ("additional_source_pass", "speaker_only_retry", "session_speakers_unresolved"):
+        if field in body.provenance and not isinstance(body.provenance[field], bool):
+            fail("invalid_worker_provenance", 422)
     async with request.app.state.db.connection() as connection:
         job = await worker_job(connection, worker, job_id)
         duration = (int(job["payload"]["sample_end"]) - int(job["payload"].get("sample_start", 0))) / 16000
         if body.english_segments is None:
             fail("native_english_result_required", 422)
-        for segment in (body.source_segments or []) + body.english_segments:
+        for segment in segments:
             if segment.end > duration + .25:
                 fail("result_audio_range_exceeded", 422)
             for word in segment.words or []:

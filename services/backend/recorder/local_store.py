@@ -8,13 +8,13 @@ import hashlib
 import hmac
 import json
 import os
-import fcntl
 from pathlib import Path
 import sqlite3
 import time
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
+from filelock import FileLock
 
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
 LOCAL_WORKSPACE_ID = "00000000-0000-0000-0000-000000000002"
@@ -39,15 +39,16 @@ class LocalStore:
         os.chmod(self.root, 0o700)
         self.database = self.root / "guruconnect.sqlite3"
         key_path = self.root / "credentials.key"
-        descriptor = os.open(key_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        with os.fdopen(descriptor, "r+b") as file:
-            fcntl.flock(file.fileno(), fcntl.LOCK_EX)
-            self._key = file.read().strip()
-            if not self._key:
-                self._key = Fernet.generate_key()
-                file.write(self._key); file.flush(); os.fsync(file.fileno())
-            fcntl.flock(file.fileno(), fcntl.LOCK_UN)
-        os.chmod(key_path, 0o600)
+        # Lock a separate file so the native Windows lock cannot block key I/O.
+        with FileLock(self.root / "credentials.key.lock", mode=0o600):
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(key_path, flags, 0o600)
+            with os.fdopen(descriptor, "r+b") as file:
+                self._key = file.read().strip()
+                if not self._key:
+                    self._key = Fernet.generate_key()
+                    file.write(self._key); file.flush(); os.fsync(file.fileno())
+            os.chmod(key_path, 0o600)
         self._fernet = Fernet(self._key)
         self._signing_key = base64.urlsafe_b64decode(self._key)
         with self.transaction() as db:

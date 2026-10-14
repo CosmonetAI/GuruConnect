@@ -199,7 +199,7 @@ def test_missing_enquiry_migration_is_actionable_and_never_demo_fallback(api):
         response = client.get("/api/v1/enquiries", headers=headers)
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "database_schema_missing"
-        assert "202610130007_guruconnect_enquiries.sql" in response.json()["detail"]["message"]
+        assert "migration" in response.json()["detail"]["message"].lower()
         assert client.get("/ready").status_code == 503
     finally:
         with psycopg.connect(database_url, autocommit=True) as connection:

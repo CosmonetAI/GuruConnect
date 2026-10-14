@@ -13,6 +13,7 @@ from recorder.config import Settings
 from recorder.main import create_app
 
 ROOT = Path(__file__).resolve().parents[2]
+MIGRATIONS = sorted((ROOT / "supabase/migrations").glob("*.sql"))
 
 
 @pytest.fixture
@@ -52,10 +53,10 @@ def configured_settings(database_url="postgresql:///test"):
     )
 
 
-@pytest.mark.parametrize("migration_count", [0, 1, 3, 4, 5, 6, 7])
+@pytest.mark.parametrize("migration_count", range(len(MIGRATIONS) + 1))
 def test_ready_requires_complete_migrations(database_url, migration_count):
     migrations = sorted((ROOT / "supabase/migrations").glob("*.sql"))
-    assert len(migrations) == 7
+    assert migrations == MIGRATIONS
     with psycopg.connect(database_url, autocommit=True) as connection:
         for migration in migrations[:migration_count]:
             # The fixture emulates pgmq because stock PostgreSQL lacks it.
@@ -66,7 +67,7 @@ def test_ready_requires_complete_migrations(database_url, migration_count):
         response = client.get("/ready")
         assert client.get("/health").status_code == 200
         assert response.headers["cache-control"] == "no-store"
-        if migration_count < 7:
+        if migration_count < len(migrations):
             assert response.status_code == 503
             assert response.json() == {"status": "not_ready", "code": "database_schema_missing"}
         else:

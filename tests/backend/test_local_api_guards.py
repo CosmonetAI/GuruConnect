@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from recorder.config import Settings
 from recorder.local_store import LOCAL_WORKSPACE_ID, LocalStore
 from recorder.main import create_app
@@ -26,13 +27,8 @@ def client(app, peer="127.0.0.1"):
 
 
 def test_production_missing_configuration_never_enables_local_no_login(tmp_path):
-    app = create_app(Settings(_env_file=None, environment="production", local_data_dir=tmp_path), allow_local=True)
-    assert not hasattr(app.state, "local_store")
-    with TestClient(app) as http:
-        assert http.get("/ready").status_code == 503
-        assert http.get("/ready").json()["code"] == "configuration_missing"
-        assert http.get("/api/v1/enquiries").status_code == 401
-        assert http.get("/api/v1/workspaces").status_code == 401
+    with pytest.raises(ValidationError, match="Staging/production requires"):
+        create_app(Settings(_env_file=None, environment="production", local_data_dir=tmp_path), allow_local=True)
     assert not (tmp_path / "guruconnect.sqlite3").exists()
 
 
@@ -141,9 +137,10 @@ def test_local_secrets_are_encrypted_with_private_files_and_generation_fences(tm
     with store.transaction() as db:
         ciphertext = db.execute("select ciphertext from secrets where engine='elevenlabs'").fetchone()[0]
     assert "fixture-second-private-key" not in ciphertext
-    assert os.stat(store.root).st_mode & 0o777 == 0o700
-    assert os.stat(store.database).st_mode & 0o777 == 0o600
-    assert os.stat(store.root / "credentials.key").st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert os.stat(store.root).st_mode & 0o777 == 0o700
+        assert os.stat(store.database).st_mode & 0o777 == 0o600
+        assert os.stat(store.root / "credentials.key").st_mode & 0o777 == 0o600
 
 
 def test_local_signed_tokens_are_expiring_purpose_and_object_bound(tmp_path):

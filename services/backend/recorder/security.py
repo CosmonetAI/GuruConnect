@@ -21,50 +21,101 @@ class User:
     id: UUID
     email: str
     name: str
+    aal: str = "aal1"
 
 
 class JWTVerifier:
     """Short-lived JWKS cache with one refresh for unknown rotation keys."""
+    JWKS_TIMEOUT_SECONDS = 8
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.keys: dict = {}
         self.cached_at = 0.0
         self.last_fetch_at = 0.0
+        self.fetch_failed = False
         self.lock = asyncio.Lock()
+
+    async def refresh_keys(self):
+        now = time.monotonic()
+        if now - self.last_fetch_at < 10:
+            if self.fetch_failed or not self.keys:
+                fail("auth_temporarily_unavailable", 503)
+            return
+        self.last_fetch_at = now
+        self.fetch_failed = True
+        async with asyncio.timeout(self.JWKS_TIMEOUT_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3), follow_redirects=False, trust_env=False) as client:
+            async with client.stream("GET", f"{self.settings.issuer}/.well-known/jwks.json") as response:
+                if response.status_code != 200:
+                    fail("auth_temporarily_unavailable", 503)
+                payload = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(payload) + len(chunk) > 262144:
+                        fail("auth_temporarily_unavailable", 503)
+                    payload.extend(chunk)
+        try:
+            items = json.loads(payload)["keys"]
+            if not isinstance(items, list) or not 1 <= len(items) <= 64:
+                raise ValueError()
+            keys = {}
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValueError()
+                kid = item.get("kid")
+                if not isinstance(kid, str) or not 1 <= len(kid) <= 200 or kid in keys:
+                    raise ValueError()
+                if item.get("use", "sig") != "sig" or "verify" not in item.get("key_ops", ["verify"]):
+                    continue
+                keys[kid] = item
+            if not keys:
+                raise ValueError()
+        except (ValueError, KeyError, TypeError, RecursionError):
+            fail("auth_temporarily_unavailable", 503)
+        self.keys = keys
+        self.cached_at = time.monotonic()
+        self.fetch_failed = False
 
     async def verify(self, token: str) -> User:
         if not self.settings.supabase_url:
             fail("auth_not_configured", 503)
         try:
+            if not isinstance(token, str) or not 1 <= len(token) <= 16384:
+                fail("invalid_session", 401)
             header = jwt.get_unverified_header(token)
-            if header.get("alg") not in {"ES256", "RS256"} or not isinstance(header.get("kid"), str):
+            if (header.get("alg") not in {"ES256", "RS256"} or not isinstance(header.get("kid"), str)
+                    or not 1 <= len(header["kid"]) <= 200 or header.get("crit")):
                 fail("invalid_session", 401)
             for force in (False, True):
                 async with self.lock:
                     if force or time.monotonic() - self.cached_at > 300 or not self.keys:
-                        if force and time.monotonic() - self.last_fetch_at < 10:
-                            break
-                        self.last_fetch_at = time.monotonic()
-                        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-                            response = await client.get(f"{self.settings.issuer}/.well-known/jwks.json")
-                            response.raise_for_status()
-                            self.keys = {item["kid"]: item for item in response.json()["keys"]}
-                            self.cached_at = time.monotonic()
+                        await self.refresh_keys()
                     key = self.keys.get(header["kid"])
                 if key:
                     break
             if not key or key.get("alg", header["alg"]) != header["alg"]:
                 fail("invalid_session", 401)
-            claims = jwt.decode(token, jwt.PyJWK.from_dict(key).key, algorithms=[header["alg"]],
+            if ((header["alg"] == "ES256" and (key.get("kty") != "EC" or key.get("crv") != "P-256"))
+                    or (header["alg"] == "RS256" and key.get("kty") != "RSA")):
+                fail("invalid_session", 401)
+            public_key = jwt.PyJWK.from_dict(key).key
+            if header["alg"] == "RS256" and public_key.key_size < 2048:
+                fail("invalid_session", 401)
+            claims = jwt.decode(token, public_key, algorithms=[header["alg"]],
                                 audience=self.settings.jwt_audience, issuer=self.settings.issuer,
                                 options={"require": ["exp", "iat", "sub", "aud", "iss"]}, leeway=10)
             if claims.get("role") != "authenticated":
                 fail("invalid_session", 401)
             meta = claims.get("user_metadata") or {}
-            return User(UUID(claims["sub"]), str(claims.get("email", "")), str(meta.get("display_name") or meta.get("full_name") or "Salesperson")[:120])
-        except (jwt.PyJWTError, ValueError, KeyError, TypeError):
+            if not isinstance(meta, dict) or not isinstance(claims["sub"], str):
+                fail("invalid_session", 401)
+            aal = claims.get("aal", "aal1")
+            if aal not in {"aal1", "aal2"}:
+                fail("invalid_session", 401)
+            return User(UUID(claims["sub"]), str(claims.get("email", ""))[:254],
+                        str(meta.get("display_name") or meta.get("full_name") or "Salesperson")[:120], aal)
+        except (jwt.PyJWTError, ValueError, KeyError, TypeError, RecursionError):
             fail("invalid_or_expired_session", 401)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TimeoutError):
             fail("auth_temporarily_unavailable", 503)
 
 
@@ -82,8 +133,11 @@ class SecretBox:
 
     def decrypt(self, ciphertext: str) -> dict:
         try:
-            return json.loads(self.fernet.decrypt(ciphertext.encode()))
-        except (InvalidToken, ValueError):
+            result = json.loads(self.fernet.decrypt(ciphertext.encode()))
+            if not isinstance(result, dict):
+                raise ValueError()
+            return result
+        except (InvalidToken, ValueError, TypeError, AttributeError):
             fail("credential_decryption_failed", 503)
 
 
@@ -124,9 +178,11 @@ async def workspace(request: Request, user: User = Depends(current_user),
     return Workspace(x_workspace_id, user, member["role"])
 
 
-async def administrator(context: Workspace = Depends(workspace)) -> Workspace:
+async def administrator(request: Request, context: Workspace = Depends(workspace)) -> Workspace:
     if not context.admin:
         fail("administrator_required", 403)
+    if request.app.state.settings.require_admin_mfa and context.user.aal != "aal2":
+        fail("mfa_required", 403)
     return context
 
 

@@ -104,7 +104,17 @@ class LocalWorker:
                     if start != position:
                         raise ProviderError("invalid_audio")
                     path = Path(row["path"])
-                    data = path.read_bytes()
+                    # Validate the generated conversation directory and use a
+                    # bounded read so a modified/symlinked chunk cannot pull an
+                    # arbitrary local file into a provider submission.
+                    expected_path = self.store.chunk_path(conversation_id, row["part_id"], row["sequence"])
+                    if path != expected_path or not path.resolve().is_relative_to(self.store.root):
+                        raise ProviderError("invalid_audio")
+                    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    with os.fdopen(descriptor, "rb") as source:
+                        data = source.read(160000 * 2 + 4097)
+                    if len(data) > 160000 * 2 + 4096:
+                        raise ProviderError("invalid_audio")
                     info = validate_wav(data, int(row["sample_count"]))
                     if info.sha256 != row["sha256"] or len(data) != int(row["bytes"]):
                         raise ProviderError("input_hash_mismatch")

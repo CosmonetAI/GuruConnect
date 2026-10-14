@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, ClipboardPlus } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput } from '../../types/walkin'
 import { isWalkinDemoMode, registerWalkin } from '../../services/walkinService'
+import { useOffice } from '../../contexts/OfficeContext'
 import './Walkins.css'
 
 const registrationSchema = z.object({
@@ -24,19 +25,23 @@ const initialValues: FormValues = {
 }
 
 export default function WalkinRegistration() {
+  const { workspace } = useOffice()
   const navigate = useNavigate()
   const [form, setForm] = useState(initialValues)
   const [errors, setErrors] = useState<FormErrors>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [saveKey, setSaveKey] = useState(() => crypto.randomUUID())
 
   const update = <K extends keyof FormValues>(field: K, value: FormValues[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
+    setSaveKey(crypto.randomUUID())
     setErrors((previous) => ({ ...previous, [field]: undefined }))
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!workspace || saving) return
     setError('')
     const parsed = registrationSchema.safeParse(form)
     if (!parsed.success) {
@@ -67,7 +72,7 @@ export default function WalkinRegistration() {
       appointmentReference: '',
       internalNotes: '',
       }
-      const visit = await registerWalkin(input)
+      const visit = await registerWalkin(workspace.id, input, saveKey)
       navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}.` } })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
@@ -101,7 +106,7 @@ export default function WalkinRegistration() {
         </section>
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
-        <div className="walkin-form-actions"><Link className="walkin-button secondary" to="/walkins">Cancel</Link><button className="walkin-button primary" type="submit" disabled={saving}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
+        <div className="walkin-form-actions"><Link className="walkin-button secondary" to="/walkins">Cancel</Link><button className="walkin-button primary" type="submit" disabled={saving || !workspace}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
       </form>
     </div>
   )

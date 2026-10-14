@@ -14,11 +14,13 @@ from .connection_routes import router as connection_router
 from .db import Database, one
 from .enquiry_routes import router as enquiry_router
 from .internal_routes import router as internal_router
+from .middleware import RequestBoundary, security_headers
 from .recording_routes import router as recording_router
 from .routes import router as public_router
 from .security import JWTVerifier
 from .storage import Storage
 from .transcript_routes import router as transcript_router
+from .walkin_routes import router as walkin_router
 
 log = logging.getLogger("recorder.api")
 
@@ -36,6 +38,10 @@ select
     and to_regclass('public.audit_events') is not null
     and to_regclass('public.transcript_versions') is not null
     and to_regclass('public.guruconnect_enquiries') is not null
+    and to_regclass('public.guruconnect_walkin_visits') is not null
+    and to_regclass('public.guruconnect_walkin_history') is not null
+    and to_regclass('public.guruconnect_walkin_agents') is not null
+    and to_regclass('public.guruconnect_walkin_recordings') is not null
     and to_regclass('recorder_private.conversation_requests') is not null
     and to_regprocedure('public.create_workspace(uuid,text)') is not null
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
@@ -50,56 +56,49 @@ select
 
 def create_app(settings=None, *, allow_local=False):
     settings = settings or get_settings()
-    if allow_local and settings.environment in {"development", "local"} and not settings.configured:
+    if allow_local and settings.environment in {"development", "local"} and not settings.has_cloud_configuration:
         from .local_api import create_local_app
         return create_local_app(settings)
 
     @asynccontextmanager
     async def lifespan(app):
         await app.state.db.open()
-        yield
-        await app.state.db.close()
+        try:
+            yield
+        finally:
+            await app.state.db.close()
 
-    app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan,
+                  docs_url=None if settings.deployed else "/docs",
+                  redoc_url=None if settings.deployed else "/redoc",
+                  openapi_url=None if settings.deployed else "/openapi.json")
     app.state.settings = settings
     app.state.db = Database(settings)
     app.state.verifier = JWTVerifier(settings)
     app.state.storage = Storage(settings)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
-                       allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+                       allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                        allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "Idempotency-Key"],
-                       expose_headers=["Content-Disposition"], max_age=600)
+                       expose_headers=["Content-Disposition", "X-Request-ID"], max_age=600)
 
-    @app.middleware("http")
-    async def limits(request: Request, call_next):
-        if request.method in {"POST", "PATCH", "PUT"}:
-            try:
-                length = int(request.headers.get("content-length", "0"))
-            except ValueError:
-                return JSONResponse({"detail": {"code": "invalid_content_length"}}, 400)
-            max_request_bytes = 5_000_000 if request.url.path.startswith("/internal/v1/") else 1_000_000
-            if length > max_request_bytes:
-                return JSONResponse({"detail": {"code": "request_too_large"}}, 413)
-            body = bytearray()
-            async for chunk in request.stream():
-                if len(body) + len(chunk) > max_request_bytes:
-                    return JSONResponse({"detail": {"code": "request_too_large"}}, 413)
-                body.extend(chunk)
-            # Starlette's CachedRequest forwards this bounded body downstream.
-            request._body = bytes(body)
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
-        if settings.environment == "production":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        return response
+    app.add_middleware(RequestBoundary, settings=settings)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
         # Pydantic's default error includes the submitted credential/input value.
-        errors = [{"location": list(error["loc"]), "message": error["msg"], "type": error["type"]} for error in exc.errors()]
+        # Dynamic dictionary keys and validator messages can contain caller
+        # secrets too. Only the fixed transport location and error type escape.
+        errors = [{"location": [error["loc"][0]] if error["loc"] else [], "type": error["type"]} for error in exc.errors()]
         return JSONResponse({"detail": {"code": "validation_failed", "errors": errors}}, status_code=422)
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request: Request, exc):
+        request_id = getattr(request.state, "request_id", "unavailable")
+        # Never log exception text/traceback: provider and database exceptions
+        # can embed credentials, signed URLs, customer text or request bodies.
+        log.error("unexpected_error request_id=%s exception_type=%s", request_id, type(exc).__name__)
+        return JSONResponse({"detail": {"code": "internal_error", "request_id": request_id}}, status_code=500,
+                            headers=security_headers(settings, request_id))
 
     @app.exception_handler(DatabaseError)
     async def database_error(request, exc):
@@ -112,7 +111,7 @@ def create_app(settings=None, *, allow_local=False):
             code, status = "access_denied", 403
         elif exc.sqlstate in {"42P01", "42883", "42703"}:
             code = "database_schema_missing"
-            message = "Apply all GuruConnect Supabase migrations, including 202610130007_guruconnect_enquiries.sql, then restart the API and worker"
+            message = "Database migration is required; contact the service administrator"
         log.warning("database_error code=%s sqlstate=%s", code, exc.sqlstate)
         return JSONResponse({"detail": {"code": code, "message": message}}, status_code=status)
 
@@ -140,7 +139,7 @@ def create_app(settings=None, *, allow_local=False):
         except Exception:
             return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
 
-    for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router):
+    for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router, walkin_router):
         app.include_router(router)
     return app
 

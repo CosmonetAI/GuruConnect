@@ -15,7 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
-from .audio import assemble_wav, validate_wav
+from .audio import MAX_SESSION_SAMPLES, assemble_wav, validate_wav
 from .config import get_settings
 from .db import Database, many, one
 from .processing import publish_result, schedule
@@ -25,7 +25,15 @@ from .security import SecretBox
 from .storage import Storage
 
 log = logging.getLogger("recorder.worker")
-TRANSLATION_BLOCKED_CODES = {"invalid_credentials", "connection_unavailable", "translator_unconfigured", "translator_unavailable", "provider_model_access_denied", "provider_access_denied", "provider_permission_denied", "provider_payment_required", "provider_quota_exceeded"}
+TRANSLATION_BLOCKED_CODES = {"invalid_credentials", "connection_unavailable", "engine_unconfigured", "translator_unconfigured", "translator_unavailable", "provider_model_access_denied", "provider_access_denied", "provider_permission_denied", "provider_payment_required", "provider_quota_exceeded", "provider_plan_access_denied"}
+
+
+def audio_range(job, limit: int = MAX_SESSION_SAMPLES) -> tuple[int, int]:
+    payload = job.get("payload") or {}
+    start, end = payload.get("sample_start", 0), payload.get("sample_end")
+    if type(start) is not int or type(end) is not int or not 0 <= start < end <= limit:
+        raise ProviderError("invalid_audio")
+    return start, end
 
 
 class MainWorker:
@@ -52,7 +60,7 @@ class MainWorker:
             conv = await one(connection, "select * from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
             chunks = await many(connection, "select * from audio_chunks where conversation_id=%s and state='validated' order by sample_start", (job["conversation_id"],))
         if not conv: raise ProviderError("permission_denied")
-        start, end = int(job["payload"].get("sample_start", 0)), int(job["payload"]["sample_end"])
+        start, end = audio_range(job, min(MAX_SESSION_SAMPLES, self.settings.recording_max_seconds * 16000))
         selected = [chunk for chunk in chunks if chunk["sample_start"] < end and chunk["sample_start"] + chunk["sample_count"] > start]
         if not selected: raise ProviderError("invalid_audio")
         actual_hash = hashlib.sha256("".join(chunk["sha256"] for chunk in selected).encode()).hexdigest()
@@ -74,7 +82,7 @@ class MainWorker:
             conv = await one(connection, "select * from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
             chunks = await many(connection, "select * from audio_chunks where conversation_id=%s and state='validated' order by sample_start", (job["conversation_id"],))
         if not conv: raise ProviderError("permission_denied")
-        start, end = int(job["payload"].get("sample_start",0)), int(job["payload"]["sample_end"])
+        start, end = audio_range(job, min(MAX_SESSION_SAMPLES, self.settings.recording_max_seconds * 16000))
         selected=[chunk for chunk in chunks if chunk["sample_start"] < end and chunk["sample_start"]+chunk["sample_count"] > start]
         if not selected or selected[0]["sample_start"]>start or selected[-1]["sample_start"]+selected[-1]["sample_count"]<end: raise ProviderError("invalid_audio")
         input_hash=hashlib.sha256("".join(chunk["sha256"] for chunk in selected).encode()).hexdigest()
@@ -113,10 +121,12 @@ class MainWorker:
 
     async def transcribe(self, job):
         audio, conv = await self.audio_file(job)
-        credentials = await self.credentials(job["connection_id"])
-        await self.begin_submission(job)
-        await self.usage(job, "final-pass" if job["kind"] == "finalise" else "progressive-context", (job["payload"]["sample_end"]-job["payload"].get("sample_start",0))/16000)
-        try: result = await ElevenLabsAdapter(credentials.get("api_key") or credentials.get("key")).process(audio, conv["language_hint"], str(job["id"]))
+        try:
+            credentials = await self.credentials(job["connection_id"])
+            adapter = ElevenLabsAdapter(credentials.get("api_key") or credentials.get("key"))
+            await self.begin_submission(job)
+            await self.usage(job, "final-pass" if job["kind"] == "finalise" else "progressive-context", (job["payload"]["sample_end"]-job["payload"].get("sample_start",0))/16000)
+            result = await adapter.process(audio, conv["language_hint"], str(job["id"]))
         finally: audio.close()
         raw = result.pop("raw")
         artifact = json.dumps(raw, ensure_ascii=False, separators=(",", ":")).encode()
@@ -217,13 +227,19 @@ class MainWorker:
 
     async def execute(self, job):
         renewal = asyncio.create_task(self.renew(job))
+        shutdown = asyncio.create_task(self.stopping.wait())
         task = None
         try:
             operation = self.transcribe(job) if job["kind"] in {"transcribe","finalise"} else self.translate(job) if job["kind"] == "translate" else self.assemble(job) if job["kind"] == "assemble" else self.delete(job) if job["kind"] == "delete" else None
             if operation is None: raise ProviderError("invalid_result")
             task = asyncio.create_task(operation)
-            done, _ = await asyncio.wait({task,renewal},return_when=asyncio.FIRST_COMPLETED)
-            if renewal in done:
+            done, _ = await asyncio.wait({task,renewal,shutdown},return_when=asyncio.FIRST_COMPLETED)
+            if shutdown in done and not task.done():
+                # Cancellation leaves the durable submission state intact. The
+                # lease reaper will hold an interrupted paid call as uncertain.
+                task.cancel(); await asyncio.gather(task,return_exceptions=True)
+                return
+            elif renewal in done:
                 task.cancel(); await asyncio.gather(task,return_exceptions=True); renewal.result()
             else: task.result()
         except Exception as exc:
@@ -234,7 +250,7 @@ class MainWorker:
             log.warning("job_failed job_id=%s code=%s",job["id"],code)
             async with self.db.connection() as connection:
                 # Clear submission uncertainty only on a known pre-execution rejection.
-                if isinstance(exc,ProviderError) and not uncertain and code in TRANSLATION_BLOCKED_CODES | {"provider_rate_limited","provider_request_rejected","provider_connection_failed","translation_term_preservation_failed","translator_invalid_response","translator_input_too_large","translator_invalid_input"}:
+                if isinstance(exc,ProviderError) and not uncertain and code in TRANSLATION_BLOCKED_CODES | {"provider_rate_limited","provider_request_rejected","provider_connection_failed","translator_input_too_large","translator_invalid_input"}:
                     await connection.execute("update processing_jobs set submission_state='not_submitted' where id=%s and lease_token=%s and fence=%s",(job["id"],job["lease_token"],job["fence"]))
                 retried = await one(connection,"select retry_job(%s,%s,%s,%s,%s,%s) as accepted",(job["id"],self.id,job["lease_token"],job["fence"],code,uncertain))
                 if retried and retried["accepted"] and job.get("run_id"):
@@ -243,7 +259,8 @@ class MainWorker:
         finally:
             if task and not task.done(): task.cancel()
             renewal.cancel()
-            await asyncio.gather(*([task,renewal] if task else [renewal]),return_exceptions=True)
+            shutdown.cancel()
+            await asyncio.gather(*([task,renewal,shutdown] if task else [renewal,shutdown]),return_exceptions=True)
 
     async def delete(self, job):
         await self.cleanup_deleted(job["conversation_id"])

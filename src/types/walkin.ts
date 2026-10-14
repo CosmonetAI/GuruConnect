@@ -87,21 +87,6 @@ export type WalkinHistoryEvent = {
   createdAt: string
 }
 
-export type WalkinRecording = {
-  id: string
-  visitId: string
-  transcript: string
-  startedAt: string
-  endedAt: string
-  durationSeconds: number
-  status: 'saved'
-  audioStoragePath: string | null
-  consentAt: string
-  createdBy: string
-  createdAt: string
-  updatedAt: string
-}
-
 export type RegisterWalkinInput = Pick<
   WalkinVisit,
   | 'customerName'

@@ -1,0 +1,117 @@
+# Three services; Supabase remains the external Auth/database/private Storage.
+# Values marked sync:false are configured in Render, never committed.
+services:
+  - type: web
+    name: guruconnect-frontend
+    runtime: static
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci && npm run build:production
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: Permissions-Policy
+        value: microphone=(self), camera=(), geolocation=(), payment=(), display-capture=()
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+  - type: web
+    name: guruconnect-api
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    branch: main
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./Dockerfile.backend
+    dockerContext: .
+    healthCheckPath: /ready
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: CREDENTIAL_KEY_VERSION
+        value: "1"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRUSTED_HOSTS
+        sync: false
+      - key: POOL_MAX_SIZE
+        value: "5"
+      - key: PREAUTH_RATE_LIMIT_PER_MINUTE
+        value: "5000"
+      - key: MAX_CONCURRENT_REQUESTS
+        value: "20"
+      - key: REQUIRE_ADMIN_MFA
+        value: "true"
+  - type: worker
+    name: guruconnect-worker
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    branch: main
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./Dockerfile.backend
+    dockerContext: .
+    dockerCommand: python -m recorder.worker
+    maxShutdownDelaySeconds: 90
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromService: {name: guruconnect-api, type: web, envVarKey: DATABASE_URL}
+      - key: SUPABASE_URL
+        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_URL}
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_SERVICE_ROLE_KEY}
+      - key: SUPABASE_ANON_KEY
+        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_ANON_KEY}
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        fromService: {name: guruconnect-api, type: web, envVarKey: CREDENTIAL_ENCRYPTION_KEY}
+      - key: CREDENTIAL_KEY_VERSION
+        fromService: {name: guruconnect-api, type: web, envVarKey: CREDENTIAL_KEY_VERSION}
+      - key: CORS_ORIGINS
+        fromService: {name: guruconnect-api, type: web, envVarKey: CORS_ORIGINS}
+      - key: TRUSTED_HOSTS
+        fromService: {name: guruconnect-api, type: web, envVarKey: TRUSTED_HOSTS}
+      - key: POOL_MAX_SIZE
+        value: "3"
+      - key: REQUIRE_ADMIN_MFA
+        value: "true"

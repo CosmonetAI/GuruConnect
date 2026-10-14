@@ -167,7 +167,7 @@ test('upstream walk-in conversion keeps the same saved audio and durable enquiry
   await expect(page.getByText('Audio saved in your workspace', { exact: true })).toBeVisible({ timeout: 20000 })
   const saved = await request.get(`${api}/api/v1/conversations?q=${visitId}`, { headers: sourceHeaders })
   const conversationId = (await saved.json()).items[0].id
-  await page.getByRole('button', { name: /convert to enquiry/i }).click()
+  await page.getByRole('button', { name: /create sales enquiry/i }).click()
   await expect(page).toHaveURL(/\/enquiries\/new$/)
   await expect(page.locator('#customerName')).toHaveValue(name)
   await page.locator('#branch').fill('Synthetic conversion showroom')

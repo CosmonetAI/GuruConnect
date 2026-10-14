@@ -14,6 +14,7 @@ import {
   saveWalkinRequirements,
   updateWalkinAgentAvailability,
   updateWalkinStatus,
+  walkinRecordingsPath,
 } from '../../services/walkinService'
 import type { WalkinAgent, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../../types/walkin'
 import WalkinRecordingPanel from './WalkinRecordingPanel'
@@ -22,7 +23,7 @@ import { useOffice } from '../../contexts/OfficeContext'
 import { request, type Page, type Conversation } from '../../services/officeApi'
 
 export default function WalkinDetail() {
-  const { workspace, captureBusy } = useOffice()
+  const { workspace, user, captureBusy } = useOffice()
   const { id = '' } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -40,15 +41,16 @@ export default function WalkinDetail() {
   const [message, setMessage] = useState(confirmation ?? '')
 
   const refresh = useCallback(async () => {
+    if (!workspace) { setVisit(null); setLoading(false); return }
     setLoading(true)
     setError('')
     try {
       const [loadedVisit, loadedAgents, loadedHistory, loadedRequirements, manageAgents] = await Promise.all([
-        getWalkinVisit(id),
-        listWalkinAgents(),
-        listWalkinHistory(id),
-        getWalkinRequirements(id),
-        canManageWalkinAgents(),
+        getWalkinVisit(workspace.id, id),
+        listWalkinAgents(workspace.id),
+        listWalkinHistory(workspace.id, id),
+        getWalkinRequirements(workspace.id, id),
+        canManageWalkinAgents(workspace.id),
       ])
       setVisit(loadedVisit)
       setAgents(loadedAgents)
@@ -62,25 +64,26 @@ export default function WalkinDetail() {
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, workspace?.id])
 
   useEffect(() => { void refresh() }, [refresh])
 
   const allowedTransitions = useMemo(() => visit ? getAllowedWalkinTransitions(visit.status) : [], [visit])
   const closed = visit && ['Completed', 'Cancelled', 'Converted to Enquiry'].includes(visit.status)
+  const canConvert = isWalkinDemoMode() || visit?.assignedAgentId === user?.id
   const updateRequirement = <K extends keyof WalkinRequirement>(field: K, value: WalkinRequirement[K]) => {
     setRequirements((previous) => ({ ...previous, [field]: value }))
     setMessage('')
   }
 
   const saveAssignment = async () => {
-    if (!visit) return
+    if (!visit || !workspace) return
     if (visit.assignedAgentId && visit.assignedAgentId !== selectedAgent && !window.confirm('Reassign this visitor to a different sales agent?')) return
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      await assignWalkin(visit.id, selectedAgent || null, assignmentNote.trim())
+      await assignWalkin(workspace.id, visit.id, selectedAgent || null, assignmentNote.trim(), visit.updatedAt)
       setMessage(selectedAgent ? 'Sales assignment saved.' : 'Visitor returned to the unassigned queue.')
       await refresh()
     } catch (reason) {
@@ -91,13 +94,13 @@ export default function WalkinDetail() {
   }
 
   const changeStatus = async (status: WalkinStatus) => {
-    if (!visit) return
+    if (!visit || !workspace) return
     if (status === 'Cancelled' && !window.confirm('Cancel this visit? This action will be recorded in visit history.')) return
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      await updateWalkinStatus(visit.id, status)
+      await updateWalkinStatus(workspace.id, visit.id, status, visit.updatedAt)
       setMessage(`Visit status updated to ${status}.`)
       await refresh()
     } catch (reason) {
@@ -108,12 +111,12 @@ export default function WalkinDetail() {
   }
 
   const saveRequirements = async () => {
-    if (!visit) return
+    if (!visit || !workspace) return
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      const saved = await saveWalkinRequirements(visit.id, requirements)
+      const saved = await saveWalkinRequirements(workspace.id, visit.id, requirements, visit.updatedAt)
       setRequirements(saved)
       setMessage('Requirement draft saved.')
       await refresh()
@@ -125,9 +128,10 @@ export default function WalkinDetail() {
   }
 
   const changeAvailability = async (agent: WalkinAgent, availability: WalkinAgent['availability']) => {
+    if (!workspace) return
     setError('')
     try {
-      await updateWalkinAgentAvailability(agent.id, availability)
+      await updateWalkinAgentAvailability(workspace.id, agent.id, availability)
       await refresh()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Agent availability could not be updated.')
@@ -135,13 +139,13 @@ export default function WalkinDetail() {
   }
 
   const startConversion = async () => {
-    if (!visit || !isWalkinDemoMode() || captureBusy || !workspace) return
+    if (!visit || captureBusy || !workspace) return
     if (!visit.assignedAgentId) {
       setError('Assign this visit to a sales agent before creating an enquiry.')
       return
     }
     let conversationId: string | undefined
-    try { const recordings = await request<Page<Conversation>>(`/conversations?q=${encodeURIComponent(visit.id)}&limit=100`, workspace.id); conversationId = recordings.items.find(item => item.upload_state === 'saved')?.id }
+    try { const recordings = await request<Page<Conversation>>(walkinRecordingsPath(visit.id), workspace.id); conversationId = recordings.items.find(item => (!isWalkinDemoMode() || item.title === `Walk-in visit ${visit.id}`) && item.upload_state === 'saved')?.id }
     catch { setError('The recording service could not be checked. Refresh before converting this visit.'); return }
     navigate('/enquiries/new', {
       state: {
@@ -226,7 +230,8 @@ export default function WalkinDetail() {
             key={visit.id}
             visitId={visit.id}
             customerName={visit.customerName}
-            disabled={captureBusy || !!closed}
+            disabled={!!closed}
+            canRecord={canConvert}
           />
 
           <section className="walkin-card">
@@ -244,12 +249,12 @@ export default function WalkinDetail() {
             <div className="walkin-card-heading"><div><h2>Sales assignment</h2><p>{visit.assignedAt ? `Assigned ${new Date(visit.assignedAt).toLocaleString()}` : 'Choose an agent or leave in the waiting queue.'}</p></div><span className="walkin-card-icon"><UserRound size={18} /></span></div>
             <div className="walkin-side-content">
               <label className="walkin-field">Sales agent
-                <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} disabled={captureBusy || !!closed}>
+                <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} disabled={captureBusy || !!closed || !canManageAgents}>
                   <option value="">Unassigned / waiting queue</option>
                   {agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name} · {agent.department || agent.specialization || 'Sales'} · {agent.availability}</option>)}
                 </select>
               </label>
-              {agents.length === 0 && <p className="walkin-field-hint">No active agents are configured. A manager can add agents to the walk-in agent roster.</p>}
+              {agents.length === 0 && <p className="walkin-field-hint">No active workspace members are available. An administrator can add team members.</p>}
               {agents.map((agent) => (
                 <label className="walkin-availability" key={agent.id}>
                   <span>{agent.name}<small>{agent.specialization}{agent.openVisits == null ? '' : ` · ${agent.openVisits} open`}</small></span>
@@ -258,8 +263,8 @@ export default function WalkinDetail() {
                     : <span className={`walkin-agent-availability availability-${agent.availability.toLowerCase()}`}>{agent.availability}</span>}
                 </label>
               ))}
-              <label className="walkin-field">Assignment note<textarea rows={3} value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} disabled={captureBusy || !!closed} placeholder="Optional handoff note" /></label>
-              <button type="button" className="walkin-button primary full" onClick={() => void saveAssignment()} disabled={captureBusy || saving || !!closed || (selectedAgent === (visit.assignedAgentId ?? '') && assignmentNote === visit.assignmentNote)}>
+              <label className="walkin-field">Assignment note<textarea rows={3} value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} disabled={captureBusy || !!closed || !canManageAgents} placeholder="Optional handoff note" /></label>
+              <button type="button" className="walkin-button primary full" onClick={() => void saveAssignment()} disabled={captureBusy || saving || !!closed || !canManageAgents || (selectedAgent === (visit.assignedAgentId ?? '') && assignmentNote === visit.assignmentNote)}>
                 {visit.assignedAgentId ? 'Save assignment' : 'Assign visitor'}
               </button>
             </div>
@@ -272,9 +277,7 @@ export default function WalkinDetail() {
               {!allowedTransitions.length && <p className="walkin-field-hint">This visit is closed. Status can no longer be changed.</p>}
               {visit.convertedEnquiryReference && <p className="walkin-linked-enquiry">Linked enquiry: <strong>{visit.convertedEnquiryReference}</strong></p>}
               {requirements.updatedAt && ['Requirements Captured', 'Follow-up Required'].includes(visit.status) && !visit.convertedEnquiryReference && (
-                isWalkinDemoMode()
-                  ? <button className="walkin-button primary full" type="button" onClick={() => void startConversion()}>Create sales enquiry</button>
-                  : <p className="walkin-field-hint">Enquiry creation is not available yet because this app’s existing enquiry service is demo-only. Configure the production enquiry API before converting visits.</p>
+                <><button className="walkin-button primary full" type="button" onClick={() => void startConversion()} disabled={captureBusy || saving || !canConvert}>Create sales enquiry</button>{!canConvert && <p className="walkin-field-hint">The assigned sales agent can create this visit’s enquiry.</p>}</>
               )}
               {!requirements.updatedAt && <p className="walkin-field-hint">Save reviewed requirements before creating an enquiry.</p>}
             </div>

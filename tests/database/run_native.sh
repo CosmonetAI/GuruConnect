@@ -31,6 +31,11 @@ if ! psql "${db_args[@]}" -qAt -f "$test_dir/openai_translation_invariants.sql" 
   exit 1
 fi
 printf 'OpenAI SQL assertions passed: %s\n' "$(rg -c 'NOTICE:  PASS:' "$test_data/openai-invariants.log")"
+if ! psql "${db_args[@]}" -qAt -f "$test_dir/walkin_invariants.sql" > "$test_data/walkin-invariants.log" 2>&1; then
+  tail -n 30 "$test_data/walkin-invariants.log"
+  exit 1
+fi
+printf 'Walk-in SQL assertions passed: %s\n' "$(rg -c 'NOTICE:  PASS:' "$test_data/walkin-invariants.log")"
 python3 "$test_dir/concurrent_native.py" --port "$test_port" | tee "$test_data/concurrent.log"
 printf '%s\n' "Native Postgres emulation passed. Hosted Supabase/storage/pgmq verification is still required."
 printf 'Evidence directory: %s\n' "$test_data"

@@ -2,12 +2,41 @@
 from __future__ import annotations
 
 import os
+import struct
+import wave
 from pathlib import Path
 
 from .alignment import align_segments
 
 WHISPER_REVISION = "edaa852ec7e145841d8ffdb056a99866b5f0a478"
 PYANNOTE_REVISION = "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"
+MAX_SESSION_SAMPLES = 16000 * 7200
+
+
+def validate_audio_file(audio_path: str) -> int:
+    """Reject malformed/oversized containers before any model/decoder sees them."""
+    path = Path(audio_path)
+    size = path.stat().st_size
+    if not 44 < size <= MAX_SESSION_SAMPLES * 2 + 4096:
+        raise ValueError("invalid_worker_audio")
+    with path.open("rb") as source:
+        header = source.read(12)
+        if header[:4] != b"RIFF" or header[8:] != b"WAVE" or struct.unpack_from("<I", header, 4)[0] + 8 != size:
+            raise ValueError("invalid_worker_audio")
+        source.seek(0)
+        with wave.open(source, "rb") as audio:
+            total = audio.getnframes()
+            if ((audio.getnchannels(), audio.getsampwidth(), audio.getframerate(), audio.getcomptype()) != (1, 2, 16000, "NONE")
+                    or not 0 < total <= MAX_SESSION_SAMPLES):
+                raise ValueError("invalid_worker_audio")
+            # Stream the payload so forged data lengths/truncated PCM cannot
+            # reach native decoders, while a two-hour file stays bounded in RAM.
+            count = 0
+            while block := audio.readframes(16000 * 30):
+                count += len(block)
+            if count != total * 2:
+                raise ValueError("invalid_worker_audio")
+    return total
 
 
 class Engine:
@@ -37,7 +66,11 @@ class Engine:
         """Bound long sessions; speaker identities never silently span bounded groups."""
         import tempfile
         import wave
-        block_samples = 16000 * int(os.environ.get("INFERENCE_BLOCK_SECONDS", "900"))
+        block_seconds = int(os.environ.get("INFERENCE_BLOCK_SECONDS", "900"))
+        if not 30 <= block_seconds <= 900:
+            raise ValueError("invalid_inference_block_seconds")
+        block_samples = 16000 * block_seconds
+        validate_audio_file(audio_path)
         with wave.open(audio_path, "rb") as audio:
             total = audio.getnframes()
             if total <= block_samples:

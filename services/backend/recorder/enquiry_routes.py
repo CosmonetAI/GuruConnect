@@ -19,6 +19,7 @@ from .db import many, one
 from .errors import fail
 from .routes import audit
 from .security import Workspace, conversation, workspace
+from .walkin_routes import complete_conversion, conversion_visit, validate_conversion_recording
 
 router = APIRouter(prefix="/api/v1/enquiries", tags=["enquiries"])
 
@@ -174,6 +175,11 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
     payload = body.model_dump(mode="json")
     payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     async with request.app.state.db.connection() as connection:
+        # Keep revocation serialized with this save, including idempotent replay.
+        member = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active' for share",
+                           (context.id, context.user.id))
+        if not member:
+            fail("workspace_access_denied", 403)
         # Same-key concurrent submissions are serialized before reading or writing.
         await connection.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))",
                                  (f"guruconnect-enquiry:{context.id}:{context.user.id}:{idempotency_key}",))
@@ -184,12 +190,14 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
                 fail("idempotency_conflict", 409, "This save key was already used for different enquiry details; refresh before saving again")
             response.status_code = 200
             return serialize_enquiry(prior)
+        visit = await conversion_visit(connection, context, body.sourceEventId)
         if body.conversationId:
             recording = await conversation(connection, context, body.conversationId, lock=True)
             if recording["owner_id"] != context.user.id:
                 fail("recording_owner_required", 403)
             if recording["upload_state"] != "saved" or recording["capture_state"] not in {"stopped", "interrupted"} or recording["total_samples"] <= 0:
                 fail("recording_not_saved", 409, "Finish the recording or audio upload and wait until its audio is saved before saving the enquiry")
+            await validate_conversion_recording(connection, context, visit, body.conversationId)
             linked = await one(connection, "select id from public.guruconnect_enquiries where conversation_id=%s", (body.conversationId,))
             if linked:
                 fail("recording_already_linked", 409, "This recording is already attached to an enquiry")
@@ -200,6 +208,8 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
                         (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
                          body.customerName, body.phone, body.channel, body.branch))
         await audit(connection, context, "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
+        if visit:
+            await complete_conversion(connection, context, visit, row["id"])
         saved = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s", (row["id"], context.id))
     return serialize_enquiry(saved)
 

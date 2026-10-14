@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Clock3, Plus, RefreshCw, UsersRound } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinVisit } from '../../types/walkin'
-import { isWalkinDemoMode, listWalkinVisits } from '../../services/walkinService'
+import { isWalkinDemoMode, listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
+import { useOffice } from '../../contexts/OfficeContext'
+import WalkinPagination from './WalkinPagination'
 import './Walkins.css'
 
 function formatDate(value: string) {
@@ -15,48 +17,49 @@ function waitingTime(value: string) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function localDateKey(value: string | Date) {
-  const date = typeof value === 'string' ? new Date(value) : value
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
 export default function WalkinsOverview() {
+  const { workspace } = useOffice()
   const [visits, setVisits] = useState<WalkinVisit[]>([])
   const [query, setQuery] = useState('')
   const [purpose, setPurpose] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [result, setResult] = useState<WalkinVisitPage | null>(null)
+  const sequence = useRef(0)
 
   const refresh = useCallback(async () => {
+    const ticket = ++sequence.current
+    if (!workspace) { setVisits([]); setResult(null); setLoading(false); return }
     setLoading(true)
     setError('')
     try {
-      setVisits(await listWalkinVisits())
+      const response = await listWalkinVisitPage(workspace.id, { query, purpose, status }, page)
+      if (ticket !== sequence.current) return
+      setVisits(response.items)
+      setResult(response)
     } catch (reason) {
+      if (ticket !== sequence.current) return
       setError(reason instanceof Error ? reason.message : 'Walk-in visits could not be loaded.')
     } finally {
-      setLoading(false)
+      if (ticket === sequence.current) setLoading(false)
     }
-  }, [])
+  }, [workspace?.id, query, purpose, status, page])
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    const timer = setTimeout(() => void refresh(), 200)
+    return () => { clearTimeout(timer); ++sequence.current }
+  }, [refresh])
 
-  const today = localDateKey(new Date())
-  const todayVisits = visits.filter((visit) => localDateKey(visit.checkInAt) === today)
   const counts = [
-    ['Today’s walk-ins', todayVisits.length],
-    ['Waiting for assignment', visits.filter((visit) => ['Registered', 'Waiting for Assignment'].includes(visit.status)).length],
-    ['Assigned', visits.filter((visit) => ['Assigned', 'Waiting for Sales Agent'].includes(visit.status)).length],
-    ['In discussion', visits.filter((visit) => visit.status === 'In Discussion').length],
-    ['Requirements captured', visits.filter((visit) => visit.status === 'Requirements Captured').length],
-    ['Converted', visits.filter((visit) => visit.status === 'Converted to Enquiry').length],
+    ['Matching visits', result?.total ?? 0],
+    ['Waiting for assignment', result?.summary.waiting ?? 0],
+    ['Assigned', result?.summary.assigned ?? 0],
+    ['In discussion', result?.summary.discussion ?? 0],
+    ['Requirements captured', result?.summary.requirements ?? 0],
+    ['Converted', result?.summary.converted ?? 0],
   ]
-  const filtered = visits.filter((visit) =>
-    (!query || [visit.customerName, visit.mobileNumber, visit.visitNumber].some((value) => value.toLocaleLowerCase().includes(query.toLocaleLowerCase())))
-    && (!purpose || visit.purpose === purpose)
-    && (!status || visit.status === status),
-  )
 
   return (
     <div className="walkin-page">
@@ -84,20 +87,20 @@ export default function WalkinsOverview() {
       <section className="walkin-card">
         <div className="walkin-card-heading">
           <div><h2>Reception queue</h2><p>Waiting duration is calculated from the server check-in time.</p></div>
-          <span className="walkin-count">{filtered.length} visits</span>
+          <span className="walkin-count">{result?.total ?? 0} visits</span>
         </div>
         <div className="walkin-filters">
-          <label>Search<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Customer, mobile, or visit number" /></label>
-          <label>Purpose<select value={purpose} onChange={(event) => setPurpose(event.target.value)}><option value="">All purposes</option>{walkinPurposes.map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{walkinStatuses.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Search<input value={query} maxLength={120} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Customer, mobile, or visit number" /></label>
+          <label>Purpose<select value={purpose} onChange={(event) => { setPurpose(event.target.value); setPage(1) }}><option value="">All purposes</option>{walkinPurposes.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option value="">All statuses</option>{walkinStatuses.map((item) => <option key={item}>{item}</option>)}</select></label>
         </div>
-        {loading ? <div className="walkin-empty">Loading visitor queue…</div> : filtered.length === 0 ? (
+        {loading ? <div className="walkin-empty">Loading visitor queue…</div> : visits.length === 0 ? (
           <div className="walkin-empty"><Clock3 size={21} /><strong>No walk-in visitors yet</strong><span>Register a visitor to start the queue.</span></div>
         ) : (
           <div className="walkin-table-wrap">
             <table className="walkin-table">
               <thead><tr><th>Visit / Customer</th><th>Purpose</th><th>Checked in</th><th>Waiting</th><th>Sales agent</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
-              <tbody>{filtered.map((visit) => (
+              <tbody>{visits.map((visit) => (
                 <tr key={visit.id}>
                   <td><Link className="walkin-customer-link" to={`/walkins/${visit.id}`}>{visit.customerName}</Link><small>{visit.visitNumber} · {visit.mobileNumber}</small></td>
                   <td>{visit.purpose}</td>
@@ -111,6 +114,7 @@ export default function WalkinsOverview() {
             </table>
           </div>
         )}
+        <WalkinPagination page={page} total={result?.total ?? 0} loading={loading} onPage={setPage} />
       </section>
       <div className="walkin-footer-links"><Link to="/walkins/mine">My assigned visitors</Link><Link to="/walkins/history">Visit history</Link></div>
     </div>

@@ -68,6 +68,8 @@ async def capture_event(conversation_id: UUID, body: s.CaptureEvent, request: Re
             state = "stopped"
         event = {"kind": body.kind, "sample": body.sample}
         if event not in part["events"]:
+            if len(part["events"]) >= 10_000:
+                fail("capture_event_limit", 413)
             await connection.execute("update recording_parts set events=events||%s::jsonb where id=%s", (Jsonb([event]), body.part_id))
         await connection.execute("update conversations set capture_state=%s,stopped_at=case when %s='stopped' then now() else stopped_at end,updated_at=now() where id=%s", (state, state, conversation_id))
     return {"capture_state": state}
