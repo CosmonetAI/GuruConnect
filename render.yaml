@@ -6,8 +6,8 @@ services:
     runtime: static
     branch: main
     autoDeployTrigger: checksPass
-    buildCommand: npm ci && npm run build:production
-    staticPublishPath: ./dist
+    buildCommand: cd frontend && npm ci && npm run build:production
+    staticPublishPath: ./frontend/dist
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -50,7 +50,7 @@ services:
     plan: 0.5c-512mb
     branch: main
     autoDeployTrigger: checksPass
-    dockerfilePath: ./Dockerfile.backend
+    dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     healthCheckPath: /ready
     maxShutdownDelaySeconds: 60
@@ -88,7 +88,7 @@ services:
     plan: 1c-2g
     branch: main
     autoDeployTrigger: checksPass
-    dockerfilePath: ./Dockerfile.backend
+    dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     dockerCommand: python -m recorder.worker
     maxShutdownDelaySeconds: 90

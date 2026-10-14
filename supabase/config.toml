@@ -1,0 +1,7 @@
+project_id = "guru-group-ai-sales"
+
+[api]
+enabled = true
+
+[db]
+major_version = 15

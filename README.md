@@ -2,11 +2,24 @@
 
 An independent enquiry workspace with private audio recording/upload, ElevenLabs source transcription and speaker detection, and OpenAI English translation. Everything needed to run the frontend, API and processing worker lives in this repository. Office Recorder does not need to be running.
 
+## Architecture and implementation status
+
+The attached Guru Group AI Sales architecture describes the target business flow:
+
+`call / walk-in → capture → secure audio → speech-to-text → AI extraction → validation → Zoho transaction → quote and follow-up → outcome analytics`
+
+The current repository implements the core capture and processing path in the GuruConnect workspace: walk-in/enquiry registration, browser audio capture and upload, private Supabase Storage, queued processing, speech/transcript handling, speaker detection, English translation, immutable transcript versions, manual review, and workspace-scoped access controls.
+
+The copied GG Project implements the Zoho sales-assistant path: server-side Zoho OAuth/token refresh, Bigin contact search/create/update, Books products/customers/vendors, quotes, sales orders, purchase orders, invoices, email actions, customer chat, structured enquiry context, and Supabase persistence. Its UI is available from the GuruConnect sidebar as **Zoho integration**.
+
+The architecture image is a proposed end-to-end design, so telephony routing/recording, WhatsApp/email provider delivery, full Inventory API automation, branch dashboards, outcome analytics, and continuous-learning feedback still require provider-specific implementation and validation. The code does not claim those capabilities are live merely because they appear in the diagram.
+
 ## Start locally — no Supabase and no login
 
-Requires Node 22.12+ and Python 3.11 or 3.12. From this folder:
+Requires Node 22.12+ and Python 3.11 or 3.12. From the `frontend` folder:
 
 ```sh
+cd frontend
 npm ci
 npm run setup
 npm run dev
@@ -14,9 +27,9 @@ npm run dev
 
 Open **http://127.0.0.1:5176**. The development command starts all three services: frontend on 5176, API on 8010, and the separate background worker. Ctrl+C stops those processes together. No environment file, Supabase project or login is required for local mode. If Python cannot be found, install a supported version or set `GURUCONNECT_PYTHON` to its executable before running setup.
 
-Local enquiries, immutable audio chunks, playback, transcripts and encrypted provider connections persist in `services/backend/.local-data/`. This directory is ignored by Git and restricted to the operating-system account. Back up the entire directory, including its encryption key, if you need to preserve local data. Local mode is for this computer, with one local user/workspace; it is not team authentication and must not be published as a SaaS.
+Local enquiries, immutable audio chunks, playback, transcripts and encrypted provider connections persist in `backend/.local-data/`. This directory is ignored by Git and restricted to the operating-system account. Back up the entire directory, including its encryption key, if you need to preserve local data. Local mode is for this computer, with one local user/workspace; it is not team authentication and must not be published as a SaaS.
 
-Use separate terminals if preferred:
+Use separate terminals from `frontend` if preferred:
 
 ```sh
 npm run dev:web
@@ -43,28 +56,30 @@ You can save and play local audio without provider credentials. The worker block
 Local mode remains available until credentials are supplied. The hosted path requires your **new GuruConnect project**; no credentials, recordings or provider settings were copied from Office Recorder.
 
 1. Create the project. Enable email/password Auth, email confirmation and asymmetric JWT signing. Add exact Site URL/callback/reset URLs for the frontend: development `http://127.0.0.1:5176`, `/auth/callback` and `/reset` (also allow localhost if used). Configure production SMTP and password policy before inviting a team.
-2. Copy the root `.env.example` to `.env`, then fill the project's public URL/publishable key and API URL. Only public values belong in `VITE_` variables.
-3. Copy `services/backend/.env.example` to `services/backend/.env`. Fill the same project URL, service-role key, public key and Postgres session-pooler connection URL. Percent-encode password characters such as `@`, `#`, `%`, `/` and `?`. Use `sslmode=verify-full` with the bundled public `supabase-ca.crt`; use an absolute certificate path when migrating from the repository root.
+2. Copy `frontend/.env.example` to `frontend/.env`, then fill the project's public URL/publishable key, GuruConnect API URL, and (when using the Zoho UI) the GG API URL. Only public values belong in `VITE_` variables.
+3. Copy `backend/.env.guruconnect.example` to `backend/.env` for the existing GuruConnect recorder/worker. Copy `backend/.env.example` to the GG backend environment when running the standalone Zoho sales assistant. Fill the relevant project URL, service-role key, Postgres session-pooler connection URL, and server-only provider settings. Percent-encode password characters such as `@`, `#`, `%`, `/` and `?`. Use `sslmode=verify-full` with the bundled public `supabase-ca.crt`.
 4. Generate `CREDENTIAL_ENCRYPTION_KEY` with the command below and store it only in the backend environment. API and worker must use the same key. Keep CORS restricted to your exact frontend origins.
 
    ```sh
-   services/backend/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+   backend/.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
    ```
 
-5. Apply **all seven** files in `supabase/migrations/` in lexical order. The migration script requires explicit target credentials and confirmation:
+5. Apply every file in `supabase/migrations/` in lexical order. The migration script requires explicit target credentials and confirmation:
 
    ```sh
    export MIGRATION_DATABASE_URL='postgresql://...new-project.../postgres?sslmode=verify-full&sslrootcert=/absolute/path/to/supabase-ca.crt'
    export GURU_MIGRATION_CONFIRM=development
-   services/backend/.venv/bin/python scripts/migrate.py
+   backend/.venv/bin/python frontend/scripts/migrate.py
    ```
 
-   The checksum ledger rejects changed applied migrations. Never apply `tests/database/native_fixture.sql` to Supabase; that is disposable test emulation.
+   The checksum ledger rejects changed applied migrations. Never apply `frontend/tests/database/native_fixture.sql` to Supabase; that is disposable test emulation.
 6. Restart all services. With valid public credentials the frontend requires login; the hosted API verifies JWTs and workspace ownership. Register/verify an account, create a workspace, and configure ElevenLabs/OpenAI again in **Connections**. Invite teammates with explicit invitation tokens.
 
 Hosted mode uses private Supabase Storage, database RLS, recording leases, durable job queues, immutable processing results and audited manual corrections. Local data is not automatically imported into Supabase when switching modes. Production missing credentials fail closed; there is no production no-login fallback. An explicitly local build can set `VITE_LOCAL_MODE=true` for loopback-only use, but do not enable this in a hosted frontend.
 
 ## Checks
+
+From `frontend`:
 
 ```sh
 npm run check
@@ -77,4 +92,5 @@ npm audit
 
 Backend tests require development Python requirements installed by setup; some isolation/concurrency checks require native PostgreSQL binaries. Browser tests use installed Chrome, a controlled microphone fixture, disposable local storage and mocked/absent provider credentials. They do not establish live provider accuracy or hosted Supabase deployment readiness. See `docs/VERIFICATION.md` for the actual completed checks and limits.
 
-For deployment, run the API and worker as separate supervised services, set `ENVIRONMENT=production`, apply the seven migrations, use HTTPS and explicit frontend CORS, configure backups/retention and monitor queue/errors/provider usage. Vite's dev server and localhost mode are not deployment services. Publish the frontend build from `dist/` with SPA navigation fallback.
+For deployment, run the API and worker as separate supervised services, set `ENVIRONMENT=production`, apply all migrations, use HTTPS and explicit frontend CORS, configure backups/retention and monitor queue/errors/provider usage. Vite's dev server and localhost mode are not deployment services. Publish the frontend build from `frontend/dist/` with SPA navigation fallback.
+
