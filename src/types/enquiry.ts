@@ -17,6 +17,7 @@ export type Enquiry = {
   unit: string
   notes?: string
   sourceEventId?: string
+  sourceWalkinId?: string
   customerType?: 'Retail' | 'Dealer' | 'Project'
   company?: string
   projectName?: string

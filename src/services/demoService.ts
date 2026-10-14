@@ -80,6 +80,10 @@ export function getDemoSalesOptions() {
 }
 
 export function createEnquiry(data: Omit<Enquiry, 'id' | 'createdAt'>) {
+  const existing = data.sourceWalkinId
+    ? enquiries.find((enquiry) => enquiry.sourceWalkinId === data.sourceWalkinId)
+    : undefined
+  if (existing) return existing
   const id = `ENQ-${new Date().getFullYear()}-${String(enquiries.length + 1).padStart(4, '0')}`
   const createdAt = new Date().toISOString().slice(0, 10)
   const enq: Enquiry = { id, createdAt, ...data }

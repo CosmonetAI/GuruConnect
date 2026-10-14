@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom'
-import { AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3 } from 'lucide-react'
+import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3 } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 export const navigationItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/enquiries', label: 'Enquiries', icon: ClipboardList },
+  { to: '/walkins', label: 'Walk-in visits', icon: UsersRound },
   { to: '/recordings', label: 'Recordings', icon: AudioLines },
   { to: '/integrations', label: 'Connections', icon: PlugZap },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },

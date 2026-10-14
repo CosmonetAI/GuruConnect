@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useBlocker, useNavigate } from 'react-router-dom'
+import { Link, useBlocker, useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -149,16 +149,26 @@ function SectionHeader({
   )
 }
 
-export default function NewEnquiry() {
-  const { user, workspace } = useOffice()
-  if (!user || !workspace) return <p role="status">Loading your workspace…</p>
-  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}`} />
+type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+function convertedValues(source: WalkinConversion): NewEnquiryForm {
+  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, company: source.company,
+    customerNotes: `${source.purpose} · Visit ${source.visitNumber}\n${source.notes}`.trim(), requirementsSummary: source.requirements, followUpDate: source.followUpDate,
+    productRequirements: [{ ...defaultValues.productRequirements[0], product: source.productOrService, quantity: /^\d+$/.test(source.quantity) && Number(source.quantity) > 0 ? Number(source.quantity) : 0, budget: source.budget, timeline: source.timeline, notes: source.requirements }],
+  }
 }
 
-function ScopedNewEnquiry({ storageKey }: { storageKey: string }) {
+export default function NewEnquiry() {
+  const { user, workspace } = useOffice()
+  const location = useLocation()
+  const conversion = (location.state as { walkinConversion?: WalkinConversion } | null)?.walkinConversion
+  if (!user || !workspace) return <p role="status">Loading your workspace…</p>
+  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} />
+}
+
+function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conversion?: WalkinConversion }) {
   const navigate = useNavigate()
   const { workspace, setCaptureBusy } = useOffice()
-  const [draft] = useState(() => readDraft(storageKey))
+  const [draft] = useState(() => { const saved = readDraft(storageKey); return conversion && !saved.restored ? { ...saved, values: convertedValues(conversion), conversationId: conversion.conversationId ?? null } : saved })
   const [form, setForm] = useState<NewEnquiryForm>(draft.values)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formMessage, setFormMessage] = useState(draft.warning)
@@ -254,6 +264,13 @@ function ScopedNewEnquiry({ storageKey }: { storageKey: string }) {
     setIsSaving(true)
     try {
       const data = parsed.data
+      const walkinService = conversion ? await import('../../services/walkinService') : null
+      if (conversion) {
+        const visit = await walkinService!.getWalkinVisit(conversion.visitId)
+        if (!visit) throw new Error('The source walk-in visit was not found. Your enquiry has not been submitted.')
+        if (visit.convertedEnquiryReference) { allowLeave.current = true; navigate(`/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}`); return }
+        if (!['Requirements Captured', 'Follow-up Required'].includes(visit.status)) throw new Error('Save and review the walk-in requirements before creating its enquiry.')
+      }
       const requirements = data.productRequirements.filter(productHasDetails)
       const firstProduct = requirements[0]
       const created = await createEnquiry(workspace.id, {
@@ -277,12 +294,14 @@ function ScopedNewEnquiry({ storageKey }: { storageKey: string }) {
         followUpOwner: data.followUpOwner,
         priority: data.priority,
         ...(conversationId ? { conversationId } : {}),
-      }, saveKey)
+        ...(conversion ? { sourceEventId: `walkin:${conversion.visitId}` } : {}),
+      }, conversion ? `walkin:${conversion.visitId}` : saveKey)
       let draftCleanupMessage = ''
+      if (conversion) { try { await walkinService!.markWalkinConverted(conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
       try {
         sessionStorage.removeItem(storageKey)
       } catch {
-        draftCleanupMessage = ' The saved draft could not be removed from this browser tab.'
+        draftCleanupMessage += ' The saved draft could not be removed from this browser tab.'
       }
       allowLeave.current = true
       navigate(`/enquiries/${encodeURIComponent(created.id)}`, {
@@ -351,6 +370,7 @@ function ScopedNewEnquiry({ storageKey }: { storageKey: string }) {
       </div>
 
       <fieldset disabled={isSaving} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+      {conversion && <p className="flow-note" role="status">Review the customer and requirements transferred from {conversion.visitNumber}. Confirm the branch, product identifier and quantity before saving.</p>}
       <div className="enquiry-workspace">
         <div className="enquiry-main-column">
           <section className="enquiry-card" aria-labelledby="customer-section-title">

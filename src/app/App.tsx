@@ -12,6 +12,11 @@ import Welcome from '../pages/Welcome'
 import ResetPassword from '../pages/ResetPassword'
 const Integrations = lazy(() => import('../pages/Integrations'))
 const Recordings = lazy(() => import('../pages/Recordings'))
+const WalkinsOverview = lazy(() => import('../pages/Walkins/WalkinsOverview'))
+const WalkinRegistration = lazy(() => import('../pages/Walkins/WalkinRegistration'))
+const WalkinDetail = lazy(() => import('../pages/Walkins/WalkinDetail'))
+const MyWalkins = lazy(() => import('../pages/Walkins/MyWalkins'))
+const WalkinHistory = lazy(() => import('../pages/Walkins/WalkinHistory'))
 import { useOffice } from '../contexts/OfficeContext'
 
 const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
@@ -36,6 +41,11 @@ export default function App() {
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="enquiries" element={<EnquiriesList />} />
+        <Route path="walkins" element={<WalkinsOverview />} />
+        <Route path="walkins/new" element={<WalkinRegistration />} />
+        <Route path="walkins/mine" element={<MyWalkins />} />
+        <Route path="walkins/history" element={<WalkinHistory />} />
+        <Route path="walkins/:id" element={<WalkinDetail />} />
         <Route path="enquiries/new" element={<NewEnquiry />} />
         <Route path="enquiries/:id" element={<EnquiryDetail />} />
         <Route path="analytics" element={<Analytics />} />
