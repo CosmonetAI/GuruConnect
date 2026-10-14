@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { call } from '../zoho/shared/api.js'
 import { GlobalZohoDateFilter, GlobalZohoPager } from '../zoho/ZohoApp.jsx'
+import EncodingRepair from '../zoho/EncodingRepair'
 import { ProductsPage } from '../zoho/pages/ProductsPage.jsx'
 import { ContactsPage } from '../zoho/pages/ContactsPage.jsx'
 import { QuotesPage } from '../zoho/pages/QuotesPage.jsx'
@@ -12,6 +13,7 @@ import '../zoho/wizard-overrides.css'
 
 function PageFrame({ eyebrow, title, pill, children }) {
   return <>
+    <EncodingRepair />
     <GlobalZohoDateFilter />
     <GlobalZohoPager />
     <header className="gg-page-header"><div><small>{eyebrow}</small><h1>{title}</h1></div>{pill && <div className="pill">{pill}</div>}</header>

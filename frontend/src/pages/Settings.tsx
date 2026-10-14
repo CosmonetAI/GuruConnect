@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useOffice } from '../contexts/OfficeContext'
 import { useScopedResource } from '../hooks/useScopedResource'
 import { json, message, request, type Member } from '../services/officeApi'
-import { Link } from 'react-router-dom'
+import ProviderConnections from './Integrations'
 export default function Settings() {
   const { workspace, user, localMode } = useOffice()
   const profile = useScopedResource<{ display_name: string; preferences: Record<string, unknown> }>('/profile')
@@ -11,6 +11,9 @@ export default function Settings() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [invite, setInvite] = useState('')
+  useEffect(() => {
+    if (window.location.hash === '#connections') document.getElementById('connections')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy) return
     const name = String(new FormData(event.currentTarget).get('name') ?? '').trim()
@@ -27,7 +30,7 @@ export default function Settings() {
     {(error || profile.error || team.error) && <p role="alert" className="flow-error">{error || profile.error || team.error}</p>}{notice && <p role="status" className="flow-note">{notice}</p>}
     {localMode && <p className="flow-note">Local mode opens without sign-in. Enquiries and audio are stored on this computer. Connected transcription and translation providers require internet access. Configure your new Supabase project when you need team accounts.</p>}
     <section className="flow-panel"><h2>Your profile</h2><p>{localMode ? 'Local account' : user?.email} · {workspace?.name} · {workspace?.role}</p>{profile.loading && <p role="status">Loading profile…</p>}<form className="settings-form" key={profile.data?.display_name ?? 'profile'} onSubmit={event => void save(event)}><label>Display name<input name="name" required minLength={2} maxLength={120} defaultValue={profile.data?.display_name ?? user?.user_metadata.display_name ?? ''} /></label><button className="button button-primary" disabled={busy || profile.loading}>Save profile</button></form></section>
-    <section className="flow-panel"><h2>Transcription & translation</h2><p>Provider connections and processing policy are managed separately from your personal profile.</p><Link to="/integrations" className="button button-secondary">Manage connections</Link></section>
+    <section id="connections" className="flow-panel"><h2>Transcription & translation</h2><p>Provider connections and processing policy are managed separately from your personal profile.</p><ProviderConnections /></section>
     {!localMode && workspace?.role !== 'salesperson' && <section className="flow-panel"><h2>Your team</h2>{team.loading && <p role="status">Loading team…</p>}{team.data?.items.map(member => <div className="team-row" key={member.user_id}><span>{member.display_name || member.email || 'Workspace member'}</span><span>{member.role} · {member.status}</span></div>)}<h3>Invite a teammate</h3><form className="settings-form" onSubmit={event => void createInvite(event)}><label>Teammate email<input name="email" type="email" required maxLength={254} /></label><label>Role<select name="role"><option value="salesperson">Salesperson</option>{workspace?.role === 'owner' && <option value="admin">Administrator</option>}</select></label><button className="button button-primary" disabled={busy}>Create invitation</button></form>{invite && <label className="settings-form">One-time invitation token<input aria-label="Invitation token" readOnly value={invite} onFocus={event => event.target.select()} /></label>}</section>}
   </div>
 }

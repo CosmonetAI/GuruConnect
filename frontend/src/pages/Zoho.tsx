@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { call } from '../zoho/shared/api.js'
 import { GlobalZohoDateFilter, GlobalZohoPager, ZohoSetup } from '../zoho/ZohoApp.jsx'
+import EncodingRepair from '../zoho/EncodingRepair'
 import '../zoho/styles.css'
 import '../zoho/wizard-overrides.css'
 
@@ -9,6 +10,7 @@ export default function Zoho() {
   const [error, setError] = useState('')
   useEffect(() => { call('/zoho/status').then(setStatus).catch((e: Error) => setError(e.message)) }, [])
   return <>
+    <EncodingRepair />
     <GlobalZohoDateFilter />
     <GlobalZohoPager />
     {error && <div className="error" role="alert">{error}</div>}
