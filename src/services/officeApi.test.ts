@@ -76,7 +76,7 @@ describe('local and authenticated request boundaries', () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
     const api = await load()
     await expect(api.request('/enquiries')).rejects.toMatchObject({ status: 503, code: 'api_unreachable' })
-    await expect(api.request('/enquiries')).rejects.toThrow('Start GuruConnect with npm run dev')
+    await expect(api.request('/enquiries')).rejects.toThrow('Check the running API')
   })
   it('honours an already-aborted request without retrieving a session or fetching', async () => {
     cloud(); const api = await load(); const controller = new AbortController(); controller.abort(new DOMException('cancelled', 'AbortError'))

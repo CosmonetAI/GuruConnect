@@ -145,3 +145,36 @@ test('390 px navigation opens every core route without horizontal overflow', asy
     await expect(navigation).toHaveCount(0)
   }
 })
+
+test('upstream walk-in conversion keeps the same saved audio and durable enquiry pipeline', async ({ page, request }) => {
+  const visitId = crypto.randomUUID()
+  const name = `Synthetic walk-in ${Date.now()}`
+  await page.goto('/walkins')
+  await page.evaluate(({ visitId, name }) => {
+    const now = new Date().toISOString()
+    const existing = JSON.parse(localStorage.getItem('guru-group:walkin-visits') || '[]')
+    existing.push({ id: visitId, visitNumber: 'WI-SYNTHETIC', customerName: name, mobileNumber: '+91 90000 00000', email: '', companyName: '', purpose: 'Product enquiry', purposeDescription: '', productOrService: 'Test model', department: 'Sales', requestedEmployee: '', appointmentStatus: 'Walk-in', appointmentReference: '', registeredBy: 'Reception', assignedAgentId: 'demo-agent-sneha', assignedAgentName: 'Sneha Rao', assignmentNote: '', status: 'Requirements Captured', checkInAt: now, assignedAt: now, internalNotes: '', convertedEnquiryReference: null, createdAt: now, updatedAt: now })
+    localStorage.setItem('guru-group:walkin-visits', JSON.stringify(existing))
+    const requirements = JSON.parse(localStorage.getItem('guru-group:walkin-requirements') || '{}')
+    requirements[visitId] = { detailedRequirement: 'Synthetic fixture requirements', productOrService: 'Test model', quantity: '2', budgetRange: '', expectedPurchaseTimeline: '', preferredSolution: '', competitorOrAlternative: '', specialRequests: '', followUpAt: '', agentNotes: '', nextAction: '', updatedAt: now }
+    localStorage.setItem('guru-group:walkin-requirements', JSON.stringify(requirements))
+  }, { visitId, name })
+  await page.goto(`/walkins/${visitId}`)
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  await page.getByLabel('Choose audio file').setInputFiles(microphoneFile)
+  await consent(page)
+  await page.getByRole('button', { name: 'Upload & process', exact: true }).click()
+  await expect(page.getByText('Audio saved in your workspace', { exact: true })).toBeVisible({ timeout: 20000 })
+  const saved = await request.get(`${api}/api/v1/conversations?q=${visitId}`, { headers: sourceHeaders })
+  const conversationId = (await saved.json()).items[0].id
+  await page.getByRole('button', { name: /convert to enquiry/i }).click()
+  await expect(page).toHaveURL(/\/enquiries\/new$/)
+  await expect(page.locator('#customerName')).toHaveValue(name)
+  await page.locator('#branch').fill('Synthetic conversion showroom')
+  await save(page, name)
+  const id = new URL(page.url()).pathname.split('/').at(-1)
+  const enquiry = await request.get(`${api}/api/v1/enquiries/${id}`, { headers: sourceHeaders })
+  expect(await enquiry.json()).toMatchObject({ sourceEventId: `walkin:${visitId}`, conversationId })
+  await page.reload()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+})

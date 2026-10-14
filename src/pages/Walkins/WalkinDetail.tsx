@@ -18,8 +18,11 @@ import {
 import type { WalkinAgent, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../../types/walkin'
 import WalkinRecordingPanel from './WalkinRecordingPanel'
 import './Walkins.css'
+import { useOffice } from '../../contexts/OfficeContext'
+import { request, type Page, type Conversation } from '../../services/officeApi'
 
 export default function WalkinDetail() {
+  const { workspace, captureBusy } = useOffice()
   const { id = '' } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -132,15 +135,19 @@ export default function WalkinDetail() {
   }
 
   const startConversion = async () => {
-    if (!visit || !isWalkinDemoMode()) return
+    if (!visit || !isWalkinDemoMode() || captureBusy || !workspace) return
     if (!visit.assignedAgentId) {
       setError('Assign this visit to a sales agent before creating an enquiry.')
       return
     }
+    let conversationId: string | undefined
+    try { const recordings = await request<Page<Conversation>>(`/conversations?q=${encodeURIComponent(visit.id)}&limit=100`, workspace.id); conversationId = recordings.items.find(item => item.upload_state === 'saved')?.id }
+    catch { setError('The recording service could not be checked. Refresh before converting this visit.'); return }
     navigate('/enquiries/new', {
       state: {
         walkinConversion: {
           visitId: visit.id,
+          conversationId,
           visitNumber: visit.visitNumber,
           customerName: visit.customerName,
           phone: visit.mobileNumber,
@@ -197,21 +204,21 @@ export default function WalkinDetail() {
           <section className="walkin-card">
             <div className="walkin-card-heading"><div><h2>Capture customer requirements</h2><p>Save as a draft and update as the conversation develops.</p></div><span className="walkin-card-icon"><FileText size={18} /></span></div>
             <div className="walkin-form-grid">
-              <Field label="Detailed customer requirement" name="detailedRequirement" wide><textarea id="detailedRequirement" rows={4} value={requirements.detailedRequirement} onChange={(event) => updateRequirement('detailedRequirement', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Product or service required" name="requirementProduct"><input id="requirementProduct" value={requirements.productOrService} onChange={(event) => updateRequirement('productOrService', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Quantity / estimated volume" name="quantity"><input id="quantity" value={requirements.quantity} onChange={(event) => updateRequirement('quantity', event.target.value)} disabled={!!closed} placeholder="As shared by customer" /></Field>
-              <Field label="Budget range (optional)" name="budgetRange"><input id="budgetRange" value={requirements.budgetRange} onChange={(event) => updateRequirement('budgetRange', event.target.value)} disabled={!!closed} placeholder="If customer is willing to share" /></Field>
-              <Field label="Expected purchase timeline" name="expectedPurchaseTimeline"><input id="expectedPurchaseTimeline" value={requirements.expectedPurchaseTimeline} onChange={(event) => updateRequirement('expectedPurchaseTimeline', event.target.value)} disabled={!!closed} placeholder="As shared by customer" /></Field>
-              <Field label="Preferred solution" name="preferredSolution"><input id="preferredSolution" value={requirements.preferredSolution} onChange={(event) => updateRequirement('preferredSolution', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Competitor / alternative" name="competitorOrAlternative"><input id="competitorOrAlternative" value={requirements.competitorOrAlternative} onChange={(event) => updateRequirement('competitorOrAlternative', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Follow-up date" name="followUpAt"><input id="followUpAt" type="date" value={requirements.followUpAt} onChange={(event) => updateRequirement('followUpAt', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Special requests or constraints" name="specialRequests" wide><textarea id="specialRequests" rows={2} value={requirements.specialRequests} onChange={(event) => updateRequirement('specialRequests', event.target.value)} disabled={!!closed} /></Field>
-              <Field label="Next action" name="nextAction"><input id="nextAction" value={requirements.nextAction} onChange={(event) => updateRequirement('nextAction', event.target.value)} disabled={!!closed} placeholder="e.g. arrange product demo" /></Field>
-              <Field label="Agent internal notes" name="agentNotes"><input id="agentNotes" value={requirements.agentNotes} onChange={(event) => updateRequirement('agentNotes', event.target.value)} disabled={!!closed} /></Field>
+              <Field label="Detailed customer requirement" name="detailedRequirement" wide><textarea id="detailedRequirement" rows={4} value={requirements.detailedRequirement} onChange={(event) => updateRequirement('detailedRequirement', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Product or service required" name="requirementProduct"><input id="requirementProduct" value={requirements.productOrService} onChange={(event) => updateRequirement('productOrService', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Quantity / estimated volume" name="quantity"><input id="quantity" value={requirements.quantity} onChange={(event) => updateRequirement('quantity', event.target.value)} disabled={captureBusy || !!closed} placeholder="As shared by customer" /></Field>
+              <Field label="Budget range (optional)" name="budgetRange"><input id="budgetRange" value={requirements.budgetRange} onChange={(event) => updateRequirement('budgetRange', event.target.value)} disabled={captureBusy || !!closed} placeholder="If customer is willing to share" /></Field>
+              <Field label="Expected purchase timeline" name="expectedPurchaseTimeline"><input id="expectedPurchaseTimeline" value={requirements.expectedPurchaseTimeline} onChange={(event) => updateRequirement('expectedPurchaseTimeline', event.target.value)} disabled={captureBusy || !!closed} placeholder="As shared by customer" /></Field>
+              <Field label="Preferred solution" name="preferredSolution"><input id="preferredSolution" value={requirements.preferredSolution} onChange={(event) => updateRequirement('preferredSolution', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Competitor / alternative" name="competitorOrAlternative"><input id="competitorOrAlternative" value={requirements.competitorOrAlternative} onChange={(event) => updateRequirement('competitorOrAlternative', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Follow-up date" name="followUpAt"><input id="followUpAt" type="date" value={requirements.followUpAt} onChange={(event) => updateRequirement('followUpAt', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Special requests or constraints" name="specialRequests" wide><textarea id="specialRequests" rows={2} value={requirements.specialRequests} onChange={(event) => updateRequirement('specialRequests', event.target.value)} disabled={captureBusy || !!closed} /></Field>
+              <Field label="Next action" name="nextAction"><input id="nextAction" value={requirements.nextAction} onChange={(event) => updateRequirement('nextAction', event.target.value)} disabled={captureBusy || !!closed} placeholder="e.g. arrange product demo" /></Field>
+              <Field label="Agent internal notes" name="agentNotes"><input id="agentNotes" value={requirements.agentNotes} onChange={(event) => updateRequirement('agentNotes', event.target.value)} disabled={captureBusy || !!closed} /></Field>
             </div>
             <div className="walkin-form-actions">
               <span className="walkin-field-hint">{requirements.updatedAt ? `Last saved ${new Date(requirements.updatedAt).toLocaleString()}` : 'Not saved yet'}</span>
-              <button className="walkin-button primary" type="button" onClick={() => void saveRequirements()} disabled={saving || !!closed}><Check size={16} /> Save requirement draft</button>
+              <button className="walkin-button primary" type="button" onClick={() => void saveRequirements()} disabled={captureBusy || saving || !!closed}><Check size={16} /> Save requirement draft</button>
             </div>
           </section>
 
@@ -219,7 +226,7 @@ export default function WalkinDetail() {
             key={visit.id}
             visitId={visit.id}
             customerName={visit.customerName}
-            disabled={!!closed}
+            disabled={captureBusy || !!closed}
           />
 
           <section className="walkin-card">
@@ -237,7 +244,7 @@ export default function WalkinDetail() {
             <div className="walkin-card-heading"><div><h2>Sales assignment</h2><p>{visit.assignedAt ? `Assigned ${new Date(visit.assignedAt).toLocaleString()}` : 'Choose an agent or leave in the waiting queue.'}</p></div><span className="walkin-card-icon"><UserRound size={18} /></span></div>
             <div className="walkin-side-content">
               <label className="walkin-field">Sales agent
-                <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} disabled={!!closed}>
+                <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} disabled={captureBusy || !!closed}>
                   <option value="">Unassigned / waiting queue</option>
                   {agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name} · {agent.department || agent.specialization || 'Sales'} · {agent.availability}</option>)}
                 </select>
@@ -251,8 +258,8 @@ export default function WalkinDetail() {
                     : <span className={`walkin-agent-availability availability-${agent.availability.toLowerCase()}`}>{agent.availability}</span>}
                 </label>
               ))}
-              <label className="walkin-field">Assignment note<textarea rows={3} value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} disabled={!!closed} placeholder="Optional handoff note" /></label>
-              <button type="button" className="walkin-button primary full" onClick={() => void saveAssignment()} disabled={saving || !!closed || (selectedAgent === (visit.assignedAgentId ?? '') && assignmentNote === visit.assignmentNote)}>
+              <label className="walkin-field">Assignment note<textarea rows={3} value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} disabled={captureBusy || !!closed} placeholder="Optional handoff note" /></label>
+              <button type="button" className="walkin-button primary full" onClick={() => void saveAssignment()} disabled={captureBusy || saving || !!closed || (selectedAgent === (visit.assignedAgentId ?? '') && assignmentNote === visit.assignmentNote)}>
                 {visit.assignedAgentId ? 'Save assignment' : 'Assign visitor'}
               </button>
             </div>
@@ -261,7 +268,7 @@ export default function WalkinDetail() {
           <section className="walkin-card">
             <div className="walkin-card-heading"><div><h2>Visit status</h2><p>Use the next appropriate step.</p></div><span className="walkin-card-icon"><Clock3 size={18} /></span></div>
             <div className="walkin-side-content">
-              <label className="walkin-field">Current status<select value="" onChange={(event) => event.target.value && void changeStatus(event.target.value as WalkinStatus)} disabled={saving || allowedTransitions.length === 0}><option value="">Choose next status…</option>{allowedTransitions.map((next) => <option key={next}>{next}</option>)}</select></label>
+              <label className="walkin-field">Current status<select value="" onChange={(event) => event.target.value && void changeStatus(event.target.value as WalkinStatus)} disabled={captureBusy || saving || allowedTransitions.length === 0}><option value="">Choose next status…</option>{allowedTransitions.map((next) => <option key={next}>{next}</option>)}</select></label>
               {!allowedTransitions.length && <p className="walkin-field-hint">This visit is closed. Status can no longer be changed.</p>}
               {visit.convertedEnquiryReference && <p className="walkin-linked-enquiry">Linked enquiry: <strong>{visit.convertedEnquiryReference}</strong></p>}
               {requirements.updatedAt && ['Requirements Captured', 'Follow-up Required'].includes(visit.status) && !visit.convertedEnquiryReference && (

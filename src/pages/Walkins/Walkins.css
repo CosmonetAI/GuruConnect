@@ -655,7 +655,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #0d9488;
+  background: #2563eb;
   transition: width .12s linear, background-color .15s ease;
 }
 
@@ -972,3 +972,8 @@
     width: 100%;
   }
 }
+
+.walkin-connected-audio { padding-bottom: 24px; }
+.walkin-connected-audio .recorder-panel { margin-top: 20px; }
+.walkin-audio-links { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.walkin-card, .walkin-page { min-width: 0; }

@@ -1,0 +1,10 @@
+# Optional Python 3.11 process only. Torch and torchaudio must match.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+pyannote.audio==4.0.7
+torch==2.8.0
+torchaudio==2.8.0
+torchcodec==0.7.0
+huggingface-hub==0.36.0
+numpy==2.3.5
+httpx==0.28.1
