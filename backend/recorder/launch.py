@@ -1,9 +1,15 @@
 """Render/container API entrypoint. No shell interpolation or trusted proxy input."""
 import asyncio
 import os
+import selectors
 import sys
 
 import uvicorn
+
+
+def windows_selector_loop_factory():
+    """Create the loop required by psycopg's async pool on Windows."""
+    return asyncio.SelectorEventLoop(selectors.SelectSelector())
 
 
 def main():
@@ -19,12 +25,12 @@ def main():
         print(f"API startup rejected: {error}", file=sys.stderr)
         raise SystemExit(1) from None
 
-    # Psycopg's async connection pool is incompatible with the default
-    # ProactorEventLoop on Windows. Render/Linux keeps its normal policy.
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # Psycopg's async connection pool is incompatible with Uvicorn's default
+    # ProactorEventLoop on Windows. Uvicorn 0.36+ accepts a loop factory.
+    loop = windows_selector_loop_factory if sys.platform == "win32" else "auto"
 
     uvicorn.run("recorder.main:app", host="0.0.0.0", port=port, proxy_headers=False,
+                loop=loop,
                 access_log=False, timeout_keep_alive=5, timeout_graceful_shutdown=30,
                 server_header=False, date_header=True)
 
