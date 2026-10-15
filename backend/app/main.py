@@ -165,8 +165,11 @@ async def pipeline_records(pipeline_id: str, page: int = 1):
 
 @app.get('/api/pipelines/search')
 async def pipeline_search(word: str):
+    cleaned_word = word.replace('\\', '').strip()
+    if not cleaned_word:
+        return {'records': [], 'info': {'count': 0, 'more_records': False}}
     try:
-        result = await zoho.search_pipeline_records(word)
+        result = await zoho.search_pipeline_records(cleaned_word)
         return {'records': result.get('data', []), 'info': result.get('info', {})}
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Bigin pipelines: {e}')
 
