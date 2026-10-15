@@ -133,7 +133,16 @@ async def zoho_smoke():
 
 def _pipeline_layouts(payload):
     rows = payload.get('layouts', payload.get('data', [])) if isinstance(payload, dict) else []
-    return [{'id': str(row.get('id')), 'name': row.get('display_label') or row.get('name') or str(row.get('id')), 'display_label': row.get('display_label') or row.get('name') or str(row.get('id'))} for row in rows if row.get('id')]
+    result = []
+    for row in rows:
+        if not row.get('id'): continue
+        stages = []
+        for section in row.get('sections', []):
+            for field in section.get('fields', []):
+                if field.get('api_name') == 'Stage':
+                    stages = [item.get('actual_value') or item.get('display_value') for item in field.get('pick_list_values', []) if item.get('actual_value') or item.get('display_value')]
+        result.append({'id': str(row.get('id')), 'name': row.get('display_label') or row.get('name') or str(row.get('id')), 'display_label': row.get('display_label') or row.get('name') or str(row.get('id')), 'stages': stages})
+    return result
 
 @app.get('/api/pipelines/layouts')
 async def pipeline_layouts(refresh: bool = False):
