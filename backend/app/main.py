@@ -17,7 +17,7 @@ async def lifespan(app):
     task=asyncio.create_task(refresh_loop()); yield; task.cancel()
 app=FastAPI(title='Guru Group AI Sales API',version='0.1.0',lifespan=lifespan)
 from .settings import settings
-app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in settings.cors_origins.split(',') if origin.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
+app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in settings.cors_origins.split(',') if origin.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['Authorization','Content-Type','X-User-ID','X-Workspace-ID','Idempotency-Key'])
 
 @app.middleware('http')
 async def zoho_workspace_scope(request: Request, call_next):

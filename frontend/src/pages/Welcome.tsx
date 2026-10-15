@@ -16,7 +16,6 @@ export default function Welcome() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
-  const [invitation, setInvitation] = useState('')
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || busy) return
@@ -39,20 +38,19 @@ export default function Welcome() {
       }
     } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
   }
-  async function join(create: boolean) {
+  async function createWorkspace() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      await request(create ? '/workspaces' : '/invites/accept', null, json('POST', create ? { name: workspaceName.trim() } : { token: invitation.trim() }))
+      await request('/workspaces', null, json('POST', { name: workspaceName.trim() }))
       await office.reloadWorkspaces()
     } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
   }
   if (!office.configured) return <WelcomeFrame><h2>Connect your workspace services</h2><p>GuruConnect is ready for its own Supabase project. Finish the setup in this repository’s README to enable accounts, private audio and processing.</p><p>Start the API and background worker alongside this frontend after configuration.</p><div className="flow-note">Your provider keys belong in Connections after sign-in. They are encrypted on the server.</div></WelcomeFrame>
   if (office.loading || (office.session && office.workspacesLoading)) return <WelcomeFrame><p role="status">Loading your workspace…</p></WelcomeFrame>
-  if (office.session) return <WelcomeFrame><h2>Your conversations need a workspace</h2><p>Create one for your team, or use an invitation from your administrator.</p>
+  if (office.session) return <WelcomeFrame><h2>Your conversations need a workspace</h2><p>Create a workspace to get started. Team members are added automatically when an administrator sends their email invitation.</p>
     {(error || office.error) && <p role="alert" className="flow-error">{error || office.error}</p>}
-    <form onSubmit={event => { event.preventDefault(); void join(true) }}><label>Workspace name<input required minLength={2} maxLength={200} value={workspaceName} onChange={event => setWorkspaceName(event.target.value)} /></label><button className="button button-primary" disabled={busy}>Create workspace <ArrowRight size={16} /></button></form>
-    <form onSubmit={event => { event.preventDefault(); void join(false) }}><label>Invitation token<input required maxLength={200} autoComplete="off" value={invitation} onChange={event => setInvitation(event.target.value)} /></label><button className="button button-secondary" disabled={busy}>Accept invitation</button></form>
+    <form onSubmit={event => { event.preventDefault(); void createWorkspace() }}><label>Workspace name<input required minLength={2} maxLength={200} value={workspaceName} onChange={event => setWorkspaceName(event.target.value)} /></label><button className="button button-primary" disabled={busy}>Create workspace <ArrowRight size={16} /></button></form>
     {office.error && <button type="button" disabled={busy} onClick={() => void office.reloadWorkspaces()}>Refresh workspaces</button>}
     <button type="button" onClick={() => void supabase?.auth.signOut()}>Sign out</button></WelcomeFrame>
   return <WelcomeFrame><h2>{mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Reset your password' : 'Welcome back'}</h2><p>Use your GuruConnect workspace account.</p>

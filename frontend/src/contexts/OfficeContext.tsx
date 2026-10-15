@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
-import { configured, localMode, request, supabase, message, type Workspace } from '../services/officeApi'
+import { configured, localMode, request, supabase, message, json, type Workspace } from '../services/officeApi'
 
 const localUser = { id: '00000000-0000-0000-0000-000000000001', email: 'local@localhost', app_metadata: {}, user_metadata: { display_name: 'Local user' }, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' } as User
 const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner' }
@@ -66,7 +66,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
   useEffect(() => { if (active) localStorage.setItem('guruconnect-active-workspace', active) }, [active])
   useEffect(() => {
     if (!session || localMode) return
-    const ping = () => { void request('/presence').catch(() => undefined) }
+    const ping = () => { void request('/presence', null, json('POST')).catch(() => undefined) }
     ping(); const timer = window.setInterval(ping, 30_000)
     return () => window.clearInterval(timer)
   }, [session, localMode])

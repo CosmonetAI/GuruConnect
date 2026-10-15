@@ -1,0 +1,8 @@
+ID,Work Item Type,Title,State,Description
+20,Task,"[Dev] Build deliberate showroom session capture","Done","Verified in repository: walk-in registration, browser recording, private upload, enquiry conversion, ticketing, assignment, and related browser/database coverage are implemented. Remaining UAT is tracked separately."
+16,Task,"[Dev] Validate MVP integrations and map data","To Do","Backlog: live tenant mapping, provider smoke tests, and production acceptance remain."
+18,Task,"[Dev] Implement telephony call capture","To Do","Backlog: no provider-specific 22-number routing/recording adapter is implemented."
+22,Task,"[Dev] Implement multilingual transcription and extraction","To Do","Backlog: core transcription/translation exists, but live provider validation, extraction accuracy, and human-review acceptance remain."
+26,Task,"[Dev] Implement Zoho write-back and draft quote flow","To Do","Backlog: Bigin is limited to pipelines and contacts; Books owns catalogue, estimates, orders, invoices, and commercial write-back."
+28,Task,"[Dev] Resolve UAT findings and prepare technical handover","To Do","Backlog: UAT, runbooks, training, and handover are not complete."
+29,Task,"[Tester] Execute MVP UAT and prepare test report","To Do","Backlog: provider-backed end-to-end UAT is not complete."

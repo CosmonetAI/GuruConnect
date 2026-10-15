@@ -4,6 +4,9 @@ import re
 import secrets
 from datetime import datetime
 from uuid import UUID
+from urllib.parse import quote
+
+import httpx
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from psycopg.types.json import Jsonb
@@ -75,11 +78,47 @@ async def team(request: Request, context: Workspace = Depends(administrator)):
 
 @router.post("/invites", status_code=201)
 async def invite(body: s.Invitation, request: Request, context: Workspace = Depends(administrator)):
-    token = secrets.token_urlsafe(32)
+    settings = request.app.state.settings
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        fail("auth_not_configured", 503, "Supabase admin authentication is not configured")
+
+    # Supabase creates the account and sends the recipient a one-time invite
+    # link. The link lands on /reset, where the recipient sets their password.
+    # Membership is provisioned here, so no invitation token or second accept
+    # step is needed after the recipient follows the email.
+    origin = request.headers.get("origin")
+    redirect_origin = origin if origin in settings.cors_origins else settings.cors_origins[0]
+    invite_payload = {"email": body.email.lower(), "data": {"display_name": body.name.strip()}}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"{settings.supabase_url}/auth/v1/admin/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}" ,
+                headers={
+                    "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
+                    "apikey": settings.supabase_service_role_key.get_secret_value(),
+                    "Content-Type": "application/json",
+                },
+                json=invite_payload,
+            )
+        if response.status_code >= 400:
+            if response.status_code in {400, 422}:
+                fail("member_invitation_failed", 409, "This email may already have an account or could not be invited")
+            fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
+        auth_user = response.json()
+        invited_user_id = auth_user.get("id")
+        if not invited_user_id:
+            fail("member_invitation_unavailable", 503, "Supabase did not return the invited member")
+    except httpx.HTTPError:
+        fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
+
+    token = secrets.token_urlsafe(32)  # retained only as a non-user-visible audit value
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "insert into invites(organisation_id,email,role,token_hash,invited_by,expires_at) values(%s,%s,%s,%s,%s,now()+interval '7 days') returning id,email,role,expires_at", (context.id, body.email.lower(), body.role, token_hash(token), context.user.id))
-        await audit(connection, context, "invitation.created", {"invite_id": str(row["id"]), "role": body.role})
-    return {**row, "token": token}
+        if await one(connection, "select 1 from members where organisation_id=%s and user_id=%s", (context.id, invited_user_id)):
+            fail("membership_exists", 409, "This person is already a member of the workspace")
+        row = await one(connection, "insert into invites(organisation_id,email,role,token_hash,invited_by,accepted_by,accepted_at,expires_at) values(%s,%s,%s,%s,%s,%s,now(),now()+interval '7 days') returning id,email,role,expires_at", (context.id, body.email.lower(), body.role, token_hash(token), context.user.id, invited_user_id))
+        await connection.execute("insert into members(organisation_id,user_id,role) values(%s,%s,%s)", (context.id, invited_user_id, body.role))
+        await audit(connection, context, "invitation.created", {"invite_id": str(row["id"]), "role": body.role, "user_id": str(invited_user_id)})
+    return {**row, "status": "sent"}
 
 
 @router.post("/invites/accept")

@@ -73,7 +73,7 @@ Local mode remains available until credentials are supplied. The hosted path req
    ```
 
    The checksum ledger rejects changed applied migrations. Never apply `frontend/tests/database/native_fixture.sql` to Supabase; that is disposable test emulation.
-6. Restart all services. With valid public credentials the frontend requires login; the hosted API verifies JWTs and workspace ownership. Register/verify an account, create a workspace, and configure ElevenLabs/OpenAI again in **Connections**. Invite teammates with explicit invitation tokens.
+6. Restart all services. With valid public credentials the frontend requires login; the hosted API verifies JWTs and workspace ownership. Register/verify an account, create a workspace, and configure ElevenLabs/OpenAI again in **Connections**. Invite teammates with their name, email, and role; they receive a password-setup link and are added to the workspace automatically.
 
 Hosted mode uses private Supabase Storage, database RLS, recording leases, durable job queues, immutable processing results and audited manual corrections. Local data is not automatically imported into Supabase when switching modes. Production missing credentials fail closed; there is no production no-login fallback. An explicitly local build can set `VITE_LOCAL_MODE=true` for loopback-only use, but do not enable this in a hosted frontend.
 
