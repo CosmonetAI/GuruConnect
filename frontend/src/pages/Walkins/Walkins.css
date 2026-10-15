@@ -977,3 +977,23 @@
 .walkin-connected-audio .recorder-panel { margin-top: 20px; }
 .walkin-audio-links { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
 .walkin-card, .walkin-page { min-width: 0; }
+
+.voice-assist { margin-bottom: 18px; }
+.voice-assist .walkin-section-heading small { font-weight: 400; color: #64748b; }
+.voice-status { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 13px; color: #334155; }
+.voice-options { display: grid; gap: 8px; margin-top: 14px; }
+.voice-threshold { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; font-size: 13px; }
+.voice-threshold input[type='range'] { vertical-align: middle; max-width: 140px; }
+.voice-alert { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding: 10px 12px; background: #fff8e7; border: 1px solid #f2dfb3; border-radius: 8px; font-size: 13px; }
+.voice-transcript ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.voice-transcript li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.voice-transcript li input { flex: 1 1 220px; min-width: 0; }
+.voice-transcript li.is-interim { opacity: .6; font-style: italic; }
+.voice-transcript, .voice-suggestions { margin-top: 16px; }
+.voice-suggestion { display: grid; gap: 6px; padding: 12px; margin-top: 8px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.voice-suggestion label { display: grid; gap: 4px; font-size: 13px; }
+.voice-suggestion-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.voice-confidence { font-size: 11px; text-transform: uppercase; color: #64748b; }
+.voice-confidence.high { color: #15803d; }
+@media (max-width: 640px) { .voice-suggestion-actions .walkin-button { flex: 1 1 100%; } }
+.walkin-ai-badge { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #e0ecff; color: #1d4ed8; font-size: 11px; font-weight: 600; }

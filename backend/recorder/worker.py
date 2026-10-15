@@ -321,7 +321,27 @@ async def main():
         print("Local processing worker started. Saved audio assembly runs without provider keys.", flush=True)
     else:
         worker = MainWorker(settings)
-    for signum in (signal.SIGINT,signal.SIGTERM): asyncio.get_running_loop().add_signal_handler(signum,worker.stopping.set)
+    loop = asyncio.get_running_loop()
+    # Attempt to register signal handlers using the asyncio loop API. On some Windows
+    # event loop implementations add_signal_handler exists but raises NotImplementedError,
+    # so catch that and fall back to the synchronous signal module which schedules the
+    # asyncio event via loop.call_soon_threadsafe.
+    use_signal_module = False
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(signum, worker.stopping.set)
+    except NotImplementedError:
+        use_signal_module = True
+    except Exception:
+        # Any unexpected error should still fall back to the safe approach.
+        use_signal_module = True
+
+    if use_signal_module:
+        def _handler(signum, frame):
+            loop.call_soon_threadsafe(worker.stopping.set)
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, _handler)
+
     await worker.run()
 
 

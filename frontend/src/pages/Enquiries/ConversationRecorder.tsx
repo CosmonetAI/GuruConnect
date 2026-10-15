@@ -15,14 +15,17 @@ export interface ConversationRecorderProps {
   onConversationChange: (id: string | null) => void
   onBusyChange?: (busy: boolean) => void
   onSaved?: (id: string) => void
+  onCaptureChange?: (state: CaptureState) => void
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved }: ConversationRecorderProps) {
+export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact }: ConversationRecorderProps & { compact?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
+  // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
+  compact = compact ?? false
   const [phase, setPhase] = useState<Phase>('idle')
   const [capture, setCapture] = useState<CaptureState>(emptyCapture)
   const [file, setFile] = useState<File | null>(null)
@@ -46,12 +49,15 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const notifiedSaved = useRef<string | null>(null)
   const creation = useRef<{ key: string; body: object } | null>(null)
   const tabId = useRef(crypto.randomUUID())
-  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved })
-  callbacks.current = { onConversationChange, onBusyChange, onSaved }
+  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved, onCaptureChange })
+  callbacks.current = { onConversationChange, onBusyChange, onSaved, onCaptureChange }
   const captureActive = capture.capture === 'recording' || capture.capture === 'paused'
   const unfinished = !!conversationId && !saved
   const busy = operation || captureActive || capture.saving || unfinished || (!!file && !saved)
   const blocked = loading || !user || !workspace || policyLoading || !policy?.ready
+  // Microphone capture does not require the default speech engine to be connected; allow starting the mic
+  // once the user is authenticated and a workspace is selected. The engine is only needed for transcription/processing.
+  const micBlocked = loading || !user || !workspace || policyLoading
 
   function disposeCapture() {
     const session = active.current; active.current = null
@@ -78,6 +84,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
     }
   }, [])
   useEffect(() => { callbacks.current.onBusyChange?.(busy) }, [busy])
+  useEffect(() => { callbacks.current.onCaptureChange?.(capture) }, [capture])
   useEffect(() => {
     if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file); setPreview(url)
@@ -130,6 +137,17 @@ export default function ConversationRecorder({ customerName, title, initialConve
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
     if (!policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
+  }
+
+  // When compact mode is used, offer a small consent confirmation when the user presses Start.
+  async function startMicrophoneCompactFlow() {
+    if (operationRef.current || captureActive || saved) return
+    if (!consent) {
+      const ok = window.confirm('Confirm you have permission from all participants to record this conversation. Press OK to confirm consent and start recording.')
+      if (!ok) return
+      setConsent(true)
+    }
+    await startMicrophone()
   }
   async function createConversation(signal: AbortSignal) {
     if (idRef.current) return idRef.current
@@ -258,15 +276,28 @@ export default function ConversationRecorder({ customerName, title, initialConve
         {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
       </div>
       <div className="recorder-controls">
-        {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={blocked || !consent || !!applicableRecoveries.length} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
-        {captureActive && <><button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button><button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button></>}
-        {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio and permission…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
-        {!operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
-        {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
-        {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
+        {compact ? (
+          // Minimal compact controls: single Start
+          !captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !!applicableRecoveries.length} onClick={() => void startMicrophoneCompactFlow()}><Mic2 size={16} />{unfinished ? 'Retry recording' : 'Start recording'}</button>
+        ) : (
+          // Full controls preserved for non-compact usage
+          <>
+            {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !consent || !!applicableRecoveries.length} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
+            { !operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
+            {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
+            {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
+          </>
+        )}
+
+        {captureActive && <>
+          <button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>
+          {compact ? <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop</button> : <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button> }
+        </>}
+
+        {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
       </div>
     </div>
-    <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label><span className="consent-detail"><ShieldCheck size={14} />Consent is recorded by the authenticated backend before audio is captured or uploaded.</span></div>
+    {!compact && <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label><span className="consent-detail"><ShieldCheck size={14} />Consent is recorded by the authenticated backend before audio is captured or uploaded.</span></div>}
     {loading && <p role="status">Loading workspace…</p>}
     {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
     {!loading && user && workspace && policyLoading && <p role="status">Checking processing connections…</p>}
