@@ -128,13 +128,7 @@ class LocalWorker:
             with open(scratch, "rb") as file:
                 while data := file.read(1024 * 1024):
                     digest.update(data)
-                try:
-                    # fsync may fail on Windows when the file is opened read-only;
-                    # it's non-critical here (we're about to replace the file),
-                    # so ignore OSError to remain cross-platform.
-                    os.fsync(file.fileno())
-                except OSError:
-                    pass
+                os.fsync(file.fileno())
             os.chmod(scratch, 0o600)
             os.replace(scratch, destination)
         finally:
@@ -402,7 +396,7 @@ class LocalWorker:
             updates["english_state" if job["kind"] == "translate" else "transcription_state"] = state
             self.patch_conversation(job["conversation_id"], **updates)
             self.patch_run(job, state=state)
-            log.exception("local_job_failed job_id=%s code=%s state=%s", job["id"], code, state)
+            log.warning("local_job_failed job_id=%s code=%s state=%s", job["id"], code, state)
         finally:
             renewal.cancel()
             if execution and not execution.done():

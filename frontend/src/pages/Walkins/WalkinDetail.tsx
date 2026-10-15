@@ -27,8 +27,7 @@ export default function WalkinDetail() {
   const { id = '' } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
-  const routeNotice = location.state as { confirmation?: string; warning?: string } | null
-  const confirmation = routeNotice?.confirmation
+  const confirmation = (location.state as { confirmation?: string } | null)?.confirmation
   const [visit, setVisit] = useState<WalkinVisit | null>(null)
   const [agents, setAgents] = useState<WalkinAgent[]>([])
   const [canManageAgents, setCanManageAgents] = useState(false)
@@ -187,7 +186,6 @@ export default function WalkinDetail() {
         <span className={`walkin-status large status-${visit.status.toLowerCase().replaceAll(' ', '-')}`}>{visit.status}</span>
       </header>
       {message && <div className="walkin-alert success" role="status">{message}</div>}
-      {routeNotice?.warning && <div className="walkin-alert error" role="alert">{routeNotice.warning}</div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
       <div className="walkin-detail-grid">

@@ -283,14 +283,6 @@ def create_local_app(settings) -> FastAPI:
     @app.get("/api/v1/conversations/{conversation_id}")
     async def conversation_detail(conversation_id: UUID): return public_conversation(conversation(conversation_id))
 
-    @app.patch("/api/v1/conversations/{conversation_id}")
-    async def update_conversation(conversation_id: UUID, body: s.ConversationPatch):
-        conversation(conversation_id)
-        fields = body.model_dump(exclude_unset=True)
-        if not fields: fail("empty_update", 400)
-        try: return public_conversation(store.patch("conversations", str(conversation_id), fields))
-        except ValueError as error: conflict(error)
-
     @app.post("/api/v1/conversations/{conversation_id}/lease")
     async def acquire(conversation_id: UUID, body: s.LeaseAcquire):
         conversation(conversation_id)

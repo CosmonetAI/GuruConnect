@@ -321,9 +321,7 @@ async def main():
         print("Local processing worker started. Saved audio assembly runs without provider keys.", flush=True)
     else:
         worker = MainWorker(settings)
-    for signum in (signal.SIGINT,signal.SIGTERM):
-        try: asyncio.get_running_loop().add_signal_handler(signum,worker.stopping.set)
-        except NotImplementedError: signal.signal(signum,lambda *_: worker.stopping.set())
+    for signum in (signal.SIGINT,signal.SIGTERM): asyncio.get_running_loop().add_signal_handler(signum,worker.stopping.set)
     await worker.run()
 
 

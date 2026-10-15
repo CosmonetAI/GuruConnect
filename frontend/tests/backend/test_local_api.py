@@ -58,15 +58,6 @@ def test_startup_needs_no_supabase_and_reports_local_mode(api):
     assert client.get("/api/v1/engine-settings").json()["default_engine_id"] == "elevenlabs"
 
 
-def test_local_conversation_can_be_linked_to_a_registered_walkin(api):
-    client, _, _ = api
-    conversation_id, _ = create_recording(client)
-    linked = client.patch(f"/api/v1/conversations/{conversation_id}", json={"title": "Walk-in visit synthetic-visit"})
-    assert linked.status_code == 200
-    assert linked.json()["title"] == "Walk-in visit synthetic-visit"
-    assert client.get("/api/v1/conversations", params={"q": "synthetic-visit"}).json()["items"][0]["id"] == conversation_id
-
-
 def test_enquiries_persist_across_app_restarts_and_save_replays_are_stable(api):
     client, _, settings = api
     key = str(uuid4())

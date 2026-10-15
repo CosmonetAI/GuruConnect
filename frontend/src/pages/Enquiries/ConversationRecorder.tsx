@@ -14,14 +14,13 @@ export interface ConversationRecorderProps {
   initialConversationId?: string | null
   onConversationChange: (id: string | null) => void
   onBusyChange?: (busy: boolean) => void
-  onCaptureState?: (state: CaptureState) => void
   onSaved?: (id: string) => void
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onCaptureState, onSaved }: ConversationRecorderProps) {
+export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved }: ConversationRecorderProps) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -47,8 +46,8 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const notifiedSaved = useRef<string | null>(null)
   const creation = useRef<{ key: string; body: object } | null>(null)
   const tabId = useRef(crypto.randomUUID())
-  const callbacks = useRef({ onConversationChange, onBusyChange, onCaptureState, onSaved })
-  callbacks.current = { onConversationChange, onBusyChange, onCaptureState, onSaved }
+  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved })
+  callbacks.current = { onConversationChange, onBusyChange, onSaved }
   const captureActive = capture.capture === 'recording' || capture.capture === 'paused'
   const unfinished = !!conversationId && !saved
   const busy = operation || captureActive || capture.saving || unfinished || (!!file && !saved)
@@ -79,7 +78,6 @@ export default function ConversationRecorder({ customerName, title, initialConve
     }
   }, [])
   useEffect(() => { callbacks.current.onBusyChange?.(busy) }, [busy])
-  useEffect(() => { callbacks.current.onCaptureState?.(capture) }, [capture])
   useEffect(() => {
     if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file); setPreview(url)
