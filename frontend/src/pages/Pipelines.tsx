@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Search, ChevronDown, ExternalLink, Clock3 } from 'lucide-react'
 import { call } from '../shared/api'
+import { useOffice } from '../contexts/OfficeContext'
 import '../styles/pipelines.css'
 
 type Layout = { id: string; name: string; stages?: string[] }
@@ -11,20 +12,21 @@ const relative = (value?: string) => value ? new Intl.DateTimeFormat('en-IN', { 
 const syncLabel = (value?: string | null) => value ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : 'Not yet synced'
 
 export default function Pipelines() {
+  const { workspace } = useOffice()
   const [layouts, setLayouts] = useState<Layout[]>([]), [selected, setSelected] = useState('')
   const [records, setRecords] = useState<RecordItem[]>([]), [query, setQuery] = useState(''), [searchResults, setSearchResults] = useState<RecordItem[]>([])
   const [busy, setBusy] = useState(false), [syncing, setSyncing] = useState(false), [error, setError] = useState(''), [lastSync, setLastSync] = useState<string | null>(null), [cooldownSeconds, setCooldownSeconds] = useState(0), [hasMore, setHasMore] = useState(false), [page, setPage] = useState(1)
   const [opened, setOpened] = useState<RecordItem | null>(null)
 
-  const loadLayouts = async () => { try { const result = await call('/pipelines/layouts'); const next = result.layouts || []; setLayouts(next); setSelected(current => current || next[0]?.id || '') } catch (e) { setError((e as Error).message) } }
-  const loadRecords = async (pipelineId = selected) => { if (!pipelineId) return; setBusy(true); setError(''); try { const result = await call(`/pipelines?pipeline_id=${encodeURIComponent(pipelineId)}&page=1`); setRecords(result.records || []); setLastSync(result.last_sync || null); setHasMore(Boolean(result.has_more)); setPage(1) } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
-  useEffect(() => { loadLayouts() }, [])
+  const loadLayouts = async () => { if (!workspace?.id) return; try { const result = await call('/pipelines/layouts', {}, workspace.id); const next = result.layouts || []; setLayouts(next); setSelected(current => current || next[0]?.id || '') } catch (e) { setError((e as Error).message) } }
+  const loadRecords = async (pipelineId = selected) => { if (!pipelineId || !workspace?.id) return; setBusy(true); setError(''); try { const result = await call(`/pipelines?pipeline_id=${encodeURIComponent(pipelineId)}&page=1`, {}, workspace.id); setRecords(result.records || []); setLastSync(result.last_sync || null); setHasMore(Boolean(result.has_more)); setPage(1) } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
+  useEffect(() => { if (workspace?.id) void loadLayouts() }, [workspace?.id])
   useEffect(() => { if (selected) loadRecords(selected) }, [selected])
-  const sync = async () => { if (cooldownSeconds > 0) return; setSyncing(true); setError(''); try { const result = await call('/pipelines/sync', { method: 'POST' }); if (result.last_sync) setLastSync(result.last_sync); if (result.limited) setCooldownSeconds(Number(result.next_sync_in_seconds || 0)); else setCooldownSeconds(0); await loadLayouts(); await loadRecords(selected) } catch (e) { setError((e as Error).message) } finally { setSyncing(false) } }
-  useEffect(() => { if (layouts.length > 0) sync() }, [layouts.length])
+  const sync = async () => { if (cooldownSeconds > 0 || !workspace?.id) return; setSyncing(true); setError(''); try { const result = await call('/pipelines/sync', { method: 'POST' }, workspace.id); if (result.last_sync) setLastSync(result.last_sync); if (result.limited) setCooldownSeconds(Number(result.next_sync_in_seconds || 0)); else setCooldownSeconds(0); await loadLayouts(); await loadRecords(selected) } catch (e) { setError((e as Error).message) } finally { setSyncing(false) } }
+  useEffect(() => { if (layouts.length > 0 && workspace?.id) void sync() }, [layouts.length, workspace?.id])
   useEffect(() => { if (cooldownSeconds <= 0) return; const timer = setInterval(() => setCooldownSeconds(seconds => Math.max(0, seconds - 1)), 1000); return () => clearInterval(timer) }, [cooldownSeconds])
-  const showMore = async () => { if (!hasMore || busy) return; setBusy(true); try { const result = await call(`/pipelines?pipeline_id=${encodeURIComponent(selected)}&page=${page + 1}`); setRecords(current => { const ids = new Set(current.map(item => item.id)); return [...current, ...(result.records || []).filter((item: RecordItem) => !ids.has(item.id))] }); setPage(current => current + 1); setHasMore(Boolean(result.has_more)) } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
-  useEffect(() => { const timer = setTimeout(async () => { const cleanedQuery = query.replace(/\\/g, '').trim(); if (!cleanedQuery) { setSearchResults([]); setError(''); return }; try { const result = await call(`/pipelines/search?word=${encodeURIComponent(cleanedQuery)}`); setSearchResults(result.records || []); setError('') } catch { setSearchResults([]); setError('Search is temporarily unavailable. Please try again.') } }, 350); return () => clearTimeout(timer) }, [query])
+  const showMore = async () => { if (!hasMore || busy || !workspace?.id) return; setBusy(true); try { const result = await call(`/pipelines?pipeline_id=${encodeURIComponent(selected)}&page=${page + 1}`, {}, workspace.id); setRecords(current => { const ids = new Set(current.map(item => item.id)); return [...current, ...(result.records || []).filter((item: RecordItem) => !ids.has(item.id))] }); setPage(current => current + 1); setHasMore(Boolean(result.has_more)) } catch (e) { setError((e as Error).message) } finally { setBusy(false) } }
+  useEffect(() => { const timer = setTimeout(async () => { const cleanedQuery = query.replace(/\\/g, '').trim(); if (!cleanedQuery || !workspace?.id) { setSearchResults([]); if (!cleanedQuery) setError(''); return }; try { const result = await call(`/pipelines/search?word=${encodeURIComponent(cleanedQuery)}`, {}, workspace.id); setSearchResults(result.records || []); setError('') } catch { setSearchResults([]); setError('Search is temporarily unavailable. Please try again.') } }, 350); return () => clearTimeout(timer) }, [query, workspace?.id])
   const stages = useMemo(() => { const layoutStages = layouts.find(layout => layout.id === selected)?.stages || []; const names = Array.from(new Set([...layoutStages, ...records.map(item => item.Stage || 'Unassigned')])); return names.length ? names : ['Qualification', 'Needs Analysis', 'Proposal/Price Quote', 'Negotiation/Review', 'Closed Won', 'Closed Lost'] }, [layouts, selected, records])
   const formatValue = (value: unknown) => { if (value == null || value === '') return '—'; if (typeof value === 'object') return JSON.stringify(value, null, 2); return String(value) }
   const labelFor = (key: string) => key.replace(/^\$/, '').replace(/__s$/, '').replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase())

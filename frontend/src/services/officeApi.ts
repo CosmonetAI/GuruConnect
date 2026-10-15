@@ -75,7 +75,10 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       if (abort.signal.aborted) throw abort.signal.reason;
       if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
       const headers = new Headers(init.headers);
-      if (session) headers.set('Authorization', `Bearer ${session.access_token}`);
+      if (session) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+        if (session.user?.id) headers.set('X-User-ID', session.user.id);
+      }
       if (workspace) headers.set('X-Workspace-ID', workspace);
       if (init.body) headers.set('Content-Type', 'application/json');
       const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
