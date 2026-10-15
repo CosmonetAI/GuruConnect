@@ -95,7 +95,7 @@ class Manifest(Input):
 
 class Invitation(Input):
     email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")]
-    role: Literal["salesperson", "receptionist"] = "salesperson"
+    role: Literal["owner", "salesperson", "receptionist"] = "salesperson"
 
 
 class AcceptInvitation(Input):

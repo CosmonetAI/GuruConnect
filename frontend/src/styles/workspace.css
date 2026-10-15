@@ -20,6 +20,10 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .sidebar-brand small { font-size: 10px; color: #bbcae0; }
 .sidebar-workspace { display: grid; gap: 4px; padding: 14px; background: #ffffff0b; border: 1px solid #ffffff1c; border-radius: 12px; overflow-wrap: anywhere; }
 .sidebar-workspace small { color: #bbcae0; text-transform: capitalize; }
+.workspace-person { display:flex; align-items:center; gap:10px; }
+.workspace-person > div:last-child { display:grid; gap:4px; min-width:0; }
+.workspace-avatar { width:34px; height:34px; display:grid; place-items:center; flex:0 0 34px; overflow:hidden; border-radius:50%; color:#fff; background:#2b6be4; font-size:13px; font-weight:800; }
+.workspace-avatar img { width:100%; height:100%; object-fit:cover; }
 .nav-eyebrow { font-size: 10px; letter-spacing: .13em; color: #8da9cb; }
 .sidebar-nav { gap: 6px; margin-top: 14px; }
 .nav-link { display: flex; gap: 12px; align-items: center; padding: 12px; color: #c4d1e4; border-radius: 9px; }
