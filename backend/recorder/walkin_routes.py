@@ -3,7 +3,9 @@
 import hashlib
 import json
 import re
+import secrets
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -15,6 +17,8 @@ from .db import many, one
 from .errors import fail
 from .routes import audit
 from .security import Workspace, administrator, owned_conversation, workspace
+from .assignment import least_loaded_salesperson, next_daily_ticket
+from app.zoho import zoho
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
 Purpose = Literal["Product enquiry", "New business enquiry", "Product demonstration", "Pricing or quotation request", "Existing order enquiry", "Service or support request", "Meeting with a specific employee", "Follow-up meeting", "Other"]
@@ -292,9 +296,40 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             (organisation_id,registered_by,assigned_agent_id,assigned_at,idempotency_key,payload_hash,payload,customer_name,mobile_number,purpose,status)
             values(%s,%s,%s,case when %s::uuid is null then null else now() end,%s,%s,%s,%s,%s,%s,%s) returning id""",
                         (context.id, context.user.id, assigned, assigned, idempotency_key, payload_hash, Jsonb(payload), body.customerName, body.mobileNumber, body.purpose, status))
+        salesperson = await least_loaded_salesperson(connection, context.id)
+        ticket_day = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        daily_sequence = await next_daily_ticket(connection, context.id, ticket_day)
+        tracking_token = secrets.token_urlsafe(12)
+        tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
+        ticket_payload = {
+            "customerName": body.customerName, "phone": body.mobileNumber, "email": body.email,
+            "channel": "Retail walk-in", "branch": body.department or "Walk-in",
+            "assignedExecutive": salesperson["display_name"] if salesperson else "Unassigned",
+            "product": body.productOrService, "quantity": 1, "unit": "nos", "notes": body.internalNotes or body.purposeDescription,
+            "sourceEventId": f"walkin:{row['id']}", "sourceWalkinId": str(row["id"]), "customerType": "Retail",
+            "priority": "Normal"
+        }
+        ticket_payload["ticketNumber"] = daily_sequence
+        ticket_hash = hashlib.sha256(json.dumps(ticket_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        books_contact_id = None
+        try:
+            zoho_status = zoho.status()
+            books_org = zoho_status.get("organization_id")
+            if books_org and (body.email or body.mobileNumber):
+                books_contact = await zoho.ensure_books_contact(books_org, name=body.customerName, email=body.email, phone=body.mobileNumber)
+                books_contact_id = books_contact.get("contact_id") or books_contact.get("contact_id") or books_contact.get("id")
+        except Exception:
+            # Visitor registration remains available when Books is disconnected or temporarily unavailable.
+            books_contact_id = None
+        await connection.execute("""insert into public.guruconnect_enquiries
+            (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s)""",
+            (context.id, context.user.id, f"walkin-enquiry:{row['id']}", ticket_hash, Jsonb(ticket_payload), body.customerName, body.mobileNumber, "Retail walk-in", body.department or "Walk-in", salesperson["user_id"] if salesperson else None, ticket_day, daily_sequence, tracking_hash, books_contact_id))
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])
-    return serialize_visit(saved)
+    result = serialize_visit(saved)
+    result["ticket"] = {"number": daily_sequence, "token": tracking_token, "stage": "new"}
+    return result
 
 
 @router.get("/{visit_id}")

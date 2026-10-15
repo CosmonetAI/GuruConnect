@@ -59,6 +59,7 @@ export type WalkinVisit = {
   convertedEnquiryReference: string | null
   createdAt: string
   updatedAt: string
+  ticket?: { number: number; token: string; stage: string }
 }
 
 export type WalkinRequirement = {

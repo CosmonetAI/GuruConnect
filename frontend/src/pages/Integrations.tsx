@@ -30,7 +30,7 @@ function ScopedIntegrations() {
   const alive = useRef(true)
   const submitting = useRef(false)
   const controllers = useRef(new Set<AbortController>())
-  const administrator = workspace?.role === 'owner' || workspace?.role === 'admin'
+  const administrator = workspace?.role === 'owner'
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false; controllers.current.forEach(controller => controller.abort()) }
@@ -122,7 +122,7 @@ function ScopedIntegrations() {
 
   return <div className="office-processing">
     <div className="office-row office-between"><div><h1 className="page-title">Connections & processing</h1><p>GuruConnect uses its own API and background worker. Provider keys belong to this workspace.</p></div><button type="button" className="office-button office-secondary" onClick={reload} disabled={connections.refreshing || policy.refreshing}>Refresh connections</button></div>
-    {!administrator && <OfficeNotice>Only a workspace owner or administrator can configure, test or disconnect providers.</OfficeNotice>}
+    {!administrator && <OfficeNotice>Only the workspace owner can configure, test or disconnect providers.</OfficeNotice>}
     {(connections.error || policy.error || (!configure && !functional && !disconnect && error)) && <OfficeNotice error>{connections.error || policy.error || error}</OfficeNotice>}
     {notice && <OfficeNotice>{notice}</OfficeNotice>}
     {connections.loading ? <p role="status">Loading workspace connections…</p> : <div className="office-connections-grid">{engines.map(engine => {

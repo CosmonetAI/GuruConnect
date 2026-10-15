@@ -11,7 +11,7 @@ from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -20,6 +20,8 @@ from .errors import fail
 from .routes import audit
 from .security import Workspace, conversation, workspace
 from .walkin_routes import complete_conversion, conversion_visit, validate_conversion_recording
+from .assignment import least_loaded_salesperson
+from app.zoho import zoho
 
 router = APIRouter(prefix="/api/v1/enquiries", tags=["enquiries"])
 
@@ -113,10 +115,14 @@ class EnquiryCreate(BaseModel):
 SELECT_ENQUIRY = """
 select e.*, c.capture_state, c.upload_state, c.transcription_state,
        c.english_state, c.speaker_state, c.final_state, c.duration_seconds,
-       c.deleted_at as recording_deleted_at
+       c.deleted_at as recording_deleted_at,
+       assigned_profile.display_name as assigned_salesperson_name,
+       assigned_user.email as assigned_salesperson_email
 from public.guruconnect_enquiries e
 left join public.conversations c on c.id=e.conversation_id
   and c.organisation_id=e.organisation_id and c.owner_id=e.owner_id
+left join public.profiles assigned_profile on assigned_profile.id=e.assigned_to
+left join auth.users assigned_user on assigned_user.id=e.assigned_to
 """
 
 
@@ -127,6 +133,11 @@ def serialize_enquiry(row: dict) -> dict:
                    enquiryNumber=f"ENQ-{row['created_at'].year}-{row['enquiry_number']:06d}",
                    createdAt=row["created_at"].isoformat())
     payload["conversationId"] = str(row["conversation_id"]) if row["conversation_id"] else None
+    payload["stage"] = row.get("stage", "new")
+    payload["unread"] = bool(row.get("unread", False))
+    payload["assignedTo"] = str(row["assigned_to"]) if row.get("assigned_to") else None
+    payload["assignedSalesperson"] = row.get("assigned_salesperson_name") or payload.get("assignedExecutive", "")
+    payload["assignedSalespersonEmail"] = row.get("assigned_salesperson_email", "")
     if row["conversation_id"] and row.get("capture_state") and not row.get("recording_deleted_at"):
         payload["recording"] = {
             "captureState": row["capture_state"], "uploadState": row["upload_state"],
@@ -148,11 +159,11 @@ async def list_enquiries(request: Request, context: Workspace = Depends(workspac
                          branch: str = Query(default="", max_length=160)):
     # Treat '%' and '_' as text; search values are never concatenated into SQL.
     search = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    where = """where e.organisation_id=%s and (%s or e.owner_id=%s)
+    where = """where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
       and (e.customer_name ilike %s or e.phone ilike %s or e.id::text ilike %s
            or ('ENQ-'||extract(year from e.created_at)::text||'-'||lpad(e.enquiry_number::text,greatest(6,length(e.enquiry_number::text)),'0')) ilike %s)
       and (%s='' or e.channel=%s) and (%s='' or e.branch=%s)"""
-    params = (context.id, context.admin, context.user.id, search, search, search, search, channel, channel, branch, branch)
+    params = (context.id, context.admin, context.user.id, context.user.id, search, search, search, search, channel, channel, branch, branch)
     async with request.app.state.db.connection() as connection:
         # One SQL statement gives count and rows the same snapshot, including an
         # empty page, without extending the transaction across another roundtrip.
@@ -191,6 +202,11 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             response.status_code = 200
             return serialize_enquiry(prior)
         visit = await conversion_visit(connection, context, body.sourceEventId)
+        assignee = await least_loaded_salesperson(connection, context.id)
+        assigned_to = assignee["user_id"] if assignee else None
+        if assignee:
+            payload["assignedExecutive"] = assignee["display_name"] or assignee["email"]
+            payload["assignedSalespersonEmail"] = assignee["email"]
         if body.conversationId:
             recording = await conversation(connection, context, body.conversationId, lock=True)
             if recording["owner_id"] != context.user.id:
@@ -201,12 +217,22 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             linked = await one(connection, "select id from public.guruconnect_enquiries where conversation_id=%s", (body.conversationId,))
             if linked:
                 fail("recording_already_linked", 409, "This recording is already attached to an enquiry")
+        books_contact_id = None
+        try:
+            zoho_status = zoho.status()
+            books_org = zoho_status.get("organization_id")
+            email = payload.get("email") or payload.get("customerEmail")
+            if books_org and (body.phone or email):
+                books_contact = await zoho.ensure_books_contact(books_org, name=body.customerName, email=email, phone=body.phone)
+                books_contact_id = books_contact.get("contact_id") or books_contact.get("id")
+        except Exception:
+            books_contact_id = None
         row = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,
-             customer_name,phone,channel,branch)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+             customer_name,phone,channel,branch,assigned_to,stage,unread,books_contact_id)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s) returning id""",
                         (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
-                         body.customerName, body.phone, body.channel, body.branch))
+                         body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id))
         await audit(connection, context, "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
         if visit:
             await complete_conversion(connection, context, visit, row["id"])
@@ -214,11 +240,29 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
     return serialize_enquiry(saved)
 
 
+@router.get("/public/track")
+async def track_public_ticket(request: Request, token: str = Query(min_length=16, max_length=128)):
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, """select e.ticket_day,e.daily_sequence,e.stage,e.created_at,
+                                      p.display_name as salesperson_name,u.email as salesperson_email
+                               from public.guruconnect_enquiries e
+                               left join public.profiles p on p.id=e.assigned_to
+                               left join auth.users u on u.id=e.assigned_to
+                               where e.public_token_hash=%s limit 1""", (token_hash,))
+    if not row:
+        raise HTTPException(404, "Ticket not found or token expired")
+    return {"ticketNumber": row.daily_sequence, "date": str(row.ticket_day), "stage": row.stage,
+            "createdAt": row.created_at.isoformat(), "salesperson": row.salesperson_name or "Awaiting assignment",
+            "salespersonEmail": row.salesperson_email or ""}
+
 @router.get("/{enquiry_id}")
 async def get_enquiry(enquiry_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.owner_id=%s)",
-                        (enquiry_id, context.id, context.admin, context.user.id))
+        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)",
+                        (enquiry_id, context.id, context.admin, context.user.id, context.user.id))
         if not row:
             fail("enquiry_not_found", 404)
+        await connection.execute("update public.guruconnect_enquiries set unread=false where id=%s and organisation_id=%s", (enquiry_id, context.id))
     return serialize_enquiry(row)
+

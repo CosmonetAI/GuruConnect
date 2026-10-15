@@ -73,7 +73,7 @@ export default function WalkinRegistration() {
       internalNotes: '',
       }
       const visit = await registerWalkin(workspace.id, input, saveKey)
-      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}.` } })
+      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}. Ticket #${visit.ticket?.number ?? '—'}. Tracking token: ${visit.ticket?.token ?? 'not available'}` } })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {

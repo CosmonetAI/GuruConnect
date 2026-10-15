@@ -63,6 +63,13 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     return () => { alive = false; ++sequence.current; subscription.unsubscribe() }
   }, [])
   useEffect(() => { if (session?.user.id) void reloadWorkspaces() }, [session?.user.id, reloadWorkspaces])
+  useEffect(() => { if (active) localStorage.setItem('guruconnect-active-workspace', active) }, [active])
+  useEffect(() => {
+    if (!session || localMode) return
+    const ping = () => { void request('/presence').catch(() => undefined) }
+    ping(); const timer = window.setInterval(ping, 30_000)
+    return () => window.clearInterval(timer)
+  }, [session, localMode])
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
     workspaces: localMode ? [localWorkspace] : workspaces, workspace: localMode ? localWorkspace : workspaces.find(item => item.id === active) ?? null, error, captureBusy, setCaptureBusy,
     reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => item.id === id)) setActive(id) } }}>{children}</OfficeContext.Provider>

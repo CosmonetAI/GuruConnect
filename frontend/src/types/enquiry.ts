@@ -12,6 +12,11 @@ export type Enquiry = {
   channel: 'Call' | 'Dealership' | 'Retail walk-in' | 'Project' | 'Chat' | string
   branch: string
   assignedExecutive: string
+  assignedTo?: string
+  assignedSalesperson?: string
+  assignedSalespersonEmail?: string
+  stage?: 'new' | 'in_process' | 'closed' | 'customer_did_not_show'
+  unread?: boolean
   product: string
   quantity: number
   unit: string

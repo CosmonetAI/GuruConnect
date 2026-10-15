@@ -1,13 +1,27 @@
 from datetime import timedelta
 import asyncio, httpx
+from contextvars import ContextVar
 from sqlalchemy import text
 from .db import require_db, row_dict, now
 from .settings import settings
 
+_organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
+
+def set_organisation_id(value: str | None):
+    _organisation_id.set(value)
+
+def get_organisation_id():
+    return _organisation_id.get()
+
 class ZohoClient:
+    def _tenant_key(self):
+        return f"guru-group:{_organisation_id.get()}" if _organisation_id.get() else 'guru-group'
     def _connection(self):
         with require_db() as db:
-            row = db.execute(text("select * from zoho_connections where tenant_key='guru-group' limit 1")).first()
+            if _organisation_id.get():
+                row = db.execute(text("select * from zoho_connections where organisation_id=:org limit 1"), {'org': _organisation_id.get()}).first()
+            else:
+                row = db.execute(text("select * from zoho_connections where tenant_key='guru-group' limit 1")).first()
             return row_dict(row) if row else None
     def status(self):
         c=self._connection()
@@ -18,12 +32,12 @@ class ZohoClient:
         return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
     async def save_configuration(self, client_id, client_secret):
         with require_db() as db:
-            existing=db.execute(text("select client_secret from zoho_connections where tenant_key='guru-group' limit 1")).first()
+            existing=db.execute(text("select client_secret from zoho_connections where tenant_key=:tenant limit 1"), {'tenant': self._tenant_key()}).first()
             if not client_secret:
                 client_secret=existing[0] if existing and existing[0] else None
             if not client_secret:
                 raise ValueError('Client Secret is required for the first configuration.')
-            db.execute(text("""insert into zoho_connections(tenant_key,client_id,client_secret,status) values('guru-group',:client_id,:client_secret,'not_connected') on conflict(tenant_key) do update set client_id=:client_id,client_secret=:client_secret,updated_at=now()"""), {'client_id':client_id,'client_secret':client_secret}); db.commit()
+            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,client_id,client_secret,status) values(:tenant,:org,:client_id,:client_secret,'not_connected') on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,client_id=excluded.client_id,client_secret=excluded.client_secret,updated_at=now()"""), {'tenant':self._tenant_key(),'org':_organisation_id.get(),'client_id':client_id,'client_secret':client_secret}); db.commit()
         return self.configuration()
     async def exchange_code(self, code):
         c=self._connection() or {}
@@ -41,7 +55,7 @@ class ZohoClient:
         response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
     async def _save_tokens(self,payload):
         with require_db() as db:
-            db.execute(text("""insert into zoho_connections(tenant_key,api_domain,access_token,refresh_token,expires_at,scope,status,updated_at) values('guru-group',:domain,:access,:refresh,:expires,:scope,'connected',now()) on conflict(tenant_key) do update set api_domain=:domain,access_token=:access,refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()"""),{'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
+            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,api_domain,access_token,refresh_token,expires_at,scope,status,updated_at) values(:tenant,:org,:domain,:access,:refresh,:expires,:scope,'connected',now()) on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,api_domain=:domain,access_token=:access,refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()"""),{'tenant':self._tenant_key(),'org':_organisation_id.get(),'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
     async def request(self,method,path,*,params=None,json=None,form=None):
         await self.refresh(); c=self._connection()
         if not c or not c.get('access_token'): raise RuntimeError('Zoho is not connected')
@@ -63,20 +77,46 @@ class ZohoClient:
         return {'organizations':orgs,'organization_id':selected}
     def select_organization(self, organization_id):
         with require_db() as db:
-            db.execute(text("update zoho_connections set organization_id=:org,updated_at=now() where tenant_key='guru-group'"),{'org':organization_id}); db.commit()
+            db.execute(text("update zoho_connections set organization_id=:selected,updated_at=now() where tenant_key=:tenant"),{'selected':organization_id,'tenant':self._tenant_key()}); db.commit()
         return self.status()
     async def list_bigin_contacts(self, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
-        return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':40, 'page':page})
+        return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':50, 'page':page})
     async def search_bigin_contacts(self, query, search_by, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
-        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 40, 'page': page})
+        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 50, 'page': page})
     async def search_books_contacts(self, org, query, date=None, page=1, per_page=10):
         params = {'organization_id': org, 'per_page': per_page, 'page': page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)
     async def create_books_contact(self, org, data): return await self.request('POST','/books/v3/contacts',params={'organization_id':org},json=data)
+    async def ensure_books_contact(self, org, *, name, email=None, phone=None):
+        """Find a matching Books customer before creating one, so walk-ins are idempotent."""
+        email = (email or '').strip().lower()
+        phone = ''.join(ch for ch in (phone or '') if ch.isdigit())
+        for query in (email, phone):
+            if not query:
+                continue
+            payload = await self.search_books_customers(org, query)
+            rows = payload.get('contacts', payload.get('data', []))
+            for row in rows:
+                row_email = (row.get('email') or '').strip().lower()
+                row_phone = ''.join(ch for ch in str(row.get('phone') or row.get('mobile') or '') if ch.isdigit())
+                if (email and row_email == email) or (phone and row_phone and row_phone[-10:] == phone[-10:]):
+                    return row
+        display_name = (name or email or phone or 'Walk-in customer').strip()
+        parts = display_name.split(maxsplit=1)
+        payload = {
+            'contact_name': display_name,
+            'contact_type': 'customer',
+            'contact_persons': [{
+                'first_name': parts[0], 'last_name': parts[1] if len(parts) > 1 else '',
+                'email': email, 'mobile': phone or None, 'is_primary_contact': True,
+            }],
+        }
+        result = await self.create_books_contact(org, payload)
+        return result.get('contact') or (result.get('data') or [None])[0] or result
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})

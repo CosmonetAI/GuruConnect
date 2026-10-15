@@ -164,7 +164,7 @@ class Workspace:
 
     @property
     def admin(self) -> bool:
-        return self.role in {"owner", "admin"}
+        return self.role == "owner"
 
 
 async def workspace(request: Request, user: User = Depends(current_user),
@@ -179,7 +179,7 @@ async def workspace(request: Request, user: User = Depends(current_user),
 
 
 async def administrator(request: Request, context: Workspace = Depends(workspace)) -> Workspace:
-    if not context.admin:
+    if context.role != "owner":
         fail("administrator_required", 403)
     if request.app.state.settings.require_admin_mfa and context.user.aal != "aal2":
         fail("mfa_required", 403)

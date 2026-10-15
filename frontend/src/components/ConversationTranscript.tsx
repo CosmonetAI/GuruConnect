@@ -44,7 +44,7 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
   const expiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const c = progress.data?.conversation
   const versionId = transcript.data?.version_id || transcript.data?.id || c?.active_transcript_version_id
-  const admin = workspace?.role === 'admin' || workspace?.role === 'owner'
+  const admin = workspace?.role === 'owner'
   const canReplay = admin && !localMode
 
   useEffect(() => {

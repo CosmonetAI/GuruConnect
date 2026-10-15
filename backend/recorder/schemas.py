@@ -19,6 +19,9 @@ class WorkspaceCreate(Input):
 class ProfilePatch(Input):
     display_name: Name
     preferences: dict = Field(default_factory=dict)
+    phone: str | None = Field(default=None, max_length=24)
+    avatar_path: str | None = Field(default=None, max_length=500)
+    availability_status: Literal["active", "not_active", "on_leave", "be_right_back"] = "active"
 
 
 class CustomerCreate(Input):
@@ -67,10 +70,10 @@ class Chunk(Input):
     conversation_id: Id | None = None
     part_id: Id
     sequence: int = Field(ge=0, le=2880)
-    sample_count: int = Field(ge=1, le=160000)
+    sample_count: int = Field(ge=1, le=2880000)
     sample_rate: Literal[16000] = 16000
     start_sample: int = Field(ge=0, le=115200000)
-    bytes: int = Field(ge=46, le=400000)
+    bytes: int = Field(ge=46, le=6000000)
     sha256: Hash
     mime: Literal["audio/wav"] = "audio/wav"
     lease_token: Id
@@ -92,7 +95,7 @@ class Manifest(Input):
 
 class Invitation(Input):
     email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")]
-    role: Literal["admin", "salesperson"] = "salesperson"
+    role: Literal["salesperson", "receptionist"] = "salesperson"
 
 
 class AcceptInvitation(Input):

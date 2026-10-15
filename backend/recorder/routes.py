@@ -12,6 +12,7 @@ from . import schemas as s
 from .db import many, one
 from .errors import fail
 from .security import User, Workspace, administrator, conversation, current_user, token_hash, workspace
+from .assignment import least_loaded_salesperson
 
 router = APIRouter(prefix="/api/v1")
 
@@ -32,7 +33,17 @@ async def update_profile(body: s.ProfilePatch, request: Request, user: User = De
     if len(str(body.preferences)) > 5000 or any(key not in {"theme", "microphone_id", "locale"} for key in body.preferences):
         fail("invalid_preferences")
     async with request.app.state.db.connection() as connection:
-        return await one(connection, "insert into profiles(id,display_name,preferences) values(%s,%s,%s) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences)))
+        if body.phone is not None and body.phone and not re.fullmatch(r"\+?[0-9][0-9 ()-]{7,19}", body.phone):
+            fail("invalid_phone", 422)
+        if body.avatar_path is not None and body.avatar_path and not body.avatar_path.startswith(f"{user.id}/"):
+            fail("invalid_avatar", 422)
+        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,last_seen_at) values(%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, body.availability_status))
+
+@router.post("/presence")
+async def presence(request: Request, user: User = Depends(current_user)):
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s and availability_status='active' returning id,last_seen_at,availability_status", (user.id,))
+    return row or {"id": user.id, "availability_status": "active"}
 
 
 @router.get("/workspaces")
@@ -57,15 +68,13 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
 @router.get("/team")
 async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select m.*,p.display_name from members m left join profiles p on p.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
+        rows = await many(connection, "select m.*,p.display_name,p.availability_status,p.last_seen_at,u.email from members m left join profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}
 
 
 @router.post("/invites", status_code=201)
 async def invite(body: s.Invitation, request: Request, context: Workspace = Depends(administrator)):
-    if body.role == "admin" and context.role != "owner":
-        fail("owner_required", 403)
     token = secrets.token_urlsafe(32)
     async with request.app.state.db.connection() as connection:
         row = await one(connection, "insert into invites(organisation_id,email,role,token_hash,invited_by,expires_at) values(%s,%s,%s,%s,%s,now()+interval '7 days') returning id,email,role,expires_at", (context.id, body.email.lower(), body.role, token_hash(token), context.user.id))
@@ -100,6 +109,21 @@ async def customers(request: Request, context: Workspace = Depends(workspace), q
     async with request.app.state.db.connection() as connection:
         rows = await many(connection, "select * from customers where organisation_id=%s and deleted_at is null and (%s or owner_id=%s) and name ilike %s and (%s::uuid is null or id>%s) order by id limit %s", (context.id, context.admin, context.user.id, "%" + q.replace("%", "\\%").replace("_", "\\_") + "%", cursor, cursor, limit + 1))
     return {"items": rows[:limit], "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}
+
+@router.get("/enquiries/unread-count")
+async def unread_enquiries(request: Request, context: Workspace = Depends(workspace)):
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, "select count(*) as count from guruconnect_enquiries where organisation_id=%s and unread and (%s or assigned_to=%s)", (context.id, context.admin, context.user.id))
+    return {"count": row["count"]}
+
+@router.patch("/enquiries/{enquiry_id}/state")
+async def update_enquiry_state(enquiry_id: UUID, body: dict, request: Request, context: Workspace = Depends(workspace)):
+    stage = body.get("stage")
+    if stage not in {"new", "in_process", "closed", "customer_did_not_show"}: fail("invalid_enquiry_stage", 422)
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, "update guruconnect_enquiries set stage=%s, unread=false where id=%s and organisation_id=%s and (%s or assigned_to=%s) returning *", (stage, enquiry_id, context.id, context.admin, context.user.id))
+        if not row: fail("enquiry_not_found", 404)
+    return row
 
 
 @router.post("/customers", status_code=201)

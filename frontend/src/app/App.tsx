@@ -10,6 +10,7 @@ const Analytics = lazy(() => import('../pages/Analytics'))
 const Settings = lazy(() => import('../pages/Settings'))
 import Welcome from '../pages/Welcome'
 import ResetPassword from '../pages/ResetPassword'
+import TicketTracking from '../pages/TicketTracking'
 const Zoho = lazy(() => import('../pages/Zoho'))
 const Recordings = lazy(() => import('../pages/Recordings'))
 const WalkinsOverview = lazy(() => import('../pages/Walkins/WalkinsOverview'))
@@ -17,7 +18,7 @@ const WalkinRegistration = lazy(() => import('../pages/Walkins/WalkinRegistratio
 const WalkinDetail = lazy(() => import('../pages/Walkins/WalkinDetail'))
 const MyWalkins = lazy(() => import('../pages/Walkins/MyWalkins'))
 const WalkinHistory = lazy(() => import('../pages/Walkins/WalkinHistory'))
-const AIChats = lazy(() => import('../pages/GGPages').then(module => ({ default: module.AIChats })))
+const AIChats = lazy(() => import('../pages/VoiceSessions'))
 const Products = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Products })))
 const Contacts = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Contacts })))
 const Quotes = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Quotes })))
@@ -32,12 +33,17 @@ const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
   if (!configured || loading || !user || workspacesLoading || !workspace) return <Welcome />
   return <>{children}</>
 }
+const RoleRoute: FC<{ roles: string[]; children: ReactNode }> = ({ roles, children }) => {
+  const { workspace } = useOffice()
+  return workspace && roles.includes(workspace.role) ? <>{children}</> : <Navigate to="/dashboard" replace />
+}
 
 export default function App() {
   return (
     <Suspense fallback={<p role="status" className="flow-panel">Opening screen…</p>}><Routes>
       <Route path="/reset" element={<ResetPassword />} />
       <Route path="/auth/callback" element={<Navigate to="/" replace />} />
+      <Route path="/ticket-tracking" element={<TicketTracking />} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route
         path="/"
@@ -49,11 +55,11 @@ export default function App() {
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="enquiries" element={<EnquiriesList />} />
-        <Route path="walkins" element={<WalkinsOverview />} />
-        <Route path="walkins/new" element={<WalkinRegistration />} />
-        <Route path="walkins/mine" element={<MyWalkins />} />
-        <Route path="walkins/history" element={<WalkinHistory />} />
-        <Route path="walkins/:id" element={<WalkinDetail />} />
+        <Route path="walkins" element={<RoleRoute roles={['owner','receptionist']}><WalkinsOverview /></RoleRoute>} />
+        <Route path="walkins/new" element={<RoleRoute roles={['owner','receptionist']}><WalkinRegistration /></RoleRoute>} />
+        <Route path="walkins/mine" element={<RoleRoute roles={['owner','receptionist']}><MyWalkins /></RoleRoute>} />
+        <Route path="walkins/history" element={<RoleRoute roles={['owner','receptionist']}><WalkinHistory /></RoleRoute>} />
+        <Route path="walkins/:id" element={<RoleRoute roles={['owner','receptionist']}><WalkinDetail /></RoleRoute>} />
         <Route path="enquiries/new" element={<NewEnquiry />} />
         <Route path="enquiries/:id" element={<EnquiryDetail />} />
         <Route path="analytics" element={<Analytics />} />

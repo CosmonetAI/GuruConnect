@@ -2,14 +2,14 @@ from contextlib import asynccontextmanager
 import asyncio, json
 import secrets
 import re
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from .db import require_db, row_dict, now
-from .zoho import zoho, refresh_loop
+from .zoho import zoho, refresh_loop, set_organisation_id, get_organisation_id
 from .chat import get_or_create_customer, run_graph
 
 @asynccontextmanager
@@ -18,6 +18,11 @@ async def lifespan(app):
 app=FastAPI(title='Guru Group AI Sales API',version='0.1.0',lifespan=lifespan)
 from .settings import settings
 app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in settings.cors_origins.split(',') if origin.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
+
+@app.middleware('http')
+async def zoho_workspace_scope(request: Request, call_next):
+    set_organisation_id(request.headers.get('x-workspace-id'))
+    return await call_next(request)
 
 @app.get('/', response_class=HTMLResponse, include_in_schema=False)
 def landing_page():
@@ -97,6 +102,13 @@ class ContactIn(BaseModel):
     billing_address:dict|None=None
     gst_no:str=''
     notes:str='Contact created through Cosmonet AI'
+
+class VoiceSessionIn(BaseModel):
+    name: str = Field(min_length=2)
+    phone: str | None = None
+    email: str | None = None
+class VoiceSessionLinkIn(BaseModel):
+    conversation_id: str = Field(min_length=8)
 def _db_http_error(error: Exception):
     detail = 'Database unavailable. Configure Render DATABASE_URL with the Supabase IPv4 pooler URI and redeploy.'
     if isinstance(error, OperationalError):
@@ -130,6 +142,80 @@ async def zoho_organization(payload:OrganizationIn):
 async def zoho_smoke():
     try: return await zoho.smoke_test()
     except Exception as e: raise HTTPException(502,str(e))
+
+def _voice_identity(phone, email):
+    normalized_phone = ''.join(ch for ch in (phone or '') if ch.isdigit())[-15:] or None
+    normalized_email = (email or '').strip().lower() or None
+    return normalized_phone, normalized_email
+
+@app.post('/api/voice-sessions')
+async def open_voice_session(payload: VoiceSessionIn, request: Request):
+    phone, email = _voice_identity(payload.phone, payload.email)
+    if not phone and not email: raise HTTPException(422, 'Phone number or email is required to start a voice session')
+    try:
+        with require_db() as db:
+            org = get_organisation_id(); member = request.headers.get('x-user-id')
+            customer = db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and (cast(:phone as text) is not null and right(normalized_phone, 10)=right(cast(:phone as text), 10)) limit 1"), {'org': org, 'phone': phone}).first() if phone and org else db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and normalized_email=cast(:email as text) limit 1"), {'org': org, 'email': email}).first() if email and org else None
+            if not customer and phone and email:
+                customer = db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and normalized_email=cast(:email as text) limit 1"), {'org': org, 'email': email}).first() if org else None
+            if customer:
+                customer = row_dict(customer)
+                session = db.execute(text("select * from chat_sessions where organisation_id=cast(:org as uuid) and customer_id=:customer and ((cast(:phone as text) is not null and identity_phone=cast(:phone as text)) or (cast(:phone as text) is null and identity_email=cast(:email as text))) order by updated_at desc limit 1"), {'org': org, 'customer': customer['id'], 'phone': phone, 'email': email}).first()
+            else:
+                customer = db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,member_id) values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"), {'name': payload.name.strip(), 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
+                customer = row_dict(customer)
+                session = None
+            if not session:
+                session = db.execute(text("insert into chat_sessions(customer_id,title,identity_phone,identity_email,organisation_id,member_id) values(:customer,:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"), {'customer': customer['id'], 'title': f"{customer['name']} voice session", 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
+            db.commit()
+            session = row_dict(session)
+            messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session['id']}).all()]
+            chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session['id']}).all()]
+            return {'session': session, 'customer': customer, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
+    except Exception as e: raise HTTPException(500, f'Unable to open voice session: {e}')
+
+@app.get('/api/voice-sessions/{session_id}/history')
+async def voice_session_history(session_id: str, request: Request):
+    try:
+        with require_db() as db:
+            session = db.execute(text("select s.*,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id where s.id=:session and s.organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
+            if not session: raise HTTPException(404, 'Voice session not found')
+            messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session_id}).all()]
+            chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session_id}).all()]
+            return {'session': row_dict(session), 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(500, f'Unable to load voice session history: {e}')
+
+@app.post('/api/voice-sessions/{session_id}/conversation')
+async def link_voice_conversation(session_id: str, payload: VoiceSessionLinkIn, request: Request):
+    try:
+        with require_db() as db:
+            db.execute(text("update chat_sessions set conversation_id=:conversation,updated_at=now() where id=:session and organisation_id=cast(:org as uuid)"), {'conversation': payload.conversation_id, 'session': session_id, 'org': get_organisation_id()})
+            db.commit()
+        return {'linked': True, 'session_id': session_id, 'conversation_id': payload.conversation_id}
+    except Exception as e: raise HTTPException(500, f'Unable to link saved conversation: {e}')
+
+@app.post('/api/voice-sessions/{session_id}/chunks')
+async def save_voice_chunk(session_id: str, request: Request, chunk_index: int = 0, duration_seconds: float = 0, mime_type: str = 'audio/webm'):
+    try:
+        audio = await request.body()
+        if not audio: raise HTTPException(422, 'Audio chunk is empty')
+        with require_db() as db:
+            exists = db.execute(text("select id from chat_sessions where id=:session"), {'session': session_id}).first()
+            if not exists: raise HTTPException(404, 'Voice session not found')
+            path = f"{session_id}/{chunk_index}.webm"
+        if not settings.supabase_url or not settings.supabase_service_role_key: raise HTTPException(503, 'Supabase Storage is not configured')
+        storage_mime = mime_type.split(';', 1)[0].strip() or 'audio/webm'
+        headers = {'Authorization': f'Bearer {settings.supabase_service_role_key}', 'apikey': settings.supabase_service_role_key, 'Content-Type': storage_mime, 'x-upsert': 'true'}
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(f'{settings.supabase_url.rstrip("/")}/storage/v1/object/chat-recordings/{path}', headers=headers, content=audio)
+        response.raise_for_status()
+        with require_db() as db:
+            db.execute(text("insert into chat_recording_chunks(session_id,chunk_index,duration_seconds,mime_type,size_bytes,object_path) values(:session,:chunk,:duration,:mime,:size,:path) on conflict(session_id,chunk_index) do update set duration_seconds=:duration,mime_type=:mime,size_bytes=:size,object_path=:path"), {'session': session_id, 'chunk': chunk_index, 'duration': duration_seconds, 'mime': storage_mime, 'size': len(audio), 'path': path})
+            db.execute(text("update chat_sessions set updated_at=now() where id=:session"), {'session': session_id}); db.commit()
+        return {'saved': True, 'session_id': session_id, 'chunk_index': chunk_index, 'object_path': path, 'bytes': len(audio)}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(502, f'Unable to save voice chunk: {e}')
 
 def _pipeline_layouts(payload):
     rows = payload.get('layouts', payload.get('data', [])) if isinstance(payload, dict) else []
@@ -576,11 +662,52 @@ async def zoho_refresh_cron(x_zoho_refresh_secret: str|None = Header(default=Non
     except Exception as e:
         raise HTTPException(502, f'Zoho token refresh failed: {e}')
 @app.get('/api/chats')
-def chats():
+def chats(request: Request):
     try:
         with require_db() as db:
-            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id order by s.updated_at desc")).all(); return [row_dict(r) for r in rows]
+            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id where s.organisation_id=cast(:org as uuid) order by s.updated_at desc limit 50"), {'org': get_organisation_id()}).all(); return [row_dict(r) for r in rows]
     except Exception as e: return _db_http_error(e)
+
+@app.get('/api/session-contacts')
+async def session_contacts(search: str = ''):
+    """Federated recent contacts for Sessions: Bigin, Books, enquiries and saved sessions."""
+    query = search.strip().lower()
+    contacts = {}
+    def add(row, source, external_id=None, session_id=None):
+        name = (row.get('name') or row.get('contact_name') or row.get('Full_Name') or row.get('full_name') or row.get('customer_name') or 'Unnamed contact').strip()
+        email = (row.get('email') or row.get('Email') or '').strip().lower()
+        phone = str(row.get('phone') or row.get('Phone') or row.get('mobile') or row.get('Mobile') or '').strip()
+        if query and query not in ' '.join((name, email, phone)).lower(): return
+        key = f"phone:{''.join(ch for ch in phone if ch.isdigit())[-10:]}" if phone else f"email:{email}"
+        if key == 'email:' and not phone: key = f"{source}:{external_id or name}"
+        item = contacts.setdefault(key, {'id': key, 'name': name, 'email': email, 'phone': phone, 'sources': [], 'records': {}})
+        if source not in item['sources']: item['sources'].append(source)
+        if external_id: item['records'][source] = str(external_id)
+        if session_id: item['session_id'] = str(session_id)
+    errors = []
+    try:
+        with require_db() as db:
+            org = get_organisation_id()
+            rows = db.execute(text("select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id from chat_sessions s join customers c on c.id=s.customer_id where s.organisation_id=cast(:org as uuid) order by s.updated_at desc limit 50"), {'org': org}).all()
+            for row in rows: add(row_dict(row), 'session', session_id=row['session_id'])
+            rows = db.execute(text("select customer_name as name,phone, payload->>'email' as email, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) order by created_at desc limit 50"), {'org': org}).all()
+            for row in rows: add(row_dict(row), 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])
+    except Exception as e:
+        errors.append(f'Local contacts unavailable: {e}')
+    try:
+        status = zoho.status()
+        books_org = status.get('organization_id')
+        if status.get('connected') and books_org:
+            books = await zoho.books_customers(books_org)
+            for row in (books.get('contacts', books.get('data', [])) or [])[:50]: add(row, 'books', row.get('contact_id') or row.get('id'))
+        else: errors.append('Books is not connected')
+    except Exception as e: errors.append(f'Books contacts unavailable: {e}')
+    try:
+        if zoho.status().get('connected'):
+            bigin = await zoho.search_bigin_contacts(query, 'word') if query else await zoho.list_bigin_contacts()
+            for row in (bigin.get('data', []) or [])[:50]: add(row, 'bigin', row.get('id'))
+    except Exception as e: errors.append(f'Bigin contacts unavailable: {e}')
+    return {'contacts': list(contacts.values())[:50], 'errors': errors}
 @app.get('/api/chats/{session_id}/messages')
 def messages(session_id:str):
     try:

@@ -125,7 +125,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
   return input;
 }
 export const json = (method: string, value?: unknown, key?: string): RequestInit => ({ method, body: value === undefined ? undefined : JSON.stringify(value), headers: key ? { 'Idempotency-Key': key } : undefined });
-export type Role = 'owner' | 'admin' | 'salesperson';
+export type Role = 'owner' | 'salesperson' | 'receptionist';
 export interface Workspace { id: string; name: string; role: Role; }
 export interface Customer { id: string; name: string; created_at: string; notes?: string; }
 export interface Conversation {
@@ -144,6 +144,6 @@ export interface Job { id: string; run_id?: string; job_type: string; status: st
 export interface Run { id: string; engine_id: string; kind: string; state: string; model?: string; transcript_version_id?: string; covered_seconds?: number; created_at?: string; versions?: {id:string;english_state:string;kind:string}[]; processed_audio_seconds?:number; translation_characters?:number; translation_strategy?:string; translator_model?:string; translation_input_tokens?:number; translation_output_tokens?:number; }
 export interface Connection { id: string; engine_id: string; state: string; enabled: boolean; generation: number; last_test_at?: string; last_error?: string; queued_jobs?: number; inflight_jobs?: number; safe_config?: Record<string, unknown>; }
 export interface EngineSettings { default_engine_id: string | null; salesperson_engine_selection?: boolean; comparison_allowed?: boolean; allowed_engine_ids?: string[]; budget_policy?:Record<string,unknown>; }
-export interface Member { user_id: string; display_name?: string; email?: string; role: Role; status: string; }
+export interface Member { user_id: string; display_name?: string; email?: string; role: Role; status: string; availability_status?: string; last_seen_at?: string; }
 export function message(error: unknown): string { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
 export function duration(seconds = 0): string { const s = Math.max(0, Math.floor(seconds)); return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`; }

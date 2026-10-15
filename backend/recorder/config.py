@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     storage_bucket: str = "recorder-audio"
     pool_min_size: int = Field(default=1, ge=1, le=10)
     pool_max_size: int = Field(default=10, ge=1, le=50)
-    upload_max_bytes: int = Field(default=400_000, ge=32044, le=2_000_000)
+    upload_max_bytes: int = Field(default=6_000_000, ge=32044, le=10_000_000)
     recording_max_seconds: int = Field(default=7200, ge=30, le=7200)
     window_seconds: int = Field(default=30, ge=5, le=120)
     context_seconds: int = Field(default=2, ge=0, le=10)

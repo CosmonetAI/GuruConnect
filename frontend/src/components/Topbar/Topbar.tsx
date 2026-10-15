@@ -11,6 +11,7 @@ export default function Topbar() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const current = navigationItems.find(item => location.pathname.startsWith(item.to))
+  const visibleItems = workspace?.role === 'owner' ? navigationItems : workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems.filter(item => !item.to.startsWith('/walkins'))
   async function signOut() {
     if (!supabase || captureBusy || busy) return
     setBusy(true); setError('')
@@ -20,5 +21,5 @@ export default function Topbar() {
     <div className="topbar-right"><label className="workspace-select"><span className="sr-only">Active workspace</span><select value={workspace?.id ?? ''} onChange={event => setWorkspace(event.target.value)} disabled={captureBusy}>{workspaces.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <Link className="button button-primary topbar-create" to="/enquiries/new"><Plus size={16} /> New enquiry</Link>
       {localMode ? <span className="local-mode-badge">Local mode</span> : <button className="icon-btn" aria-label="Sign out" title={captureBusy ? 'Finish saving your recording before signing out' : `Sign out ${user?.email ?? ''}`} disabled={captureBusy || busy} onClick={() => void signOut()}><LogOut size={18} /></button>}</div></header>
-    {error && <p role="alert" className="flow-error">{error}</p>}{open && <nav id="mobile-navigation" className="mobile-navigation" aria-label="Mobile navigation">{navigationItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={() => setOpen(false)}><Icon size={18} />{label}</NavLink>)}</nav>}</>
+    {error && <p role="alert" className="flow-error">{error}</p>}{open && <nav id="mobile-navigation" className="mobile-navigation" aria-label="Mobile navigation">{visibleItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={() => setOpen(false)}><Icon size={18} />{label}</NavLink>)}</nav>}</>
 }

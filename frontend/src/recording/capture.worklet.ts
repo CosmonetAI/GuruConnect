@@ -28,7 +28,9 @@ class CaptureProcessor extends AudioWorkletProcessor {
   private add(samples: Float32Array) {
     const room = Math.max(0, this.maxSamples - this.total - this.pending.length);
     for (const value of samples.subarray(0,room)) this.pending.push(value);
-    while (this.pending.length >= 80000) this.emit(80000);
+    // Keep microphone uploads in three-minute WAV chunks for the transcription worker.
+    const chunkSamples = 3 * 60 * 16000;
+    while (this.pending.length >= chunkSamples) this.emit(chunkSamples);
     if (this.total + this.pending.length >= this.maxSamples && !this.paused) {
       this.flush(); this.paused = true; this.port.postMessage({ type: 'limit', samples: this.total });
     }
