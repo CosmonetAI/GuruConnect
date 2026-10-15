@@ -13,8 +13,10 @@ def main():
         port = int(os.environ.get("PORT", "10000"))
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port")
-    except Exception:
-        print("API startup rejected: verify backend configuration and PORT", file=sys.stderr)
+    except Exception as error:
+        # Keep the validation failure visible in Render logs without printing
+        # the values of SecretStr settings.
+        print(f"API startup rejected: {error}", file=sys.stderr)
         raise SystemExit(1) from None
 
     # Psycopg's async connection pool is incompatible with the default

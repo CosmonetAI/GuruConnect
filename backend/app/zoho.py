@@ -6,22 +6,42 @@ from .db import require_db, row_dict, now
 from .settings import settings
 
 _organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
+_member_id: ContextVar[str | None] = ContextVar('zoho_member_id', default=None)
 
 def set_organisation_id(value: str | None):
     _organisation_id.set(value)
+
+def set_member_id(value: str | None):
+    _member_id.set(value)
+
+def get_member_id():
+    return _member_id.get()
 
 def get_organisation_id():
     return _organisation_id.get()
 
 class ZohoClient:
     def _tenant_key(self):
-        return f"guru-group:{_organisation_id.get()}" if _organisation_id.get() else 'guru-group'
-    def _connection(self):
+        org = _organisation_id.get()
+        member = _member_id.get()
+        return f"guru-group:{org}:{member}" if org and member else 'guru-group'
+    def _member(self):
+        org = _organisation_id.get(); member = _member_id.get()
+        if not org or not member:
+            raise RuntimeError('A signed-in workspace member is required for Zoho access')
         with require_db() as db:
-            if _organisation_id.get():
-                row = db.execute(text("select * from zoho_connections where organisation_id=:org limit 1"), {'org': _organisation_id.get()}).first()
-            else:
-                row = db.execute(text("select * from zoho_connections where tenant_key='guru-group' limit 1")).first()
+            row = db.execute(text("""select user_id, role, status from members
+              where organisation_id=cast(:org as uuid) and user_id=cast(:member as uuid)
+              limit 1"""), {'org': org, 'member': member}).first()
+        if not row or row.status != 'active' or row.role not in ('owner', 'salesperson'):
+            raise PermissionError('Receptionists cannot connect to or access Zoho accounts')
+        return row_dict(row)
+    def _connection(self):
+        self._member()
+        with require_db() as db:
+            row = db.execute(text("""select * from zoho_connections
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              limit 1"""), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
             return row_dict(row) if row else None
     def status(self):
         c=self._connection()
@@ -31,13 +51,19 @@ class ZohoClient:
         c=self._connection() or {}
         return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
     async def save_configuration(self, client_id, client_secret):
+        self._member()
         with require_db() as db:
             existing=db.execute(text("select client_secret from zoho_connections where tenant_key=:tenant limit 1"), {'tenant': self._tenant_key()}).first()
             if not client_secret:
                 client_secret=existing[0] if existing and existing[0] else None
             if not client_secret:
                 raise ValueError('Client Secret is required for the first configuration.')
-            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,client_id,client_secret,status) values(:tenant,:org,:client_id,:client_secret,'not_connected') on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,client_id=excluded.client_id,client_secret=excluded.client_secret,updated_at=now()"""), {'tenant':self._tenant_key(),'org':_organisation_id.get(),'client_id':client_id,'client_secret':client_secret}); db.commit()
+            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,member_id,client_id,client_secret,status)
+              values(:tenant,cast(:org as uuid),cast(:member as uuid),:client_id,:client_secret,'not_connected')
+              on conflict (organisation_id,member_id) where organisation_id is not null and member_id is not null
+              do update set tenant_key=excluded.tenant_key,
+                client_id=excluded.client_id,client_secret=excluded.client_secret,updated_at=now()"""),
+              {'tenant':self._tenant_key(),'org':_organisation_id.get(),'member':_member_id.get(),'client_id':client_id,'client_secret':client_secret}); db.commit()
         return self.configuration()
     async def exchange_code(self, code):
         c=self._connection() or {}
@@ -54,8 +80,12 @@ class ZohoClient:
         async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{settings.zoho_accounts_url}/oauth/v2/token',data=data)
         response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
     async def _save_tokens(self,payload):
+        self._member()
         with require_db() as db:
-            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,api_domain,access_token,refresh_token,expires_at,scope,status,updated_at) values(:tenant,:org,:domain,:access,:refresh,:expires,:scope,'connected',now()) on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,api_domain=:domain,access_token=:access,refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()"""),{'tenant':self._tenant_key(),'org':_organisation_id.get(),'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
+            db.execute(text("""update zoho_connections set api_domain=:domain,access_token=:access,
+              refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'org':_organisation_id.get(),'member':_member_id.get(),'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
     async def request(self,method,path,*,params=None,json=None,form=None):
         await self.refresh(); c=self._connection()
         if not c or not c.get('access_token'): raise RuntimeError('Zoho is not connected')
@@ -76,8 +106,11 @@ class ZohoClient:
             selected=None
         return {'organizations':orgs,'organization_id':selected}
     def select_organization(self, organization_id):
+        self._member()
         with require_db() as db:
-            db.execute(text("update zoho_connections set organization_id=:selected,updated_at=now() where tenant_key=:tenant"),{'selected':organization_id,'tenant':self._tenant_key()}); db.commit()
+            db.execute(text("""update zoho_connections set organization_id=:selected,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'selected':organization_id,'org':_organisation_id.get(),'member':_member_id.get()}); db.commit()
         return self.status()
     async def list_bigin_contacts(self, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
@@ -204,8 +237,17 @@ class ZohoClient:
     async def list_invoices(self,org): return await self.request('GET','/books/v3/invoices',params={'organization_id':org,'per_page':200,'page':1})
 
 zoho=ZohoClient()
+async def refresh_all():
+    with require_db() as db:
+        rows = [row_dict(row) for row in db.execute(text("select organisation_id,member_id from zoho_connections where refresh_token is not null")).all()]
+    for row in rows:
+        set_organisation_id(str(row['organisation_id']))
+        set_member_id(str(row['member_id']))
+        try: await zoho.refresh(force=False)
+        except Exception: pass
+
 async def refresh_loop():
     while True:
-        try: await zoho.refresh(force=False)
+        try: await refresh_all()
         except Exception: pass
         await asyncio.sleep(50*60)

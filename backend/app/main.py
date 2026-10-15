@@ -3,13 +3,13 @@ import asyncio, json
 import secrets
 import re
 from fastapi import FastAPI, HTTPException, Header, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from .db import require_db, row_dict, now
-from .zoho import zoho, refresh_loop, set_organisation_id, get_organisation_id
+from .zoho import zoho, refresh_loop, set_organisation_id, set_member_id, get_organisation_id, get_member_id
 from .chat import get_or_create_customer, run_graph
 
 @asynccontextmanager
@@ -22,7 +22,15 @@ app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in se
 @app.middleware('http')
 async def zoho_workspace_scope(request: Request, call_next):
     set_organisation_id(request.headers.get('x-workspace-id'))
-    return await call_next(request)
+    set_member_id(request.headers.get('x-user-id'))
+    try:
+        return await call_next(request)
+    except PermissionError as error:
+        return JSONResponse(status_code=403, content={'detail': str(error)})
+    except RuntimeError as error:
+        if 'signed-in workspace member' in str(error):
+            return JSONResponse(status_code=403, content={'detail': str(error)})
+        raise
 
 @app.get('/', response_class=HTMLResponse, include_in_schema=False)
 def landing_page():
@@ -240,8 +248,11 @@ async def pipeline_layouts(refresh: bool = False):
 async def pipeline_records(pipeline_id: str, page: int = 1):
     try:
         with require_db() as db:
-            rows = db.execute(text("select record_id,pipeline_id,data,modified_time from zoho_pipeline_records where pipeline_id=:pipeline_id order by modified_time desc limit 50"), {'pipeline_id': pipeline_id}).all()
-            last_sync = db.execute(text("select synced_at from zoho_pipeline_sync where tenant_key='guru-group' limit 1")).scalar()
+            rows = db.execute(text("""select record_id,pipeline_id,data,modified_time from zoho_pipeline_records
+              where pipeline_id=:pipeline_id and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              order by modified_time desc limit 50"""), {'pipeline_id': pipeline_id, 'org': get_organisation_id(), 'member': get_member_id()}).all()
+            last_sync = db.execute(text("""select synced_at from zoho_pipeline_sync
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"""), {'org': get_organisation_id(), 'member': get_member_id()}).scalar()
         if page == 1 and rows:
             return {'records': [json.loads(row[2]) if isinstance(row[2], str) else row[2] for row in rows], 'page': 1, 'has_more': len(rows) == 50, 'source': 'supabase', 'last_sync': last_sync.isoformat() if last_sync else None}
         result = await zoho.list_pipeline_records(pipeline_id, page)
@@ -270,7 +281,8 @@ async def pipeline_record(record_id: str):
 async def sync_pipelines():
     try:
         with require_db() as db:
-            last = db.execute(text("select synced_at from zoho_pipeline_sync where tenant_key='guru-group' limit 1")).scalar()
+            last = db.execute(text("""select synced_at from zoho_pipeline_sync
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"""), {'org': get_organisation_id(), 'member': get_member_id()}).scalar()
             if last:
                 age = (now() - last).total_seconds()
                 if age < 3600:
@@ -284,9 +296,16 @@ async def sync_pipelines():
         with require_db() as db:
             for row in fetched:
                 pipeline = row.get('Pipeline') if isinstance(row.get('Pipeline'), dict) else {}
-                db.execute(text("""insert into zoho_pipeline_records(record_id,pipeline_id,data,modified_time) values(:record_id,:pipeline_id,cast(:data as jsonb),:modified_time) on conflict(record_id) do update set pipeline_id=:pipeline_id,data=cast(:data as jsonb),modified_time=:modified_time"""), {'record_id': str(row.get('id')), 'pipeline_id': str(pipeline.get('id') or row.get('$layout_id', {}).get('id') or ''), 'data': json.dumps(row), 'modified_time': row.get('Modified_Time')})
-            db.execute(text("insert into zoho_pipeline_sync(tenant_key,synced_at) values('guru-group',now()) on conflict(tenant_key) do update set synced_at=now()"))
-            db.execute(text("delete from zoho_pipeline_records where record_id not in (select record_id from zoho_pipeline_records order by modified_time desc nulls last limit 50)"))
+                db.execute(text("""insert into zoho_pipeline_records(record_id,pipeline_id,data,modified_time,organisation_id,member_id)
+                  values(:record_id,:pipeline_id,cast(:data as jsonb),:modified_time,cast(:org as uuid),cast(:member as uuid))
+                  on conflict(record_id) do update set pipeline_id=:pipeline_id,data=cast(:data as jsonb),modified_time=:modified_time,
+                    organisation_id=cast(:org as uuid),member_id=cast(:member as uuid)"""), {'record_id': str(row.get('id')), 'pipeline_id': str(pipeline.get('id') or row.get('$layout_id', {}).get('id') or ''), 'data': json.dumps(row), 'modified_time': row.get('Modified_Time'), 'org': get_organisation_id(), 'member': get_member_id()})
+            db.execute(text("""insert into zoho_pipeline_sync(tenant_key,organisation_id,member_id,synced_at)
+              values(:tenant,cast(:org as uuid),cast(:member as uuid),now())
+              on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,member_id=excluded.member_id,synced_at=now()"""), {'tenant': f'guru-group:{get_organisation_id()}:{get_member_id()}', 'org': get_organisation_id(), 'member': get_member_id()})
+            db.execute(text("""delete from zoho_pipeline_records
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              and record_id not in (select record_id from zoho_pipeline_records where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) order by modified_time desc nulls last limit 50)"""), {'org': get_organisation_id(), 'member': get_member_id()})
             db.commit()
         return {'synced': True, 'limited': False, 'last_sync': now().isoformat(), 'count': len(fetched)}
     except Exception as e: raise HTTPException(502, f'Unable to sync Zoho Bigin pipelines: {e}')
