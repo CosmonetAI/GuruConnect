@@ -8,7 +8,8 @@ type Profile = { display_name: string; phone?: string; avatar_path?: string; ava
 type ProfileDraft = { name: string; phone: string; availability_status: string }
 
 export default function Settings() {
-  const { workspace, user, localMode } = useOffice()
+  const { workspace, user: rawUser, localMode } = useOffice()
+  const user = rawUser ? { ...rawUser, email: rawUser.email?.toLowerCase() } : rawUser
   const isOwner = localMode || workspace?.role === 'owner'
   const profile = useScopedResource<Profile>('/profile')
   const team = useScopedResource<{ items: Member[] }>(isOwner && !localMode ? '/team' : null)

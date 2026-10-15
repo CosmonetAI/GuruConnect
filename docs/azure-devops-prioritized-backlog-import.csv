@@ -1,75 +1,840 @@
 Work Item Type,Title 1,Title 2,Title 3,Title 4,Description
 Epic,AI Sales Intelligence and Quotation Automation,,,,"Master delivery backlog. Priority order is P0 foundation UI, P1 transcription, P2 Books, P3 telecalling/service setup, P4 analytics/UAT."
 Feature,,"P0 Foundation UI, Access, Enquiries, Sessions, and CRM Surface",,,Build and verify the application foundation before external telephony/service setup.
-Product Backlog Item,,,Complete foundation UI and role access,,"Audit: Partial. Core pages, roles, profiles, invitations, presence, RLS, enquiries, walk-ins, and sessions exist; verify remaining contracts."
-Task,,,,"Verify owner, salesperson, and receptionist navigation and API denial",Audit: Partial. Type-check passes; complete role-by-role browser and API evidence.
-Task,,,,"Verify Supabase invitation, reset password, profile, status, phone, and picture flows",Audit: Partial. Complete production email and storage validation.
-Task,,,,Fix workspace switch delayed-list test behavior,"Audit: Backlog. Current test failure: expected one call, received two."
-Task,,,,Verify automatic enquiry assignment to active salesperson with least tickets,Audit: Implemented foundation. Add tie randomization and availability regression tests.
-Product Backlog Item,,,"Complete enquiry, ticket, and session foundation",,"Audit: Mostly implemented. Visitor registration, daily ticket/token, statuses, unread count, and session identity exist."
-Task,,,,"Verify new, in process, closed, and customer did not show up states",Audit: Implemented foundation.
-Task,,,,Verify daily sequential ticket reset and public token privacy,Audit: Implemented foundation. Add concurrency and expiry tests.
-Task,,,,Verify phone-first session identity with email fallback,Audit: Implemented foundation.
-Task,,,,"Verify recent 50 Bigin, Books, enquiry, and session contacts with search",Audit: Partial. Complete deduplication and source labels.
-Product Backlog Item,,,Complete Bigin CRM pipeline and contacts only,,Audit: Mostly implemented. This is the full Bigin scope; all commercial work belongs under Books.
-Task,,,,Load Bigin pipeline layouts and display every stage including empty stages,Audit: Implemented.
-Task,,,,List and sync pipeline records by Modified_Time with pagination and latest-50 cache,Audit: Implemented foundation. Verify member and organization scope.
-Task,,,,Search across all Bigin pipelines and hydrate uncached record details,Audit: Implemented foundation.
-Task,,,,Create and update CRM pipeline records with field validation,Audit: Partial. Complete write-back route and tests.
-Task,,,,"List, search, create, update, and deduplicate Bigin contacts",Audit: Partial. Search/create/update exists; complete deduplication and field mapping.
-Task,,,,Verify member-scoped Bigin OAuth credentials and organization isolation,Audit: Implemented foundation. Complete production smoke test.
+Product Backlog Item,,,Complete foundation UI and role access,,"Acceptance criteria:
+- Owner, salesperson, and receptionist see only the navigation and actions allowed by their role.
+- Workspace membership, profile, invitation, presence, enquiry, walk-in, and session APIs enforce organization isolation.
+- Unauthorized requests return the documented denial response without exposing another member’s data.
+- Browser and API evidence is recorded for each role."
+Task,,,,Verify owner navigation and permitted actions,"Task scope: Verify owner navigation and permitted actions. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify salesperson navigation and permitted actions,"Task scope: Verify salesperson navigation and permitted actions. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify receptionist navigation and permitted actions,"Task scope: Verify receptionist navigation and permitted actions. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify API denial and organization isolation for each role,"Task scope: Verify API denial and organization isolation for each role. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify invitation email and automatic workspace membership,"Task scope: Verify invitation email and automatic workspace membership. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Verify password setup, sign-in, and password reset","Task scope: Verify password setup, sign-in, and password reset. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Verify profile name, phone, status, and avatar updates","Task scope: Verify profile name, phone, status, and avatar updates. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify profile storage access and invalid file rejection,"Task scope: Verify profile storage access and invalid file rejection. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Fix workspace switch delayed-list test behavior,"Task scope: Fix workspace switch delayed-list test behavior. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement least-ticket assignment among active salespeople,"Task scope: Implement least-ticket assignment among active salespeople. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Test assignment ties, unavailable users, and reassignment behavior","Task scope: Test assignment ties, unavailable users, and reassignment behavior. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,"Complete enquiry, ticket, and session foundation",,"Acceptance criteria:
+- A visitor can be registered, assigned a daily ticket, and tracked through every supported status.
+- Ticket numbering resets by the configured business day and remains unique under concurrent requests.
+- Public tracking uses an expiring, non-guessable token and exposes only permitted fields.
+- Session identity prefers phone and falls back to email without creating duplicates."
+Task,,,,"Verify new, in process, closed, and customer did not show up states","Task scope: Verify new, in process, closed, and customer did not show up states. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify daily sequential ticket reset and public token privacy,"Task scope: Verify daily sequential ticket reset and public token privacy. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify phone-first session identity with email fallback,"Task scope: Verify phone-first session identity with email fallback. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Build recent-50 contact aggregation with source labels,"Task scope: Build recent-50 contact aggregation with source labels. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Test search, deduplication, pagination, and empty results","Task scope: Test search, deduplication, pagination, and empty results. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Complete Bigin CRM pipeline and contacts only,,"Acceptance criteria:
+- All configured Bigin pipelines and stages are displayed, including stages with no records.
+- Pipeline records and contacts are searchable, paginated, organization-scoped, and mapped to the supported fields.
+- Create and update operations validate required fields and preserve the external record ID.
+- Duplicate contact creation is prevented by the agreed phone/email matching rules."
+Task,,,,Load and cache Bigin pipeline layouts and stages,"Task scope: Load and cache Bigin pipeline layouts and stages. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Render empty and populated stages with organization scope,"Task scope: Render empty and populated stages with organization scope. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Modified_Time pagination and organization-scoped sync,"Task scope: Implement Modified_Time pagination and organization-scoped sync. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist and refresh the latest-50 pipeline record cache,"Task scope: Persist and refresh the latest-50 pipeline record cache. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement cross-pipeline search with result limits,"Task scope: Implement cross-pipeline search with result limits. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Hydrate uncached record details and handle missing records,"Task scope: Hydrate uncached record details and handle missing records. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement validated Bigin pipeline record creation,"Task scope: Implement validated Bigin pipeline record creation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement validated Bigin pipeline record updates and error mapping,"Task scope: Implement validated Bigin pipeline record updates and error mapping. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Bigin contact list and search mapping,"Task scope: Implement Bigin contact list and search mapping. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Bigin contact create and update validation,"Task scope: Implement Bigin contact create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement phone/email duplicate detection and source linkage,"Task scope: Implement phone/email duplicate detection and source linkage. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Verify member-scoped Bigin OAuth credentials and organization isolation,"Task scope: Verify member-scoped Bigin OAuth credentials and organization isolation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
 Feature,,"P1 Transcription, Translation, and Structured Enquiry",,,Complete and validate audio processing before telecalling setup.
-Product Backlog Item,,,Complete three-minute audio chunk processing,,Audit: Core implemented.
-Task,,,,Record audio in three-minute chunks and protect unfinished capture,Audit: Implemented foundation.
-Task,,,,Upload chunks to private storage and persist session recording metadata,Audit: Implemented.
-Task,,,,"Finalize, retry, recover, and reconcile failed recording parts",Audit: Implemented foundation. Add production evidence.
-Task,,,,Fix local audio upload destination contract,Audit: Backlog. Current frontend test fails with invalid storage destination.
-Product Backlog Item,,,Complete ElevenLabs transcription and speaker processing,,Audit: Core implemented; provider-backed validation remains.
-Task,,,,Queue finalized chunks for ElevenLabs transcription with idempotency,Audit: Implemented foundation.
-Task,,,,"Detect Kannada, English, Hindi, source language, speakers, and timing",Audit: Partial. Validate real provider quality.
-Task,,,,"Persist immutable transcript versions, speaker groups, revisions, playback, and export",Audit: Implemented.
-Product Backlog Item,,,Complete English translation and structured extraction,,Audit: Partial. Translation path exists; extraction quality and review remain.
-Task,,,,Translate non-English source text through GPT-5.6 Luna,Audit: Implemented foundation. Verify configured production model.
-Task,,,,Keep source timing and speaker associations linked to English text,Audit: Implemented foundation.
-Task,,,,"Extract customer, product, brand, model, SKU, quantity, price, summary, and intent",Audit: Partial.
-Task,,,,Route low-confidence extraction to human review and retain corrections,Audit: Partial.
-Task,,,,"Measure transcription accuracy, extraction confidence, and correction quality",Audit: Missing.
+Product Backlog Item,,,Complete three-minute audio chunk processing,,"Acceptance criteria:
+- Recording is split into maximum three-minute chunks without losing ordering or audio samples.
+- Chunks are stored privately with session-scoped metadata and resumable upload state.
+- Finalization is idempotent and incomplete sessions remain recoverable.
+- Failed, retried, and reconciled chunks are visible with actionable state."
+Task,,,,Implement three-minute chunk rotation and sequence metadata,"Task scope: Implement three-minute chunk rotation and sequence metadata. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Protect unfinished capture with lease, recovery, and stop-state handling","Task scope: Protect unfinished capture with lease, recovery, and stop-state handling. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Upload chunks to private storage and persist session recording metadata,"Task scope: Upload chunks to private storage and persist session recording metadata. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement idempotent recording finalization,"Task scope: Implement idempotent recording finalization. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement retry and recovery for failed recording parts,"Task scope: Implement retry and recovery for failed recording parts. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement reconciliation state and operator-visible failure details,"Task scope: Implement reconciliation state and operator-visible failure details. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Fix local audio upload destination contract,"Task scope: Fix local audio upload destination contract. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Complete ElevenLabs transcription and speaker processing,,"Acceptance criteria:
+- Finalized audio is queued once per processing key and duplicate jobs do not create duplicate results.
+- Source language, speaker references, timing, and confidence are persisted for every completed turn.
+- Kannada, English, and Hindi test clips produce reviewable transcripts or an explicit provider error.
+- Immutable transcript versions remain available for playback and export."
+Task,,,,Queue finalized chunks for ElevenLabs transcription with idempotency,"Task scope: Queue finalized chunks for ElevenLabs transcription with idempotency. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist source-language detection for supported languages,"Task scope: Persist source-language detection for supported languages. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist speaker labels and confidence for each turn,"Task scope: Persist speaker labels and confidence for each turn. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist turn timing and handle uncertain or overlapping speech,"Task scope: Persist turn timing and handle uncertain or overlapping speech. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist immutable transcript versions and active-version selection,"Task scope: Persist immutable transcript versions and active-version selection. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement speaker groups and auditable transcript revisions,"Task scope: Implement speaker groups and auditable transcript revisions. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement private playback and transcript export,"Task scope: Implement private playback and transcript export. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Complete English translation and structured extraction,,"Acceptance criteria:
+- Non-English source text is translated into English while preserving turn timing and speaker association.
+- Customer, product, brand, model, SKU, quantity, price, summary, and intent fields are extracted into the agreed schema.
+- Confidence and provenance are stored for every extracted field.
+- Low-confidence results enter review and corrected values remain auditable."
+Task,,,,Translate non-English source text through GPT-5.6 Luna,"Task scope: Translate non-English source text through GPT-5.6 Luna. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Keep source timing and speaker associations linked to English text,"Task scope: Keep source timing and speaker associations linked to English text. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Define and persist structured extraction fields with provenance,"Task scope: Define and persist structured extraction fields with provenance. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Extract customer, product, commercial, summary, and intent fields","Task scope: Extract customer, product, commercial, summary, and intent fields. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Route low-confidence extraction to human review and retain corrections,"Task scope: Route low-confidence extraction to human review and retain corrections. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Define quality and confidence metrics from transcript/review data,"Task scope: Define quality and confidence metrics from transcript/review data. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Build a correction-quality report with representative test cases,"Task scope: Build a correction-quality report with representative test cases. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
 Feature,,P2 Zoho Books Catalogue and Commercial Transactions,,,"Use Zoho Books for contacts, catalogue, estimates, orders, invoices, and commercial workflows."
-Product Backlog Item,,,Complete Books master data,,Audit: Mostly implemented.
-Task,,,,"List, search, get, create, update, and delete Books items",Audit: Implemented foundation.
-Task,,,,"List, search, create, update, and delete Books customers and vendors",Audit: Implemented foundation.
-Task,,,,Create Books contact from phone or email and prevent duplicates,Audit: Implemented foundation. Verify source linkage.
-Product Backlog Item,,,"Complete Books estimate, approval, and sales order flow",,Audit: Partial. APIs exist; guardrails remain.
-Task,,,,"List, get, create, update, and delete estimates",Audit: Implemented foundation.
-Task,,,,"Mark estimate accepted and persist external ID, number, URL, status, and version",Audit: Implemented foundation.
-Task,,,,Require explicit acceptance before sales order creation,Audit: Missing.
-Task,,,,"Create, update, delete, list, and email sales orders",Audit: Implemented foundation.
-Product Backlog Item,,,Complete Books purchase orders and invoices,,Audit: Partial.
-Task,,,,"Create, update, delete, list, and email purchase orders",Audit: Implemented foundation.
-Task,,,,"Create, update, delete, list, and email invoices",Audit: Implemented foundation.
-Task,,,,Reconcile timeouts and retries without duplicate Books transactions,Audit: Missing.
-Product Backlog Item,,,Implement catalogue matching and commercial rules,,Audit: Missing or partial.
-Task,,,,"Match exact, ambiguous, and unmatched SKU/product results",Audit: Implemented Seach APIs and Get Single Product.
-Task,,,,"Validate quantity, unit, price, tax, currency, payment terms, and discounts",Audit: Missing.
-Task,,,,Require human approval for low-confidence or exceptional quotes,Audit: Missing.
-Task,,,,"Add Zoho Inventory availability, package, and shipment validation after quote",Audit: Implemented inventory via Zoho Books itself.
+Product Backlog Item,,,Complete Books master data,,"Acceptance criteria:
+- Books items, customers, and vendors support authorized list, search, get, create, update, and delete operations.
+- Records are scoped to the active organization and member credentials.
+- Phone/email matching prevents duplicate customer creation.
+- External IDs, source links, and API errors are persisted consistently."
+Task,,,,"Implement Books item list, search, and get operations","Task scope: Implement Books item list, search, and get operations. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Books item create and update validation,"Task scope: Implement Books item create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement safe Books item delete and error handling,"Task scope: Implement safe Books item delete and error handling. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Implement Books customer/vendor list, search, and get operations","Task scope: Implement Books customer/vendor list, search, and get operations. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Books customer/vendor create and update validation,"Task scope: Implement Books customer/vendor create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement safe Books customer/vendor delete and organization checks,"Task scope: Implement safe Books customer/vendor delete and organization checks. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement phone/email contact lookup and source linkage,"Task scope: Implement phone/email contact lookup and source linkage. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Create a Books contact only when no matching record exists,"Task scope: Create a Books contact only when no matching record exists. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,"Complete Books estimate, approval, and sales order flow",,"Acceptance criteria:
+- Estimates can be listed, read, created, updated, and deleted with validation.
+- Acceptance stores the external ID, number, URL, status, and version.
+- Sales orders cannot be created until an estimate has explicit acceptance.
+- Email actions and retries are auditable and do not duplicate transactions."
+Task,,,,Implement Books estimate list and get operations,"Task scope: Implement Books estimate list and get operations. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement Books estimate create and update validation,"Task scope: Implement Books estimate create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement safe Books estimate delete and external-error handling,"Task scope: Implement safe Books estimate delete and external-error handling. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement explicit estimate acceptance guard and state transition,"Task scope: Implement explicit estimate acceptance guard and state transition. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Persist estimate identifiers, URL, status, and version history","Task scope: Persist estimate identifiers, URL, status, and version history. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Require explicit acceptance before sales order creation,"Task scope: Require explicit acceptance before sales order creation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement sales order create and update validation after acceptance,"Task scope: Implement sales order create and update validation after acceptance. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Implement sales order list, get, and safe delete","Task scope: Implement sales order list, get, and safe delete. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement sales order email action with audit and retry state,"Task scope: Implement sales order email action with audit and retry state. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Complete Books purchase orders and invoices,,"Acceptance criteria:
+- Purchase orders and invoices support the approved CRUD, list, and email actions.
+- Requests are organization-scoped and validate line items, totals, tax, currency, and required contacts.
+- External IDs and document statuses are retained after successful writes.
+- Timeout and retry behavior is idempotent."
+Task,,,,Implement purchase order create and update validation,"Task scope: Implement purchase order create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Implement purchase order list, get, and safe delete","Task scope: Implement purchase order list, get, and safe delete. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement purchase order email action with audit and retry state,"Task scope: Implement purchase order email action with audit and retry state. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement invoice create and update validation,"Task scope: Implement invoice create and update validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Implement invoice list, get, and safe delete","Task scope: Implement invoice list, get, and safe delete. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement invoice email action with audit and retry state,"Task scope: Implement invoice email action with audit and retry state. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Add idempotency keys and persisted transaction request state,"Task scope: Add idempotency keys and persisted transaction request state. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Reconcile uncertain timeout responses before allowing retry,"Task scope: Reconcile uncertain timeout responses before allowing retry. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Implement catalogue matching and commercial rules,,"Acceptance criteria:
+- Exact, ambiguous, and unmatched product/SKU inputs produce distinct outcomes.
+- Quantity, unit, price, tax, currency, payment terms, discount, and stock rules are validated before write-back.
+- Low-confidence or exceptional quotes require explicit human approval.
+- Inventory, package, and shipment checks are shown before the quote is finalized."
+Task,,,,Implement exact SKU and product matching,"Task scope: Implement exact SKU and product matching. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement ambiguous-match review with candidate ranking,"Task scope: Implement ambiguous-match review with candidate ranking. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement unmatched result handling and operator feedback,"Task scope: Implement unmatched result handling and operator feedback. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement line-item and quantity/unit validation,"Task scope: Implement line-item and quantity/unit validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Implement price, tax, currency, terms, and discount validation","Task scope: Implement price, tax, currency, terms, and discount validation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Require human approval for low-confidence or exceptional quotes,"Task scope: Require human approval for low-confidence or exceptional quotes. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Add Zoho Inventory availability, package, and shipment validation after quote","Task scope: Add Zoho Inventory availability, package, and shipment validation after quote. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
 Feature,,P3 Telecalling and Service Provider Setup,,,"Start after P0 foundation, P1 transcription, and P2 Books workflows are accepted."
-Product Backlog Item,,,Integrate telephony for 22 sales numbers,,Audit: Missing. No provider-specific routing/recording adapter exists.
-Task,,,,"Select and validate provider for routing, recording, metadata, consent, and webhooks",Audit: Missing.
-Task,,,,Map inbound number to salesperson and branch,Audit: Missing.
-Task,,,,"Persist call metadata, recording reference, source event ID, and retries",Audit: Missing.
-Task,,,,"Pilot one number, prove failure recovery, then scale to 22",Audit: Missing.
-Product Backlog Item,,,Integrate customer delivery providers,,Audit: Partial. Zoho email actions exist; WhatsApp/provider delivery is missing.
-Task,,,,Integrate approved WhatsApp provider with consent and delivery status,Audit: Missing.
-Task,,,,"Complete outbound email templates, delivery logs, replies, and failures",Audit: Partial.
-Task,,,,"Create follow-up tasks, callbacks, customer replies, and next actions",Audit: Partial.
+Product Backlog Item,,,Integrate telephony for 22 sales numbers,,"Acceptance criteria:
+- The selected provider supports routing, recording, metadata, consent, and webhook requirements.
+- Each number maps to the correct salesperson and branch.
+- Call metadata, recording references, source event IDs, retries, and failures are persisted.
+- One-number pilot recovery is proven before the remaining numbers are enabled."
+Task,,,,Document provider requirements and select the telephony integration,"Task scope: Document provider requirements and select the telephony integration. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Validate webhook signatures, consent events, recording references, and retries","Task scope: Validate webhook signatures, consent events, recording references, and retries. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Map inbound number to salesperson and branch,"Task scope: Map inbound number to salesperson and branch. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Persist call metadata, recording reference, source event ID, and retries","Task scope: Persist call metadata, recording reference, source event ID, and retries. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Run one-number routing and recording pilot with failure recovery,"Task scope: Run one-number routing and recording pilot with failure recovery. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Roll out validated routing configuration to the remaining 21 numbers,"Task scope: Roll out validated routing configuration to the remaining 21 numbers. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Integrate customer delivery providers,,"Acceptance criteria:
+- Approved WhatsApp and email providers enforce consent and expose delivery state.
+- Templates, delivery logs, replies, failures, follow-ups, callbacks, and next actions are persisted.
+- Duplicate delivery events are idempotent.
+- Users can see the next action and the reason for a failed delivery."
+Task,,,,Implement WhatsApp provider send and consent guard,"Task scope: Implement WhatsApp provider send and consent guard. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Persist delivery statuses, provider events, failures, and retries","Task scope: Persist delivery statuses, provider events, failures, and retries. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement outbound email templates and delivery logging,"Task scope: Implement outbound email templates and delivery logging. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist replies and classify delivery failures for retry or escalation,"Task scope: Persist replies and classify delivery failures for retry or escalation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Implement follow-up and callback task creation with ownership,"Task scope: Implement follow-up and callback task creation with ownership. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Persist customer replies and next-action status transitions,"Task scope: Persist customer replies and next-action status transitions. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
 Feature,,"P4 Analytics, Reliability, UAT, and Handover",,,Operationalize and prove the system after the foundation and provider work.
-Product Backlog Item,,,Complete analytics and outcome intelligence,,Audit: Partial. Analytics surface exists; production metrics remain.
-Task,,,,"Show enquiry volume, quote turnaround, conversion, executive, and branch workload",Audit: Partial.
-Task,,,,"Show transcription quality, extraction confidence, corrections, won/lost, and stock-loss reasons",Audit: Missing.
-Task,,,,"Monitor workers, provider readiness, queue depth, retries, and dead letters",Audit: Partial.
-Product Backlog Item,,,Execute provider-backed MVP UAT and handover,,Audit: Not completed.
-Task,,,,"Run foundation, walk-in, recording, transcription, translation, Books, and follow-up UAT",Audit: Backlog.
-Task,,,,"Test owner, salesperson, receptionist, member isolation, duplicate events, timeouts, and retries",Audit: Partial.
-Task,,,,Load test concurrent sessions and 22-number routing,Audit: Missing.
-Task,,,,"Complete UAT findings, training, runbooks, rollout, and pilot acceptance",Audit: Missing.
+Product Backlog Item,,,Complete analytics and outcome intelligence,,"Acceptance criteria:
+- Dashboards show enquiry volume, quote turnaround, conversion, executive/branch workload, and outcome metrics.
+- Transcription quality, extraction confidence, corrections, won/lost outcomes, and stock-loss reasons are measurable.
+- Worker, provider, queue, retry, and dead-letter health is visible.
+- Metrics are organization-scoped and use documented definitions."
+Task,,,,"Define and query enquiry, turnaround, conversion, and workload metrics","Task scope: Define and query enquiry, turnaround, conversion, and workload metrics. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Render organization, executive, and branch dashboard views","Task scope: Render organization, executive, and branch dashboard views. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Aggregate transcription, extraction, correction, and outcome metrics","Task scope: Aggregate transcription, extraction, correction, and outcome metrics. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Render quality and loss-reason dashboards with documented filters,"Task scope: Render quality and loss-reason dashboards with documented filters. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Expose worker, provider, queue, retry, and dead-letter health metrics","Task scope: Expose worker, provider, queue, retry, and dead-letter health metrics. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Add readiness thresholds and operator-visible failure alerts,"Task scope: Add readiness thresholds and operator-visible failure alerts. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Product Backlog Item,,,Execute provider-backed MVP UAT and handover,,"Acceptance criteria:
+- UAT covers foundation, walk-ins, recording, transcription, translation, Books, and follow-up workflows.
+- Role isolation, duplicate events, timeouts, retries, concurrent sessions, and 22-number routing are tested.
+- Findings have owners and disposition, and runbooks/training materials are complete.
+- Pilot acceptance is recorded with rollout criteria and rollback steps."
+Task,,,,"Run foundation, role, walk-in, and session UAT scenarios","Task scope: Run foundation, role, walk-in, and session UAT scenarios. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Run recording, transcription, translation, and review UAT scenarios","Task scope: Run recording, transcription, translation, and review UAT scenarios. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Run Books, quote, order, invoice, and follow-up UAT scenarios","Task scope: Run Books, quote, order, invoice, and follow-up UAT scenarios. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Test role permissions and member/organization isolation,"Task scope: Test role permissions and member/organization isolation. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Test duplicate events, timeouts, retries, and idempotent outcomes","Task scope: Test duplicate events, timeouts, retries, and idempotent outcomes. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Load test concurrent recording and session workloads,"Task scope: Load test concurrent recording and session workloads. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Load test 22-number routing, webhook bursts, and recovery","Task scope: Load test 22-number routing, webhook bursts, and recovery. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Resolve and retest prioritized UAT findings,"Task scope: Resolve and retest prioritized UAT findings. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,Complete user training and operational runbooks,"Task scope: Complete user training and operational runbooks. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
+Task,,,,"Record pilot acceptance, rollout gates, and rollback plan","Task scope: Record pilot acceptance, rollout gates, and rollback plan. Sized for one to two days of work.
+Deliverable: a tested implementation or verification result with evidence.
+Acceptance criteria:
+- The behavior described in the title works in the supported workflow.
+- Success, validation, authorization, and failure cases are covered.
+- Tests or reproducible verification evidence are added.
+- No unrelated scope is included."
