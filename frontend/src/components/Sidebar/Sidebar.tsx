@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText } from 'lucide-react'
+import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText, Columns3 } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 export const navigationItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -13,6 +13,7 @@ export const navigationItems = [
   { to: '/sales-orders', label: 'Sales Order for Customers', icon: ShoppingCart },
   { to: '/purchase-orders', label: 'Purchase Orders for Dealers', icon: ClipboardCheck },
   { to: '/invoices', label: 'Invoices', icon: ReceiptText },
+  { to: '/pipelines', label: 'Pipelines', icon: Columns3 },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/zoho', label: 'Zoho integration', icon: PlugZap },
   { to: '/settings', label: 'Team & account', icon: Settings },

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
-from .db import require_db, row_dict
+from .db import require_db, row_dict, now
 from .zoho import zoho, refresh_loop
 from .chat import get_or_create_customer, run_graph
 
@@ -130,6 +130,68 @@ async def zoho_organization(payload:OrganizationIn):
 async def zoho_smoke():
     try: return await zoho.smoke_test()
     except Exception as e: raise HTTPException(502,str(e))
+
+def _pipeline_layouts(payload):
+    rows = payload.get('layouts', payload.get('data', [])) if isinstance(payload, dict) else []
+    return [{'id': str(row.get('id')), 'name': row.get('display_label') or row.get('name') or str(row.get('id')), 'display_label': row.get('display_label') or row.get('name') or str(row.get('id'))} for row in rows if row.get('id')]
+
+@app.get('/api/pipelines/layouts')
+async def pipeline_layouts(refresh: bool = False):
+    try:
+        return {'layouts': _pipeline_layouts(await zoho.pipeline_layout())}
+    except Exception as e: raise HTTPException(502, f'Unable to load Zoho Bigin pipeline layouts: {e}')
+
+@app.get('/api/pipelines')
+async def pipeline_records(pipeline_id: str, page: int = 1):
+    try:
+        with require_db() as db:
+            rows = db.execute(text("select record_id,pipeline_id,data,modified_time from zoho_pipeline_records where pipeline_id=:pipeline_id order by modified_time desc limit 50"), {'pipeline_id': pipeline_id}).all()
+            last_sync = db.execute(text("select synced_at from zoho_pipeline_sync where tenant_key='guru-group' limit 1")).scalar()
+        if page == 1 and rows:
+            return {'records': [json.loads(row[2]) if isinstance(row[2], str) else row[2] for row in rows], 'page': 1, 'has_more': len(rows) == 50, 'source': 'supabase', 'last_sync': last_sync.isoformat() if last_sync else None}
+        result = await zoho.list_pipeline_records(pipeline_id, page)
+        info = result.get('info', {})
+        return {'records': result.get('data', []), 'page': page, 'has_more': bool(info.get('more_records')), 'source': 'zoho', 'last_sync': last_sync.isoformat() if last_sync else None}
+    except Exception as e: raise HTTPException(502, f'Unable to load pipeline records: {e}')
+
+@app.get('/api/pipelines/search')
+async def pipeline_search(word: str):
+    try:
+        result = await zoho.search_pipeline_records(word)
+        return {'records': result.get('data', []), 'info': result.get('info', {})}
+    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Bigin pipelines: {e}')
+
+@app.get('/api/pipelines/record/{record_id}')
+async def pipeline_record(record_id: str):
+    try:
+        result = await zoho.pipeline_record(record_id)
+        return {'record': (result.get('data') or [None])[0]}
+    except Exception as e: raise HTTPException(502, f'Unable to load pipeline record: {e}')
+
+@app.post('/api/pipelines/sync')
+async def sync_pipelines():
+    try:
+        with require_db() as db:
+            last = db.execute(text("select synced_at from zoho_pipeline_sync where tenant_key='guru-group' limit 1")).scalar()
+            if last:
+                age = (now() - last).total_seconds()
+                if age < 3600:
+                    return {'synced': False, 'limited': True, 'last_sync': last.isoformat(), 'next_sync_in_seconds': int(3600-age)}
+        layouts = _pipeline_layouts(await zoho.pipeline_layout())
+        fetched = []
+        for layout in layouts:
+            result = await zoho.list_pipeline_records(layout['id'], 1)
+            fetched.extend(result.get('data', []))
+        fetched = sorted(fetched, key=lambda row: row.get('Modified_Time') or '', reverse=True)[:50]
+        with require_db() as db:
+            for row in fetched:
+                pipeline = row.get('Pipeline') if isinstance(row.get('Pipeline'), dict) else {}
+                db.execute(text("""insert into zoho_pipeline_records(record_id,pipeline_id,data,modified_time) values(:record_id,:pipeline_id,cast(:data as jsonb),:modified_time) on conflict(record_id) do update set pipeline_id=:pipeline_id,data=cast(:data as jsonb),modified_time=:modified_time"""), {'record_id': str(row.get('id')), 'pipeline_id': str(pipeline.get('id') or row.get('$layout_id', {}).get('id') or ''), 'data': json.dumps(row), 'modified_time': row.get('Modified_Time')})
+            db.execute(text("insert into zoho_pipeline_sync(tenant_key,synced_at) values('guru-group',now()) on conflict(tenant_key) do update set synced_at=now()"))
+            db.execute(text("delete from zoho_pipeline_records where record_id not in (select record_id from zoho_pipeline_records order by modified_time desc nulls last limit 50)"))
+            db.commit()
+        return {'synced': True, 'limited': False, 'last_sync': now().isoformat(), 'count': len(fetched)}
+    except Exception as e: raise HTTPException(502, f'Unable to sync Zoho Bigin pipelines: {e}')
 @app.get('/api/products')
 async def products(search: str = '', date: str = '', page: int = 1):
     """Live Books catalogue search; product records are never copied to Supabase."""

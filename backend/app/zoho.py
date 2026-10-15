@@ -83,6 +83,11 @@ class ZohoClient:
     async def list_pipelines(self): return await self.request('GET','/bigin/v2/Pipelines',params={'per_page':200,'page':1})
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
+    async def list_pipeline_records(self, pipeline_id, page=1):
+        fields = 'id,Deal_Name,Stage,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Sub_Pipeline,Pipeline,Description,Created_Time,Modified_Time,Created_By,Modified_By,Last_Activity_Time,Tag,Associated_Products,Secondary_Contacts'
+        return await self.request('GET','/bigin/v2/Pipelines',params={'pipeline_id': pipeline_id, 'fields': fields, 'per_page': 200, 'page': page, 'sort_by': 'Modified_Time', 'sort_order': 'desc'})
+    async def search_pipeline_records(self, query): return await self.request('GET','/bigin/v2/Pipelines/search',params={'word': query})
+    async def pipeline_record(self, record_id): return await self.request('GET',f'/bigin/v2/Pipelines/{record_id}')
     async def list_accounts(self): return await self.request('GET','/bigin/v2/Accounts',params={'per_page':200,'page':1})
     async def list_bigin_products(self): return await self.request('GET','/bigin/v2/Products',params={'per_page':200,'page':1})
     async def list_tasks(self): return await self.request('GET','/bigin/v2/Tasks',params={'per_page':200,'page':1})
