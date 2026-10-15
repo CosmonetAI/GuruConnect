@@ -194,7 +194,7 @@ export function walkinRecordingsPath(visitId: string, page = 1) {
 }
 export async function attachWalkinRecording(workspaceId: string, visitId: string, conversationId: string) {
   scope(workspaceId)
-  if (localMode) return
+  if (localMode) return request(`/conversations/${encodeURIComponent(conversationId)}`, workspaceId, json('PATCH', { title: `Walk-in visit ${visitId}` }))
   return request(`/walkins/${encodeURIComponent(visitId)}/recordings`, workspaceId, json('POST', { conversationId }))
 }
 export async function markWalkinConverted(workspaceId: string, id: string, enquiryReference: string) {

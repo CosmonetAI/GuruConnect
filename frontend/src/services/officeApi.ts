@@ -137,7 +137,7 @@ export interface Conversation {
 }
 export interface Page<T> { items: T[]; next_cursor?: string | null; }
 export interface Turn { id: string; start_seconds: number; end_seconds: number; speaker_id: string | null; english_text?: string | null; source_text?: string | null; source_language?: string; is_uncertain?: boolean; }
-export interface Assignment { speaker_id: string; name: string; role: 'salesperson' | 'customer' | 'other'; }
+export interface Assignment { speaker_id: string; name: string; role: 'salesperson' | 'customer' | 'other' | 'unknown'; }
 export interface Transcript { translation_strategy?: string; translator_model?: string; manual_review_required?: boolean; id?: string; version_id?: string; run_id?: string; status?: string; speaker_state?:string; turns: Turn[]; speaker_assignments?: Assignment[]; engine_id?: string; model?: string; covered_seconds?: number; kind?: string; }
 export interface Progress { conversation: Conversation; runs?: Run[]; jobs?: Job[]; missing_chunks?: number[]; confirmed_samples?: number; }
 export interface Job { id: string; run_id?: string; job_type: string; status: string; error_code?: string; audio_start_seconds?: number; audio_end_seconds?: number; }

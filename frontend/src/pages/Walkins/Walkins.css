@@ -375,6 +375,174 @@
   max-width: 930px;
 }
 
+.walkin-page > .walkin-form {
+  max-width: none;
+}
+
+.walkin-registration-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.walkin-registration-layout > * {
+  min-width: 0;
+}
+
+.walkin-form-fields {
+  max-width: none;
+}
+
+.walkin-form-fields > section + section {
+  padding-top: 22px;
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.walkin-live-volume {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.walkin-recording-indicator.is-live {
+  background: #dc2626;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, .14);
+  animation: walkin-recording-pulse 1.4s ease-out infinite;
+}
+
+.walkin-speaker-assignments {
+  display: grid;
+  gap: 8px;
+}
+
+.walkin-speaker-assignments label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.walkin-speaker-assignments label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  color: var(--text-dark);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.walkin-speaker-assignments select {
+  width: auto;
+  min-width: 150px;
+  padding: 6px 8px;
+}
+
+.walkin-transcript-turns {
+  display: grid;
+  gap: 10px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.walkin-transcript-turns li {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.walkin-transcript-turns li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--primary-600);
+  font-size: 11px;
+}
+
+.walkin-transcript-turns time,
+.walkin-transcript-turns small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.walkin-transcript-turns p {
+  margin: 5px 0 0;
+  color: var(--text-dark);
+}
+
+.walkin-transcript-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.walkin-extraction-suggestions {
+  display: grid;
+  gap: 8px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.walkin-extraction-suggestions h3 {
+  margin: 0;
+  color: var(--text-dark);
+  font-size: 13px;
+}
+
+.walkin-extraction-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.walkin-extraction-suggestion > div {
+  min-width: 0;
+}
+
+.walkin-extraction-suggestion strong,
+.walkin-extraction-suggestion span,
+.walkin-extraction-suggestion small {
+  display: block;
+}
+
+.walkin-extraction-suggestion strong {
+  font-size: 11px;
+}
+
+.walkin-extraction-suggestion span,
+.walkin-extraction-suggestion small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.walkin-extraction-suggestion p {
+  margin: 3px 0;
+  color: var(--text-dark);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.walkin-field.is-ai-detected input,
+.walkin-field.is-ai-detected textarea,
+.walkin-field.is-ai-detected select {
+  border-color: color-mix(in srgb, var(--primary-600) 55%, var(--border));
+}
+
 .walkin-form > section + section {
   padding-top: 22px;
   margin-top: 22px;
@@ -882,6 +1050,10 @@
 
   .walkin-detail-grid {
     grid-template-columns: minmax(0, 1.2fr) minmax(250px, .8fr);
+  }
+
+  .walkin-registration-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

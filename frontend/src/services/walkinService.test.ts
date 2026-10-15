@@ -77,6 +77,15 @@ describe('isolated standalone storage', () => {
     expect((await service.listWalkinVisits('workspace-two')).map(visit => visit.customerName)).toEqual(['Other synthetic visitor'])
     expect(mocks.request).not.toHaveBeenCalled()
   })
+  it('labels a local recording with its registered visit so it remains scoped to that visit', async () => {
+    const service = await load()
+    await service.attachWalkinRecording('workspace-one', 'visit-id', 'conversation-id')
+    expect(mocks.request).toHaveBeenCalledWith('/conversations/conversation-id', 'workspace-one', {
+      method: 'PATCH',
+      body: JSON.stringify({ title: 'Walk-in visit visit-id' }),
+      headers: undefined,
+    })
+  })
   it('limits legacy browser imports to the original local workspace', async () => {
     const service = await load()
     const legacy = [{ ...registration, id: 'legacy-id', visitNumber: 'WI-legacy', checkInAt: '2026-10-14T10:00:00Z', status: 'Registered' }]
