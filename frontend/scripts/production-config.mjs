@@ -34,7 +34,7 @@ export function validateProductionConfig(environment) {
   const key = publicKey(environment.VITE_SUPABASE_PUBLISHABLE_KEY || environment.VITE_SUPABASE_ANON_KEY || '');
   // Validate both values even when the publishable key takes precedence.
   if (environment.VITE_SUPABASE_ANON_KEY) publicKey(environment.VITE_SUPABASE_ANON_KEY);
-  const csp = ["default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+  const csp = ["default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", `img-src 'self' ${url} data: blob:`,
     `connect-src 'self' ${url} ${api}`, `media-src 'self' blob: ${url} ${api}`, "worker-src 'self' blob:",
     "object-src 'none'", "base-uri 'none'", "form-action 'self'", 'upgrade-insecure-requests'].join('; ');
   return { supabaseUrl: url, apiUrl: api, key, csp };
