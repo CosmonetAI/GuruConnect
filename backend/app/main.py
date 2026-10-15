@@ -277,6 +277,26 @@ async def pipeline_record(record_id: str):
         return {'record': (result.get('data') or [None])[0]}
     except Exception as e: raise HTTPException(502, f'Unable to load pipeline record: {e}')
 
+@app.post('/api/pipelines')
+async def create_pipeline_record(body: dict):
+    try:
+        result = await zoho.create_pipeline(body)
+        return {'record': (result.get('data') or [None])[0], 'response': result}
+    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Bigin pipeline record: {e}')
+
+@app.put('/api/pipelines/record/{record_id}')
+async def update_pipeline_record(record_id: str, body: dict):
+    try:
+        result = await zoho.update_pipeline(record_id, body)
+        return {'record': (result.get('data') or [None])[0], 'response': result}
+    except Exception as e: raise HTTPException(502, f'Unable to update Zoho Bigin pipeline record: {e}')
+
+@app.delete('/api/pipelines/record/{record_id}')
+async def delete_pipeline_record(record_id: str):
+    try:
+        return await zoho.delete_pipeline(record_id)
+    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Bigin pipeline record: {e}')
+
 @app.post('/api/pipelines/sync')
 async def sync_pipelines():
     try:

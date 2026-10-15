@@ -155,6 +155,8 @@ class ZohoClient:
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def list_pipelines(self): return await self.request('GET','/bigin/v2/Pipelines',params={'per_page':200,'page':1})
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
+    async def update_pipeline(self, record_id, data): return await self.request('PUT',f'/bigin/v2/Pipelines/{record_id}',json={'data':[{'id': record_id, **data}]})
+    async def delete_pipeline(self, record_id): return await self.request('DELETE',f'/bigin/v2/Pipelines/{record_id}')
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
     async def list_pipeline_records(self, pipeline_id, page=1):
         fields = 'id,Deal_Name,Stage,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Sub_Pipeline,Pipeline,Description,Created_Time,Modified_Time,Created_By,Modified_By,Last_Activity_Time,Tag,Associated_Products,Secondary_Contacts'
