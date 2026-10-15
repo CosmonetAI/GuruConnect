@@ -6,6 +6,7 @@ COPY backend/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY backend/recorder ./recorder
 COPY backend/supabase-ca.crt ./supabase-ca.crt
+RUN test -s /app/backend/supabase-ca.crt
 COPY frontend/scripts/migrate.py /app/frontend/scripts/migrate.py
 COPY supabase/migrations /app/supabase/migrations
 USER 10001:10001
