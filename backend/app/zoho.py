@@ -95,7 +95,7 @@ class ZohoClient:
             if response.status_code==401:
                 await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
                 response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
-        response.raise_for_status(); return response.json()
+        response.raise_for_status(); return response.json() if response.content else {'ok': True}
     async def smoke_test(self):
         result=await self.request('GET','/books/v3/organizations'); orgs=result.get('organizations',result.get('data',[]));
         current=self._connection() or {}; selected=current.get('organization_id')
@@ -153,6 +153,8 @@ class ZohoClient:
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
+    async def update_bigin_contact(self, contact_id, data): return await self.request('PUT',f'/bigin/v2/Contacts/{contact_id}',json={'data':[{'id': contact_id, **data}]})
+    async def delete_bigin_contact(self, contact_id): return await self.request('DELETE',f'/bigin/v2/Contacts/{contact_id}')
     async def list_pipelines(self): return await self.request('GET','/bigin/v2/Pipelines',params={'per_page':200,'page':1})
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
     async def update_pipeline(self, record_id, data): return await self.request('PUT',f'/bigin/v2/Pipelines/{record_id}',json={'data':[{'id': record_id, **data}]})
