@@ -712,9 +712,20 @@ async def delete_invoice(invoice_id: str): return await _delete_books_record(zoh
 
 @app.put('/api/contacts/{contact_id}')
 async def update_contact(contact_id: str, payload: dict):
-    # Legacy contacts route: contacts returned by the Bigin search used this
-    # path before provider-specific routes were introduced.
-    return await update_bigin_contact(contact_id, payload)
+    if not payload:
+        raise HTTPException(422, 'At least one editable field is required')
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org:
+        raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    books_error = None
+    try:
+        return {'contact': await zoho.update_books_contact(org, contact_id, payload), 'source': 'books'}
+    except Exception as error:
+        books_error = error
+    try:
+        return {'contact': await zoho.update_bigin_contact(contact_id, payload), 'source': 'bigin'}
+    except Exception as bigin_error:
+        raise HTTPException(502, f'Unable to update contact in Zoho Books or Zoho Bigin: Books={books_error}; Bigin={bigin_error}')
 
 @app.put('/api/bigin/contacts/{contact_id}')
 async def update_bigin_contact(contact_id: str, payload: dict):
@@ -740,14 +751,18 @@ async def _delete_books_record(delete_fn, record_id: str):
     except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Books record: {e}')
 @app.delete('/api/contacts/{contact_id}')
 async def delete_contact(contact_id: str):
-    if not zoho.status().get('connected'):
-        raise HTTPException(409, 'Connect Zoho before deleting contacts')
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org:
+        raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    books_error = None
     try:
-        return await zoho.delete_bigin_contact(contact_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to delete Zoho Bigin contact: {e}')
+        return {'response': await zoho.delete_books_contact(org, contact_id), 'source': 'books'}
+    except Exception as error:
+        books_error = error
+    try:
+        return {'response': await zoho.delete_bigin_contact(contact_id), 'source': 'bigin'}
+    except Exception as bigin_error:
+        raise HTTPException(502, f'Unable to delete contact in Zoho Books or Zoho Bigin: Books={books_error}; Bigin={bigin_error}')
 
 @app.delete('/api/bigin/contacts/{contact_id}')
 async def delete_bigin_contact(contact_id: str):
