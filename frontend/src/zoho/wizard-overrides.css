@@ -132,6 +132,24 @@
 .quote-modal textarea { width: 100%; min-height: 58px; resize: vertical; border: 1px solid #d5dfeb; border-radius: 8px; padding: 11px; font: inherit; box-sizing: border-box; }
 .form-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .lookup-field { position: relative; }
+.lookup-input-row { display: flex; gap: 8px; align-items: stretch; }
+.lookup-input-row input { flex: 1; min-width: 0; }
+.lookup-search-button { flex: 0 0 auto; min-width: 76px; border: 1px solid #bfd2e6; border-radius: 8px; padding: 0 14px; background: #eef6ff; color: #17518a; font-weight: 700; cursor: pointer; }
+.lookup-search-button:hover:not(:disabled) { background: #dceeff; }
+.lookup-search-button:disabled { cursor: not-allowed; opacity: .55; }
+.lookup-loading,.lookup-empty { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 12px; color: #64748b; font-size: 13px; background: #f8fbff; border-radius: 6px; }
+.lookup-empty { color: #71839b; }
+.line-item-row { display: grid; grid-template-columns: minmax(280px, 1fr) 90px 125px 120px; gap: 10px; align-items: end; }
+.line-item-search { min-width: 0; }
+.line-item-search .lookup-input-row input { font-size: 13px; }
+.line-item-row > input { min-width: 0; }
+.line-item-total { min-height: 42px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 10px; border: 1px solid #d5dfeb; border-radius: 8px; background: #f8fbff; box-sizing: border-box; }
+.line-item-total span { color: #7b8ba0; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.line-item-total strong { color: #17385e; font-size: 13px; }
+@media (max-width: 800px) { .line-item-row { grid-template-columns: minmax(220px, 1fr) 76px 105px 100px; gap: 7px; } }
+@media (max-width: 600px) { .line-item-row { grid-template-columns: 1fr 1fr; } .line-item-search { grid-column: 1 / -1; } }
+.lookup-spinner { width: 14px; height: 14px; flex: 0 0 14px; border: 2px solid #c8d8e8; border-top-color: #2372b8; border-radius: 50%; animation: lookup-spin .7s linear infinite; }
+@keyframes lookup-spin { to { transform: rotate(360deg); } }
 .lookup-options { position: absolute; z-index: 2; top: calc(100% + 4px); left: 0; right: 0; max-height: 170px; overflow-y: auto; padding: 5px; border: 1px solid #cbdbea; border-radius: 8px; background: #fff; box-shadow: 0 10px 24px rgba(14, 35, 61, .16); }
 .lookup-options button { display: block; width: 100%; border: 0; border-radius: 6px; padding: 10px; background: #fff; color: #17385e; text-align: left; cursor: pointer; }
 .lookup-options button:hover { background: #eef6ff; }
