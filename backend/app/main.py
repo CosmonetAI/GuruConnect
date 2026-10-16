@@ -107,7 +107,26 @@ class ContactIn(BaseModel):
     company_name:str=''
     contact_type:str='customer'
     customer_sub_type:str='business'
+    contact_number:str=''
+    ignore_auto_number_generation:bool=False
+    salutation:str=''
+    contact_salutation:str=''
+    website:str=''
+    language_code:str='en'
+    phone:str=''
+    designation:str=''
+    department:str=''
+    payment_terms:int|None=None
+    payment_terms_label:str=''
+    credit_limit:float|None=None
+    is_portal_enabled:bool=False
+    payment_reminder_enabled:bool=True
     billing_address:dict|None=None
+    shipping_address:dict|None=None
+    contact_persons:list[dict]=Field(default_factory=list)
+    custom_fields:list[dict]=Field(default_factory=list)
+    tags:list[dict]=Field(default_factory=list)
+    pan_no:str=''
     gst_no:str=''
     notes:str='Contact created through Cosmonet AI'
 
@@ -670,12 +689,25 @@ async def create_contact(payload: ContactIn):
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         first_name = payload.first_name.strip(); last_name = payload.last_name.strip()
-        data = {'contact_name': payload.contact_name.strip() or ' '.join(part for part in (first_name, last_name) if part), 'contact_type': payload.contact_type or 'customer', 'customer_sub_type': payload.customer_sub_type or 'business', 'contact_persons': [{'first_name': first_name, 'last_name': last_name, 'mobile': mobile, 'is_primary_contact': True}], 'notes': payload.notes or 'Contact created through Cosmonet AI'}
-        if payload.company_name.strip(): data['company_name'] = payload.company_name.strip()
-        if payload.email.strip(): data['contact_persons'][0]['email'] = payload.email.strip()
-        if payload.title.strip(): data['contact_persons'][0]['designation'] = payload.title.strip()
-        if payload.billing_address: data['billing_address'] = payload.billing_address
-        if payload.gst_no.strip(): data['gst_no'] = payload.gst_no.strip()
+        primary_person = {
+            'salutation': payload.salutation.strip(), 'first_name': first_name, 'last_name': last_name,
+            'email': payload.email.strip(), 'phone': payload.phone.strip(), 'mobile': mobile,
+            'designation': payload.title.strip(), 'is_primary_contact': True,
+        }
+        data = {
+            'contact_name': payload.contact_name.strip() or ' '.join(part for part in (first_name, last_name) if part),
+            'company_name': payload.company_name.strip(), 'contact_type': payload.contact_type or 'customer',
+            'customer_sub_type': payload.customer_sub_type or 'business', 'contact_number': payload.contact_number.strip(),
+            'ignore_auto_number_generation': payload.ignore_auto_number_generation, 'salutation': payload.salutation.strip(), 'contact_salutation': payload.contact_salutation.strip(),
+            'first_name': first_name, 'last_name': last_name, 'website': payload.website.strip(),
+            'language_code': payload.language_code or 'en', 'email': payload.email.strip(), 'phone': payload.phone.strip(),
+            'mobile': mobile, 'designation': payload.designation.strip() or payload.title.strip(), 'department': payload.department.strip(), 'notes': payload.notes or 'Contact created through Cosmonet AI',
+            'is_portal_enabled': payload.is_portal_enabled, 'payment_reminder_enabled': payload.payment_reminder_enabled,
+            'contact_persons': [primary_person, *payload.contact_persons], 'custom_fields': payload.custom_fields, 'tags': payload.tags,
+        }
+        for key in ('payment_terms', 'payment_terms_label', 'credit_limit', 'billing_address', 'shipping_address', 'pan_no', 'gst_no'):
+            value = getattr(payload, key)
+            if value not in ('', None, [], {}): data[key] = value
         result = await zoho.create_books_contact(org, data)
         updated_contact = result.get('contact') or result.get('contact_person') or ((result.get('contact_persons') or [None])[0])
         return {'contact': updated_contact, 'response': result}
@@ -778,9 +810,26 @@ async def update_books_contact(contact_id: str, payload: dict):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org:
         raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-    await _update_books_record(zoho.update_books_contact, contact_id, payload)
-    refreshed = await zoho.get_books_contact(org, contact_id)
-    return {'contact': _books_contact_view(refreshed)}
+    if not payload:
+        raise HTTPException(422, 'At least one editable field is required')
+    try:
+        editable_keys = {
+            'contact_name', 'company_name', 'contact_type', 'customer_sub_type', 'contact_number',
+            'ignore_auto_number_generation', 'salutation', 'contact_salutation', 'first_name', 'last_name', 'website',
+            'language_code', 'email', 'phone', 'mobile', 'designation', 'department', 'payment_terms', 'payment_terms_label',
+            'credit_limit', 'is_portal_enabled', 'payment_reminder_enabled', 'billing_address',
+            'shipping_address', 'contact_persons', 'custom_fields', 'tags', 'pan_no', 'gst_no', 'notes',
+        }
+        books_payload = {key: value for key, value in payload.items() if key in editable_keys}
+        if not books_payload:
+            raise HTTPException(422, 'At least one editable field is required')
+        await zoho.update_books_contact(org, contact_id, books_payload)
+        refreshed = await zoho.get_books_contact(org, contact_id)
+        return {'contact': _books_contact_view(refreshed)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to update Zoho Books contact: {e}')
 async def _delete_books_record(delete_fn, record_id: str):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
