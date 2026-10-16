@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { call } from '../shared/api';
 
 export function ProductValue({ value }) {
@@ -91,7 +91,11 @@ export function RecordCard({ record, type }) {
 }
 
 export function LookupField({ value, onChange, onSearch, options, selected, placeholder, renderOption, required = false }) {
-  return <div className="lookup-field"><div className="lookup-input-row"><input required={required} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} /><button type="button" className="lookup-search-button" onClick={onSearch} disabled={!value.trim()}>Search</button></div>{options.length > 0 && !selected && <div className="lookup-options">{options.map(option => <div className="lookup-option-entry" key={option.contact_id || option.item_id || option.id}>{renderOption(option)}{option.__source && <small>{option.__source === 'bigin' ? 'Zoho Bigin contact' : 'Zoho Books contact'}</small>}</div>)}</div>}</div>;
+  const [searching, setSearching] = useState(false); const timer = useRef(null);
+  const runSearch = async text => { if (!text.trim()) return; setSearching(true); try { await onSearch(text); } finally { setSearching(false); } };
+  const change = text => { onChange(text); if (timer.current) clearTimeout(timer.current); if (!text.trim()) return; timer.current = setTimeout(() => runSearch(text), 250); };
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  return <div className="lookup-field"><div className="lookup-input-row"><input required={required} placeholder={placeholder} value={value} onChange={event => change(event.target.value)} /><button type="button" className="lookup-search-button" onClick={() => runSearch(value)} disabled={!value.trim() || searching}>{searching ? 'Searching…' : 'Search'}</button></div>{!selected && (searching || options.length > 0) && <div className="lookup-options">{searching && <div className="lookup-loading">Searching contacts and products…</div>}{!searching && options.map(option => <div className="lookup-option-entry" key={option.contact_id || option.item_id || option.id}>{renderOption(option)}{option.__source && <small>{option.__source === 'bigin' ? 'Zoho Bigin contact' : 'Zoho Books contact'}</small>}</div>)}</div>}</div>;
 }
 
 export function LineItemsEditor({ lines, setLines, items, lookupItems, currency = 'INR' }) {

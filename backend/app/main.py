@@ -288,6 +288,22 @@ async def create_pipeline_record(body: dict):
 async def update_pipeline_record(record_id: str, body: dict):
     try:
         result = await zoho.update_pipeline(record_id, body)
+        if 'Stage' in body:
+            try:
+                with require_db() as db:
+                    db.execute(text("""update zoho_pipeline_records
+                      set data=jsonb_set(data, '{Stage}', to_jsonb(cast(:stage as text)), true), modified_time=now()
+                      where record_id=:record_id
+                        and organisation_id=cast(:org as uuid)
+                        and member_id=cast(:member as uuid)"""), {
+                        'stage': body.get('Stage') or '',
+                        'record_id': record_id,
+                        'org': get_organisation_id(),
+                        'member': get_member_id(),
+                    })
+                    db.commit()
+            except Exception:
+                pass
         return {'record': (result.get('data') or [None])[0], 'response': result}
     except Exception as e: raise HTTPException(502, f'Unable to update Zoho Bigin pipeline record: {e}')
 

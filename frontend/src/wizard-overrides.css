@@ -142,6 +142,7 @@
 .lookup-options button:hover { background: #eef6ff; }
 .lookup-option-entry { display: flex; flex-direction: column; }
 .lookup-option-entry small { padding: 0 10px 7px; color: #64748b; font-size: 11px; }
+.lookup-loading { padding: 12px 10px; color: #64748b; font-size: 13px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .modal-actions > button:first-child { border: 1px solid #d5dfeb; border-radius: 8px; padding: 10px 16px; background: #fff; color: #526b86; cursor: pointer; }
 @media (max-width: 700px) { .products-heading { display: block; } .product-search { display: block; } .product-search .primary { margin-top: 8px; width: 100%; min-height: 42px; } }
