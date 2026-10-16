@@ -323,7 +323,7 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             books_contact_id = None
         await connection.execute("""insert into public.guruconnect_enquiries
             (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s)""",
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s)""",
             (context.id, context.user.id, f"walkin-enquiry:{row['id']}", ticket_hash, Jsonb(ticket_payload), body.customerName, body.mobileNumber, "Retail walk-in", body.department or "Walk-in", salesperson["user_id"] if salesperson else None, ticket_day, daily_sequence, tracking_hash, books_contact_id))
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])

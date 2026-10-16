@@ -170,7 +170,7 @@ async def open_voice_session(payload: VoiceSessionIn, request: Request):
                 customer = row_dict(customer)
                 session = db.execute(text("select * from chat_sessions where organisation_id=cast(:org as uuid) and customer_id=:customer and ((cast(:phone as text) is not null and identity_phone=cast(:phone as text)) or (cast(:phone as text) is null and identity_email=cast(:email as text))) order by updated_at desc limit 1"), {'org': org, 'customer': customer['id'], 'phone': phone, 'email': email}).first()
             else:
-                customer = db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,member_id) values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"), {'name': payload.name.strip(), 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
+                customer = db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,owner_id,member_id) values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid),cast(:member as uuid)) returning *"), {'name': payload.name.strip(), 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
                 customer = row_dict(customer)
                 session = None
             if not session:
