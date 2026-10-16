@@ -980,6 +980,14 @@
 
 .voice-assist { margin-bottom: 18px; }
 .voice-assist .walkin-section-heading small { font-weight: 400; color: #64748b; }
+.voice-assist-simple .walkin-section-heading { margin-bottom: 10px; }
+.voice-assist-simple .walkin-section-heading p { margin: 2px 0 0; }
+.voice-simple-recorder { display: flex; align-items: center; gap: 12px; }
+.voice-simple-recorder > svg { flex: none; color: var(--primary-600); }
+.voice-simple-recorder .connected-recorder { flex: 1; min-width: 0; }
+.compact-recorder .recorder-panel { display: block; }
+.compact-recorder .recorder-controls { margin: 0; }
+.compact-recorder .record-start-button { min-height: 42px; }
 .voice-status { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 13px; color: #334155; }
 .voice-options { display: grid; gap: 8px; margin-top: 14px; }
 .voice-threshold { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; font-size: 13px; }

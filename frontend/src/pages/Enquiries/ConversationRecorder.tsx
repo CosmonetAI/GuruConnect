@@ -57,7 +57,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const blocked = loading || !user || !workspace || policyLoading || !policy?.ready
   // Microphone capture does not require the default speech engine to be connected; allow starting the mic
   // once the user is authenticated and a workspace is selected. The engine is only needed for transcription/processing.
-  const micBlocked = loading || !user || !workspace || policyLoading
+  const micBlocked = loading || !user || !workspace
 
   function disposeCapture() {
     const session = active.current; active.current = null
@@ -132,22 +132,18 @@ export default function ConversationRecorder({ customerName, title, initialConve
     if (capture.capture === 'stopped' && !capture.saving && !capture.error && capture.samples > 0 && idRef.current) showSaved(idRef.current)
   }, [capture.capture, capture.saving, capture.error, capture.samples])
 
-  function validateStart() {
-    if (!consent) throw new Error('Confirm participant consent before recording or uploading audio.')
+  function validateStart(skipEngineCheck = false, consentGranted = false) {
+    if (!consent && !consentGranted) throw new Error('Confirm participant consent before recording or uploading audio.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
-    if (!policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
+    if (!skipEngineCheck && !policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
   }
 
   // When compact mode is used, offer a small consent confirmation when the user presses Start.
   async function startMicrophoneCompactFlow() {
     if (operationRef.current || captureActive || saved) return
-    if (!consent) {
-      const ok = window.confirm('Confirm you have permission from all participants to record this conversation. Press OK to confirm consent and start recording.')
-      if (!ok) return
-      setConsent(true)
-    }
-    await startMicrophone()
+    setConsent(true)
+    await startMicrophone(true, true)
   }
   async function createConversation(signal: AbortSignal) {
     if (idRef.current) return idRef.current
@@ -171,9 +167,9 @@ export default function ConversationRecorder({ customerName, title, initialConve
     operationRef.current = false
     if (isCurrent(epoch, controller)) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
   }
-  async function startMicrophone() {
+  async function startMicrophone(skipEngineCheck = false, consentGranted = false) {
     if (operationRef.current || captureActive || saved) return
-    try { validateStart() } catch (err) { setError(message(err)); return }
+    try { validateStart(skipEngineCheck, consentGranted) } catch (err) { setError(message(err)); return }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
       const hadId = !!idRef.current
@@ -266,19 +262,19 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const applicableRecoveries = recoveries.filter(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)
   const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : unfinished ? 'AUDIO NEEDS ATTENTION' : 'READY TO ADD AUDIO'
 
-  return <div className="recorder-content connected-recorder">
+  return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}`}>
     <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
-      <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>
-      <div className="recorder-copy">
+      {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>}
+      {!compact && <div className="recorder-copy">
         <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
         <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
         <p>{saved ? 'Transcription and English translation run in the background. Open the saved enquiry to follow progress.' : 'Audio saves privately. ElevenLabs transcribes the original speech, then OpenAI translates it into English.'}</p>
         {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
-      </div>
+      </div>}
       <div className="recorder-controls">
         {compact ? (
           // Minimal compact controls: single Start
-          !captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !!applicableRecoveries.length} onClick={() => void startMicrophoneCompactFlow()}><Mic2 size={16} />{unfinished ? 'Retry recording' : 'Start recording'}</button>
+          !captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked} onClick={() => void startMicrophoneCompactFlow()}><Mic2 size={16} />{unfinished ? 'Retry recording' : 'Start recording'}</button>
         ) : (
           // Full controls preserved for non-compact usage
           <>
@@ -307,6 +303,6 @@ export default function ConversationRecorder({ customerName, title, initialConve
     {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}
     {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
     {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
-    {!operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="audio-storage-notice connected-audio-recovery" key={row.key}><RotateCcw size={18} /><div><strong>Audio is waiting on this device</strong><p>Recording {row.conversationId.slice(0, 8)} · {duration(row.totalSamples / 16000)}. Recover it to attach its saved conversation to this enquiry.</p><button type="button" className="button button-secondary" onClick={() => void recover(row)}>Recover audio</button></div></div>)}
+    {!compact && !operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="audio-storage-notice connected-audio-recovery" key={row.key}><RotateCcw size={18} /><div><strong>Audio is waiting on this device</strong><p>Recording {row.conversationId.slice(0, 8)} · {duration(row.totalSamples / 16000)}. Recover it to attach its saved conversation to this enquiry.</p><button type="button" className="button button-secondary" onClick={() => void recover(row)}>Recover audio</button></div></div>)}
   </div>
 }

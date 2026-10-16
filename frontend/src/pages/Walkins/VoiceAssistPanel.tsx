@@ -1,13 +1,12 @@
-﻿import { Mic2, Sparkles } from 'lucide-react'
+import { Mic2, Sparkles } from 'lucide-react'
 import ConversationRecorder from '../Enquiries/ConversationRecorder'
 import type { VisitorField } from '../../voice/extract'
-import '../../styles/recording.css'
+import './Walkins.css'
 
 export interface VoiceAssistPanelProps {
   customerName: string
   onConversationChange: (id: string | null) => void
   onBusyChange: (busy: boolean) => void
-  // Backwards-compatible optional props (ignored by the compact UI)
   values?: Record<VisitorField, string>
   validate?: (field: VisitorField, value: string) => string | null
   onApply?: (field: VisitorField, value: string) => void
@@ -16,11 +15,23 @@ export interface VoiceAssistPanelProps {
 
 export default function VoiceAssistPanel({ customerName, onConversationChange, onBusyChange }: VoiceAssistPanelProps) {
   return (
-    <section className="walkin-card voice-assist compact" aria-labelledby="voice-assist-title">
-      <div className="walkin-section-heading"><span><Sparkles size={16} /></span><div><h2 id="voice-assist-title">Voice assist</h2></div></div>
-      <div className="voice-compact" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <Mic2 size={28} aria-hidden />
-        <ConversationRecorder customerName={customerName.trim() || 'Walk-in visitor'} onConversationChange={onConversationChange} onBusyChange={onBusyChange} compact />
+    <section className="walkin-card voice-assist voice-assist-simple" aria-labelledby="voice-assist-title">
+      <div className="walkin-section-heading">
+        <span><Sparkles size={16} /></span>
+        <div>
+          <h2 id="voice-assist-title">Voice assist</h2>
+          <p>Use the microphone to record the visitor conversation.</p>
+        </div>
+      </div>
+      <div className="voice-simple-recorder">
+        <Mic2 size={30} aria-hidden />
+        <ConversationRecorder
+          customerName={customerName.trim() || 'Walk-in visitor'}
+          title="Walk-in registration"
+          onConversationChange={onConversationChange}
+          onBusyChange={onBusyChange}
+          compact
+        />
       </div>
     </section>
   )
