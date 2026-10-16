@@ -147,7 +147,7 @@ class RecordingLink(BaseModel):
 
 SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name
     from public.guruconnect_walkin_visits v left join public.profiles p on p.id=v.assigned_agent_id """
-ACCESS = "(%s or v.assigned_agent_id=%s or (v.assigned_agent_id is null and v.registered_by=%s))"
+ACCESS = "(%s or v.assigned_agent_id=%s or v.registered_by=%s)"
 
 
 def serialize_visit(row):
@@ -290,13 +290,13 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             visible = await visit(connection, context, prior["id"])
             response.status_code = 200
             return serialize_visit(visible)
-        assigned = None if context.admin else context.user.id
-        status = "Assigned" if assigned else ("Waiting for Assignment" if body.appointmentStatus == "Walk-in" else "Registered")
+        salesperson = await least_loaded_salesperson(connection, context.id)
+        assigned = salesperson["user_id"] if salesperson else None
+        status = "Assigned" if assigned else "Waiting for Assignment"
         row = await one(connection, """insert into public.guruconnect_walkin_visits
             (organisation_id,registered_by,assigned_agent_id,assigned_at,idempotency_key,payload_hash,payload,customer_name,mobile_number,purpose,status)
             values(%s,%s,%s,case when %s::uuid is null then null else now() end,%s,%s,%s,%s,%s,%s,%s) returning id""",
                         (context.id, context.user.id, assigned, assigned, idempotency_key, payload_hash, Jsonb(payload), body.customerName, body.mobileNumber, body.purpose, status))
-        salesperson = await least_loaded_salesperson(connection, context.id)
         ticket_day = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         daily_sequence = await next_daily_ticket(connection, context.id, ticket_day)
         tracking_token = secrets.token_urlsafe(12)

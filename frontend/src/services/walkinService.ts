@@ -104,7 +104,11 @@ export async function registerWalkin(workspaceId: string, input: RegisterWalkinI
     return saved
   }
   const now = new Date().toISOString(), id = crypto.randomUUID()
-  const visit: WalkinVisit = { ...input, id, visitNumber: `WI-${now.slice(0, 10).replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`, registeredBy: 'Local reception', assignedAgentId: null, assignedAgentName: null, assignmentNote: '', status: input.appointmentStatus === 'Walk-in' ? 'Waiting for Assignment' : 'Registered', checkInAt: now, assignedAt: null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
+  const availability = readLocal<Record<string, WalkinAgent['availability']>>(workspaceId, 'availability', {})
+  const openVisits = (agentId: string) => visits.filter(visit => visit.assignedAgentId === agentId && !closedStatuses.includes(visit.status)).length
+  const availableAgents = demoAgents.filter(agent => (availability[agent.id] ?? agent.availability) === 'Available')
+  const assignedAgent = availableAgents.sort((left, right) => openVisits(left.id) - openVisits(right.id))[0]
+  const visit: WalkinVisit = { ...input, id, visitNumber: `WI-${now.slice(0, 10).replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`, registeredBy: 'Local reception', assignedAgentId: assignedAgent?.id ?? null, assignedAgentName: assignedAgent?.name ?? null, assignmentNote: '', status: assignedAgent ? 'Assigned' : 'Waiting for Assignment', checkInAt: now, assignedAt: assignedAgent ? now : null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
   visits.push(visit)
   saveLocal(workspaceId, 'visits', visits)
   keys[idempotencyKey] = { id, payload: JSON.stringify(input) }

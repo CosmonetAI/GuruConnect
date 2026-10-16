@@ -84,7 +84,7 @@ export default function WalkinRegistration() {
       const recordingId = voiceConversation.current
       let audioNote = ''
       if (recordingId) {
-        // Only the assigned agent may link audio, so a new unassigned visit usually cannot be linked yet.
+        // Only the assigned agent may link audio; reception keeps the recording staged until then.
         let linked = false
         try { await attachWalkinRecording(workspace.id, visit.id, recordingId); linked = !isWalkinDemoMode() } catch { linked = false }
         if (!linked) {

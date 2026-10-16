@@ -110,6 +110,18 @@ def test_agents_derive_roles_from_workspace_and_do_not_leak_other_sales_counts(a
     assert client.patch(url, headers=admin, json={"availability": "Unrecognized"}).status_code == 422
 
 
+def test_owner_is_an_eligible_walkin_assignee_when_salespeople_are_unavailable(api):
+    client, headers, ids, _, _ = api
+    admin = {**headers, "X-Test-User": "0"}
+    for agent_id in ids[1:]:
+        assert client.patch(f"/api/v1/walkins/agents/{agent_id}", headers=admin, json={"availability": "Busy"}).status_code == 200
+
+    visit = register(client, headers).json()
+
+    assert visit["assignedAgentId"] == str(ids[0])
+    assert visit["status"] == "Assigned"
+
+
 def test_pagination_literal_search_no_client_side_tenant_filters(api):
     client, headers, _, _, _ = api
     a = register(client, headers, customerName="Literal 50%_ customer").json()
