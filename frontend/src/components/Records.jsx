@@ -60,7 +60,7 @@ export function DetailModal({ eyebrow, title, fields, onClose, action, onSave, e
 }
 
 export function ContactCard({ contact }) {
-  const [current, setCurrent] = useState(contact); const [showDetails, setShowDetails] = useState(false);
+  const [current, setCurrent] = useState(contact); const [showDetails, setShowDetails] = useState(false); const [saveMessage, setSaveMessage] = useState('');
   useEffect(() => setCurrent(contact), [contact]);
   if (!current) return null;
   const fields = Object.entries(current).filter(([, value]) => value !== null && value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0) && !String(value).startsWith('__'));
@@ -71,9 +71,9 @@ export function ContactCard({ contact }) {
   const id = current.id || current.contact_id;
   const editableKeys = source === 'books' ? ['contact_name', 'company_name', 'email', 'phone', 'mobile', 'website', 'notes', 'gst_no'] : ['First_Name', 'Last_Name', 'Email', 'Mobile', 'Phone', 'Title', 'Description', 'Account_Name', 'Mailing_Street', 'Mailing_City', 'Mailing_State', 'Mailing_Country', 'Mailing_Zip'];
   const detailFields = [...fields, ...editableKeys.filter(key => !fields.some(([field]) => field === key)).map(key => [key, ''])];
-  const save = async values => { const result = await call('/contacts/' + id, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.contact?.contact || result.contact || {}) })); };
+  const save = async values => { const endpoint = source === 'books' ? '/books/contacts/' + id : '/bigin/contacts/' + String(id).replace(/^bigin:/, ''); const result = await call(endpoint, { method: 'PUT', body: JSON.stringify(values) }); const updated = result.contact?.contact || result.contact || {}; setCurrent(old => ({ ...old, ...updated, __source: source })); setSaveMessage('Contact updated successfully.'); };
   const remove = async () => { if (!window.confirm('Delete this contact?')) return; await call('/contacts/' + id, { method: 'DELETE' }); setCurrent(null); setShowDetails(false); };
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">{sourceLabel}</span><span className="product-sku">{id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Contact record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>Show more</button><button type="button" className="secondary" onClick={remove}>Delete</button></div>{showDetails && <DetailModal eyebrow={sourceLabel.toUpperCase()} title={name} fields={detailFields} editableKeys={editableKeys} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
+  return <article className="product-card">{saveMessage && <div className="success">{saveMessage}</div>}<div className="product-card-top"><span className="active-label">{sourceLabel}</span><span className="product-sku">{id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Contact record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>Show more</button><button type="button" className="secondary" onClick={remove}>Delete</button></div>{showDetails && <DetailModal eyebrow={sourceLabel.toUpperCase()} title={name} fields={detailFields} editableKeys={editableKeys} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
 }
 
 export function RecordCard({ record, type }) {

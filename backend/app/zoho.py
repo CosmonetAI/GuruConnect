@@ -152,6 +152,7 @@ class ZohoClient:
         result = await self.create_books_contact(org, payload)
         return result.get('contact') or (result.get('data') or [None])[0] or result
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
+    async def get_books_contact(self, org, contact_id): return await self.request('GET',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def update_bigin_contact(self, contact_id, data): return await self.request('PUT',f'/bigin/v2/Contacts/{contact_id}',json={'data':[{'id': contact_id, **data}]})

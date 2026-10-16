@@ -696,6 +696,21 @@ async def _update_books_record(update_fn, record_id: str, payload: dict):
     except Exception as e:
         raise HTTPException(502, f'Unable to update Zoho Books record: {e}')
 
+def _books_contact_view(payload: dict):
+    contact = payload.get('contact') or payload.get('data') or payload
+    if isinstance(contact, list):
+        contact = contact[0] if contact else {}
+    if not isinstance(contact, dict):
+        return contact
+    people = contact.get('contact_persons') or []
+    primary = next((person for person in people if person.get('is_primary_contact')), people[0] if people else {})
+    return {
+        **contact,
+        'email': contact.get('email') or primary.get('email') or '',
+        'phone': contact.get('phone') or primary.get('phone') or '',
+        'mobile': contact.get('mobile') or primary.get('mobile') or '',
+    }
+
 @app.put('/api/products/{item_id}')
 async def update_product(item_id: str, payload: dict):
     return {'item': await _update_books_record(zoho.update_books_item, item_id, payload)}
@@ -750,7 +765,9 @@ async def update_bigin_contact(contact_id: str, payload: dict):
     try:
         if not zoho.status().get('connected'):
             raise HTTPException(409, 'Connect Zoho before updating contacts')
-        return {'contact': await zoho.update_bigin_contact(contact_id, payload)}
+        await zoho.update_bigin_contact(contact_id, payload)
+        refreshed = await zoho.get_bigin_contact(contact_id)
+        return {'contact': (refreshed.get('data') or [refreshed.get('contact')])[0] if isinstance(refreshed.get('data'), list) else (refreshed.get('data') or refreshed.get('contact') or refreshed)}
     except HTTPException:
         raise
     except Exception as e:
@@ -758,7 +775,12 @@ async def update_bigin_contact(contact_id: str, payload: dict):
 
 @app.put('/api/books/contacts/{contact_id}')
 async def update_books_contact(contact_id: str, payload: dict):
-    return {'contact': await _update_books_record(zoho.update_books_contact, contact_id, payload)}
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org:
+        raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    await _update_books_record(zoho.update_books_contact, contact_id, payload)
+    refreshed = await zoho.get_books_contact(org, contact_id)
+    return {'contact': _books_contact_view(refreshed)}
 async def _delete_books_record(delete_fn, record_id: str):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')

@@ -3,12 +3,12 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import './wizard-overrides.css';
 import { call } from './shared/api';
-import { ProductsPage as ProductsPageModule } from './pages/ProductsPage';
-import { ContactsPage as ContactsPageModule } from './pages/ContactsPage';
-import { QuotesPage as QuotesPageModule } from './pages/QuotesPage';
-import { OrdersPage as OrdersPageModule } from './pages/OrdersPage';
-import { PurchaseOrdersPage as PurchaseOrdersPageModule } from './pages/PurchaseOrdersPage';
-import { InvoicesPage as InvoicesPageModule } from './pages/InvoicesPage';
+import { ProductsPage as ProductsPageModule } from '../pages/ProductsPage';
+import { ContactsPage as ContactsPageModule } from '../pages/ContactsPage';
+import { QuotesPage as QuotesPageModule } from '../pages/QuotesPage';
+import { OrdersPage as OrdersPageModule } from '../pages/OrdersPage';
+import { PurchaseOrdersPage as PurchaseOrdersPageModule } from '../pages/PurchaseOrdersPage';
+import { InvoicesPage as InvoicesPageModule } from '../pages/InvoicesPage';
 
 const SCOPE = 'ZohoBooks.contacts.READ, ZohoBooks.contacts.CREATE, ZohoBooks.contacts.UPDATE, ZohoBooks.contacts.DELETE, ZohoBooks.settings.READ, ZohoBooks.estimates.READ, ZohoBooks.estimates.CREATE, ZohoBooks.estimates.UPDATE, ZohoBooks.estimates.DELETE, ZohoBooks.salesorders.READ, ZohoBooks.salesorders.CREATE, ZohoBooks.salesorders.UPDATE, ZohoBooks.salesorders.DELETE, ZohoBooks.invoices.READ, ZohoBooks.invoices.CREATE, ZohoBooks.invoices.UPDATE, ZohoBooks.invoices.DELETE, ZohoBooks.items.READ, ZohoBooks.items.CREATE, ZohoBooks.items.UPDATE, ZohoBooks.items.DELETE, ZohoBooks.purchaseorders.READ, ZohoBooks.purchaseorders.CREATE, ZohoBooks.purchaseorders.UPDATE, ZohoBooks.purchaseorders.DELETE, ZohoBigin.modules.contacts.READ, ZohoBigin.modules.contacts.CREATE, ZohoBigin.modules.contacts.UPDATE, ZohoBigin.modules.contacts.DELETE, ZohoBigin.modules.leads.READ, ZohoBigin.modules.leads.CREATE, ZohoBigin.modules.leads.UPDATE, ZohoBigin.modules.leads.DELETE, ZohoBigin.modules.accounts.READ, ZohoBigin.modules.accounts.CREATE, ZohoBigin.modules.accounts.UPDATE, ZohoBigin.modules.accounts.DELETE, ZohoBigin.modules.pipelines.READ, ZohoBigin.modules.pipelines.CREATE, ZohoBigin.modules.pipelines.UPDATE, ZohoBigin.modules.pipelines.DELETE, ZohoBigin.modules.products.READ, ZohoBigin.modules.products.CREATE, ZohoBigin.modules.products.UPDATE, ZohoBigin.modules.products.DELETE, ZohoBigin.modules.tasks.READ, ZohoBigin.modules.tasks.CREATE, ZohoBigin.modules.tasks.UPDATE, ZohoBigin.modules.tasks.DELETE, ZohoBigin.modules.events.READ, ZohoBigin.modules.events.CREATE, ZohoBigin.modules.events.UPDATE, ZohoBigin.modules.events.DELETE, ZohoBigin.modules.calls.READ, ZohoBigin.modules.calls.CREATE, ZohoBigin.modules.calls.UPDATE, ZohoBigin.modules.calls.DELETE, ZohoBigin.modules.notes.READ, ZohoBigin.modules.notes.CREATE, ZohoBigin.modules.notes.UPDATE, ZohoBigin.modules.notes.DELETE, ZohoBigin.settings.modules.READ, ZohoBigin.settings.fields.READ, ZohoBigin.settings.layouts.READ, ZohoBigin.org.READ, ZohoBigin.users.READ, ZohoSearch.securesearch.READ';
 
