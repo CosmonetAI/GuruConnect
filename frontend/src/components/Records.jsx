@@ -89,7 +89,7 @@ export function RecordCard({ record, type }) {
 }
 
 export function LookupField({ value, onChange, onSearch, options, selected, placeholder, renderOption, required = false }) {
-  return <div className="lookup-field"><div className="lookup-input-row"><input required={required} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} /><button type="button" className="lookup-search-button" onClick={onSearch} disabled={!value.trim()}>Search</button></div>{options.length > 0 && !selected && <div className="lookup-options">{options.map(renderOption)}</div>}</div>;
+  return <div className="lookup-field"><div className="lookup-input-row"><input required={required} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} /><button type="button" className="lookup-search-button" onClick={onSearch} disabled={!value.trim()}>Search</button></div>{options.length > 0 && !selected && <div className="lookup-options">{options.map(option => <div className="lookup-option-entry" key={option.contact_id || option.item_id || option.id}>{renderOption(option)}{option.__source && <small>{option.__source === 'bigin' ? 'Zoho Bigin contact' : 'Zoho Books contact'}</small>}</div>)}</div>}</div>;
 }
 
 export function LineItemsEditor({ lines, setLines, items, lookupItems, currency = 'INR' }) {

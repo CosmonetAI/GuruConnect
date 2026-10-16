@@ -118,20 +118,21 @@ class ZohoClient:
     async def search_bigin_contacts(self, query, search_by, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 50, 'page': page})
+    async def get_bigin_contact(self, contact_id): return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}')
     async def search_books_contacts(self, org, query, date=None, page=1, per_page=10):
         params = {'organization_id': org, 'per_page': per_page, 'page': page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)
     async def create_books_contact(self, org, data): return await self.request('POST','/books/v3/contacts',params={'organization_id':org},json=data)
-    async def ensure_books_contact(self, org, *, name, email=None, phone=None):
+    async def ensure_books_contact(self, org, *, name, email=None, phone=None, contact_type='customer'):
         """Find a matching Books customer before creating one, so walk-ins are idempotent."""
         email = (email or '').strip().lower()
         phone = ''.join(ch for ch in (phone or '') if ch.isdigit())
         for query in (email, phone):
             if not query:
                 continue
-            payload = await self.search_books_customers(org, query)
+            payload = await (self.search_books_vendors(org, query) if contact_type == 'vendor' else self.search_books_customers(org, query))
             rows = payload.get('contacts', payload.get('data', []))
             for row in rows:
                 row_email = (row.get('email') or '').strip().lower()
@@ -142,7 +143,7 @@ class ZohoClient:
         parts = display_name.split(maxsplit=1)
         payload = {
             'contact_name': display_name,
-            'contact_type': 'customer',
+            'contact_type': contact_type,
             'contact_persons': [{
                 'first_name': parts[0], 'last_name': parts[1] if len(parts) > 1 else '',
                 'email': email, 'mobile': phone or None, 'is_primary_contact': True,

@@ -387,6 +387,59 @@ async def books_vendors(search: str = ''):
         return {'vendors': payload.get('contacts', payload.get('data', [])), 'info': payload.get('page_context', {})}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Books vendors: {e}')
+
+@app.get('/api/document-contacts')
+async def document_contacts(search: str = '', role: str = 'customer'):
+    query = search.strip()
+    if not query:
+        return {'contacts': []}
+    if role not in {'customer', 'vendor'}:
+        raise HTTPException(422, 'Contact role must be customer or vendor')
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        digits = ''.join(ch for ch in query if ch.isdigit())
+        search_by = 'phone' if query.isdigit() or (len(digits) == 10 and digits == query) else ('email' if re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', query) else 'word')
+        try:
+            bigin_payload = await zoho.search_bigin_contacts(query, search_by)
+        except ValueError:
+            bigin_payload = {}
+        bigin = []
+        for row in bigin_payload.get('data', []):
+            if not isinstance(row, dict):
+                continue
+            name = row.get('Full_Name') or ' '.join(filter(None, [row.get('First_Name'), row.get('Last_Name')])) or 'Unnamed contact'
+            bigin.append({**row, '__source': 'bigin', 'contact_id': f"bigin:{row.get('id')}", 'contact_name': name, 'email': row.get('Email') or '', 'phone': row.get('Mobile') or row.get('Phone') or '', 'contact_role': role})
+        books_payload = await (zoho.search_books_vendors(org, query) if role == 'vendor' else zoho.search_books_customers(org, query))
+        books = []
+        for row in books_payload.get('contacts', books_payload.get('data', [])):
+            if isinstance(row, dict):
+                books.append({**row, '__source': 'books', 'contact_id': row.get('contact_id'), 'contact_name': row.get('contact_name') or row.get('customer_name') or row.get('vendor_name') or 'Unnamed contact', 'contact_role': role})
+        return {'contacts': [*bigin, *books][:40], 'search': query, 'role': role}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to search Zoho contact sources: {e}')
+
+async def _resolve_books_document_contact(payload: dict, role: str, org: str):
+    id_key = f'{role}_id'; source_key = f'{role}_source'; record_key = f'{role}_record'
+    raw_id = str(payload.get(id_key) or '')
+    is_bigin = payload.get(source_key) == 'bigin' or raw_id.startswith('bigin:')
+    if not is_bigin:
+        return payload.get(id_key)
+    record = payload.get(record_key) or {}
+    if not record and raw_id.startswith('bigin:'):
+        result = await zoho.get_bigin_contact(raw_id.removeprefix('bigin:'))
+        record = (result.get('data') or [result.get('contact')])[0] if isinstance(result.get('data'), list) else (result.get('data') or result.get('contact') or result)
+    name = record.get('contact_name') or record.get('Full_Name') or payload.get(f'{role}_name') or 'Unnamed contact'
+    email = record.get('email') or record.get('Email')
+    phone = record.get('phone') or record.get('Mobile') or record.get('Phone')
+    books_contact = await zoho.ensure_books_contact(org, name=name, email=email, phone=phone, contact_type=role)
+    books_id = (books_contact.get('contact_id') or books_contact.get('id')) if isinstance(books_contact, dict) else None
+    if not books_id:
+        raise HTTPException(502, f'Unable to create the Bigin {role} in Zoho Books')
+    return books_id
 @app.get('/api/quotes')
 async def quotes(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -408,6 +461,7 @@ async def create_quote(payload: dict):
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
+        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_estimate(org, payload)
@@ -440,6 +494,7 @@ async def create_order(payload: dict):
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
+        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_sales_order(org, payload)
@@ -474,6 +529,7 @@ async def create_purchase_order(payload: dict):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('vendor_id'):
             raise HTTPException(422, 'Vendor is required')
+        payload = {**payload, 'vendor_id': await _resolve_books_document_contact(payload, 'vendor', org)}
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')
@@ -656,29 +712,9 @@ async def delete_invoice(invoice_id: str): return await _delete_books_record(zoh
 
 @app.put('/api/contacts/{contact_id}')
 async def update_contact(contact_id: str, payload: dict):
-    if not payload:
-        raise HTTPException(422, 'At least one editable field is required')
-    try:
-        if not zoho.status().get('connected'):
-            raise HTTPException(409, 'Connect Zoho before updating contacts')
-        status = zoho.status(); org = status.get('organization_id')
-        if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        person_id = payload.pop('contact_person_id', None)
-        person_fields = {'first_name', 'last_name', 'email', 'phone', 'mobile', 'designation', 'department', 'skype', 'fax'}
-        person_payload = {key: value for key, value in payload.items() if key.lower() in person_fields}
-        aliases = {'First_Name': 'first_name', 'Last_Name': 'last_name', 'Email': 'email', 'Phone': 'phone', 'Mobile': 'mobile', 'Title': 'designation', 'Description': 'description'}
-        for key, value in list(payload.items()):
-            if key in aliases:
-                person_payload[aliases[key]] = value
-        if person_id and person_payload:
-            result = await zoho.update_books_contact_person(org, person_id, person_payload)
-        else:
-            result = await zoho.update_books_contact(org, contact_id, payload)
-        return {'contact': result.get('contact'), 'response': result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to update Zoho Books contact: {e}')
+    # Legacy contacts route: contacts returned by the Bigin search used this
+    # path before provider-specific routes were introduced.
+    return await update_bigin_contact(contact_id, payload)
 
 @app.put('/api/bigin/contacts/{contact_id}')
 async def update_bigin_contact(contact_id: str, payload: dict):
