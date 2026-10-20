@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useBlocker, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -21,7 +21,9 @@ import {
   UsersRound,
 } from 'lucide-react'
 import { EnquiryDraftValuesSchema, NewEnquirySchema, productHasDetails, type NewEnquiryForm } from '../../schemas/enquirySchema'
-import { createEnquiry } from '../../services/enquiryService'
+import { createEnquiry, updateEnquiry } from '../../services/enquiryService'
+import type { Enquiry } from '../../types/enquiry'
+import { useScopedResource } from '../../hooks/useScopedResource'
 import { message } from '../../services/officeApi'
 import { useOffice } from '../../contexts/OfficeContext'
 import ConversationRecorder from './ConversationRecorder'
@@ -157,18 +159,55 @@ function convertedValues(source: WalkinConversion): NewEnquiryForm {
   }
 }
 
+function existingValues(source: Enquiry): NewEnquiryForm {
+  return {
+    ...defaultValues,
+    customerName: source.customerName,
+    phone: source.phone || '',
+    email: source.email || '',
+    channel: ['Incoming Call', 'Outgoing Call', 'Retail Walk-in', 'Dealership', 'Project', 'Supported WhatsApp', 'Email', 'Other'].includes(source.channel) ? source.channel as NewEnquiryForm['channel'] : 'Other',
+    branch: source.branch,
+    assignedExecutive: source.assignedExecutive,
+    customerType: source.customerType || 'Retail',
+    company: source.company || '',
+    projectName: source.projectName || '',
+    preferredContactMethod: source.preferredContactMethod || '',
+    customerNotes: source.customerNotes || '',
+    salespersonNotes: source.salespersonNotes || '',
+    requirementsSummary: source.requirementsSummary || '',
+    productRequirements: source.productRequirements?.length ? source.productRequirements : [{
+      ...defaultValues.productRequirements[0],
+      product: source.product || '',
+      quantity: source.quantity || 1,
+      unit: source.unit || 'nos',
+      notes: source.notes || '',
+    }],
+    followUpDate: source.followUpDate || '',
+    followUpOwner: source.followUpOwner || '',
+    priority: source.priority || 'Normal',
+  }
+}
+
 export default function NewEnquiry() {
   const { user, workspace } = useOffice()
   const location = useLocation()
+  const { id } = useParams()
   const conversion = (location.state as { walkinConversion?: WalkinConversion } | null)?.walkinConversion
+  const resource = useScopedResource<Enquiry>(id ? `/enquiries/${encodeURIComponent(id)}` : null)
   if (!user || !workspace) return <p role="status">Loading your workspace…</p>
-  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} />
+  if (id && !resource.data) return <p role="status">{resource.loading ? 'Loading enquiry…' : resource.error || 'Enquiry unavailable.'}</p>
+  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${id || conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${id ? `:edit:${id}` : conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} existing={resource.data} />
 }
 
-function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conversion?: WalkinConversion }) {
+function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: string; conversion?: WalkinConversion; existing?: Enquiry }) {
   const navigate = useNavigate()
   const { workspace, setCaptureBusy } = useOffice()
-  const [draft] = useState(() => { const saved = readDraft(storageKey); return conversion && !saved.restored ? { ...saved, values: convertedValues(conversion), conversationId: conversion.conversationId ?? null } : saved })
+  const [draft] = useState(() => {
+    const saved = readDraft(storageKey)
+    if (saved.restored) return saved
+    if (existing) return { ...saved, values: existingValues(existing), conversationId: existing.conversationId || null }
+    return conversion ? { ...saved, values: convertedValues(conversion), conversationId: conversion.conversationId ?? null } : saved
+  })
   const [form, setForm] = useState<NewEnquiryForm>(draft.values)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formMessage, setFormMessage] = useState(draft.warning)
@@ -273,7 +312,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
       }
       const requirements = data.productRequirements.filter(productHasDetails)
       const firstProduct = requirements[0]
-      const created = await createEnquiry(workspace.id, {
+      const enquiryData = {
         customerName: data.customerName,
         phone: data.phone,
         email: data.email || undefined,
@@ -295,7 +334,10 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
         priority: data.priority,
         ...(conversationId ? { conversationId } : {}),
         ...(conversion ? { sourceEventId: `walkin:${conversion.visitId}` } : {}),
-      }, conversion ? `walkin:${conversion.visitId}` : saveKey)
+      }
+      const created = existing
+        ? await updateEnquiry(workspace.id, existing.id, enquiryData)
+        : await createEnquiry(workspace.id, enquiryData, conversion ? `walkin:${conversion.visitId}` : saveKey)
       let draftCleanupMessage = ''
       if (conversion && walkinService!.isWalkinDemoMode()) { try { await walkinService!.markWalkinConverted(workspace.id, conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
       try {
@@ -306,7 +348,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
       allowLeave.current = true
       navigate(`/enquiries/${encodeURIComponent(created.id)}`, {
         state: {
-          confirmation: `Enquiry ${created.enquiryNumber || created.id} was saved in your workspace.${conversationId ? ' Transcription and English translation continue in the background.' : ''}${draftCleanupMessage}`,
+          confirmation: `Enquiry ${created.enquiryNumber || created.id} was ${existing ? 'updated' : 'saved'} in your workspace.${conversationId ? ' Transcription and English translation continue in the background.' : ''}${draftCleanupMessage}`,
         },
       })
     } catch (error) {
@@ -352,14 +394,14 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
     <form className="new-enquiry-page" noValidate onSubmit={(event) => { event.preventDefault(); void submitEnquiry() }}>
       <div className="enquiry-topline">
         <Link className="back-link" to="/enquiries"><ArrowLeft size={16} /> Back to enquiries</Link>
-        <span className="enquiry-id-label"><span className="draft-dot" /> New enquiry</span>
+        <span className="enquiry-id-label"><span className="draft-dot" /> {existing ? `Edit ${existing.enquiryNumber || 'enquiry'}` : 'New enquiry'}</span>
       </div>
 
       <header className="enquiry-page-header">
         <div>
           <div className="page-kicker"><Sparkles size={14} /> SALES WORKSPACE</div>
-          <h1>Capture a new enquiry</h1>
-          <p>Start with the essentials. You can add more detail as the conversation develops.</p>
+          <h1>{existing ? 'Edit enquiry' : 'Capture a new enquiry'}</h1>
+          <p>{existing ? 'Update customer details, requirements, and conversation audio.' : 'Start with the essentials. You can add more detail as the conversation develops.'}</p>
         </div>
         <div className="required-note"><span className="required-mark">*</span> Required fields</div>
       </header>
@@ -591,7 +633,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
         <button type="button" className="button button-secondary" onClick={saveDraft} disabled={isSaving}><Save size={16} /> Save draft</button>
         <button type="submit" className="button button-primary" disabled={isSaving || hasUnfinishedAudio}>
           {isSaving ? <span className="button-spinner" /> : <Check size={16} />}
-          {isSaving ? 'Saving…' : 'Save enquiry'}
+          {isSaving ? 'Saving…' : existing ? 'Save changes' : 'Save enquiry'}
           <ChevronDown className="button-arrow" size={15} />
         </button>
         </div>

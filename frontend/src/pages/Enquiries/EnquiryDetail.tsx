@@ -33,7 +33,7 @@ export default function EnquiryDetail() {
 
   return <div className="new-enquiry-page">
     <div className="enquiry-topline"><Link className="back-link" to="/enquiries"><ArrowLeft size={16} /> Back to enquiries</Link><span className="enquiry-id-label">{enquiry.enquiryNumber || enquiry.id}</span></div>
-    <header className="enquiry-page-header"><div><div className="page-kicker"><ClipboardList size={14} /> SAVED ENQUIRY</div><h1>{enquiry.customerName}</h1><p>{enquiry.product || 'Customer details and conversation'}</p></div><div className="required-note">Created {dateLabel(enquiry.createdAt)}</div></header>
+    <header className="enquiry-page-header"><div><div className="page-kicker"><ClipboardList size={14} /> SAVED ENQUIRY</div><h1>{enquiry.customerName}</h1><p>{enquiry.product || 'Customer details and conversation'}</p></div><div className="required-note"><Link className="button button-primary" to={`/enquiries/${encodeURIComponent(enquiry.id)}/edit`}>Edit enquiry</Link><br />Created {dateLabel(enquiry.createdAt)}</div></header>
     {confirmation && <OfficeNotice>{confirmation}</OfficeNotice>}
     {resource.error && <OfficeNotice error>{resource.error} <button type="button" className="button button-secondary" onClick={() => void resource.reload()}>Retry</button></OfficeNotice>}
     <div className="enquiry-workspace">

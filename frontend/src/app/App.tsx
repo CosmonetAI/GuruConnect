@@ -61,6 +61,7 @@ export default function App() {
         <Route path="walkins/history" element={<RoleRoute roles={['owner','receptionist']}><WalkinHistory /></RoleRoute>} />
         <Route path="walkins/:id" element={<RoleRoute roles={['owner','receptionist']}><WalkinDetail /></RoleRoute>} />
         <Route path="enquiries/new" element={<NewEnquiry />} />
+        <Route path="enquiries/:id/edit" element={<NewEnquiry />} />
         <Route path="enquiries/:id" element={<EnquiryDetail />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="integrations" element={<Zoho />} />

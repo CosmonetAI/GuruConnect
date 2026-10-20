@@ -109,6 +109,8 @@ class EnquiryCreate(BaseModel):
             raise ValueError("Enquiry details are too large; shorten notes or product requirements")
         return self
 
+EnquiryUpdate = EnquiryCreate
+
 
 # A deleted recording is not exposed as still available. Its enquiry metadata
 # remains durable and readable under the same workspace/owner authorization.
@@ -240,6 +242,73 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
     return serialize_enquiry(saved)
 
 
+async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_name):
+    """Create the editable owner queue item as soon as a walk-in is assigned."""
+    product = row["payload"].get("productOrService", "")
+    payload = {
+        "customerName": row["payload"]["customerName"],
+        "phone": row["payload"]["mobileNumber"],
+        "email": row["payload"].get("email", ""),
+        "channel": "Retail Walk-in",
+        "branch": "Walk-in",
+        "assignedExecutive": assigned_name or "Salesperson",
+        "product": product,
+        "quantity": 1,
+        "unit": "nos",
+        "notes": row["payload"].get("internalNotes", ""),
+        "sourceWalkinId": str(row["id"]),
+        "customerType": "Retail",
+        "company": row["payload"].get("companyName", ""),
+        "projectName": "",
+        "preferredContactMethod": "",
+        "productRequirements": ([{"product": product, "sku": "", "quantity": 1, "unit": "nos", "customerSegment": "", "budget": "", "paymentPreference": "", "timeline": "", "stockCheck": False, "notes": ""}] if product else []),
+        "customerNotes": row["payload"].get("purposeDescription", ""),
+        "salespersonNotes": "",
+        "requirementsSummary": "",
+        "followUpDate": "",
+        "followUpOwner": assigned_name or "",
+        "priority": "Normal",
+    }
+    key = f"walkin-assignment:{row['id']}"
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    existing = await one(connection, "select id from public.guruconnect_enquiries where organisation_id=%s and idempotency_key=%s", (context.id, key))
+    if existing:
+        return existing["id"]
+    created = await one(connection, """insert into public.guruconnect_enquiries
+        (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread)
+        values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true) returning id""",
+        (context.id, context.user.id, key, digest, Jsonb(payload), payload["customerName"], payload["phone"], payload["channel"], payload["branch"], assigned_to))
+    await audit(connection, context, "enquiry.created_from_walkin", {"enquiry_id": str(created["id"]), "walkin_id": str(row["id"])})
+    return created["id"]
+
+
+@router.patch("/{enquiry_id}")
+async def update_enquiry(enquiry_id: UUID, body: EnquiryUpdate, request: Request, context: Workspace = Depends(workspace)):
+    payload = body.model_dump(mode="json")
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s) for update",
+                        (enquiry_id, context.id, context.admin, context.user.id, context.user.id))
+        if not row:
+            fail("enquiry_not_found", 404)
+        if body.conversationId:
+            recording = await conversation(connection, context, body.conversationId, lock=True)
+            if recording["owner_id"] != context.user.id:
+                fail("recording_owner_required", 403)
+            if recording["upload_state"] != "saved" or recording["capture_state"] not in {"stopped", "interrupted"} or recording["total_samples"] <= 0:
+                fail("recording_not_saved", 409, "Finish the recording or audio upload before saving this enquiry")
+            linked = await one(connection, "select id from public.guruconnect_enquiries where conversation_id=%s and id<>%s", (body.conversationId, enquiry_id))
+            if linked:
+                fail("recording_already_linked", 409)
+        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        await connection.execute("""update public.guruconnect_enquiries
+            set payload=%s,payload_hash=%s,conversation_id=%s,customer_name=%s,phone=%s,channel=%s,branch=%s
+            where id=%s and organisation_id=%s""",
+            (Jsonb(payload), payload_hash, body.conversationId, body.customerName, body.phone, body.channel, body.branch, enquiry_id, context.id))
+        await audit(connection, context, "enquiry.updated", {"enquiry_id": str(enquiry_id)}, body.conversationId)
+        saved = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s", (enquiry_id, context.id))
+    return serialize_enquiry(saved)
+
+
 @router.get("/public/track")
 async def track_public_ticket(request: Request, token: str = Query(min_length=16, max_length=128)):
     token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -265,4 +334,3 @@ async def get_enquiry(enquiry_id: UUID, request: Request, context: Workspace = D
             fail("enquiry_not_found", 404)
         await connection.execute("update public.guruconnect_enquiries set unread=false where id=%s and organisation_id=%s", (enquiry_id, context.id))
     return serialize_enquiry(row)
-

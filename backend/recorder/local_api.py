@@ -243,6 +243,13 @@ def create_local_app(settings) -> FastAPI:
         response.status_code = 201 if created else 200
         return enquiry_response(row)
 
+    @app.patch("/api/v1/enquiries/{enquiry_id}")
+    async def update_enquiry(enquiry_id: UUID, body: EnquiryCreate):
+        try:
+            return enquiry_response(store.update_enquiry(str(enquiry_id), body.model_dump(mode="json")))
+        except ValueError as error:
+            conflict(error)
+
     @app.get("/api/v1/enquiries")
     async def list_enquiries(page: int = Query(1, ge=1, le=100000), pageSize: int = Query(10, ge=1, le=100), query: str = Query("", max_length=120), channel: str = Query("", max_length=80), branch: str = Query("", max_length=160)):
         rows = [row for row in store.enquiries() if (not query or query.casefold() in " ".join(str(row.get(field, "")) for field in ("id", "enquiryNumber", "customerName", "phone")).casefold()) and (not channel or row["channel"] == channel) and (not branch or row["branch"] == branch)]

@@ -321,10 +321,11 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         except Exception:
             # Visitor registration remains available when Books is disconnected or temporarily unavailable.
             books_contact_id = None
-        await connection.execute("""insert into public.guruconnect_enquiries
+        enquiry = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s)""",
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
             (context.id, context.user.id, f"walkin-enquiry:{row['id']}", ticket_hash, Jsonb(ticket_payload), body.customerName, body.mobileNumber, "Retail walk-in", body.department or "Walk-in", salesperson["user_id"] if salesperson else None, ticket_day, daily_sequence, tracking_hash, books_contact_id))
+        await connection.execute("update public.guruconnect_walkin_visits set converted_enquiry_id=%s where id=%s and organisation_id=%s", (enquiry["id"], row["id"], context.id))
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])
     result = serialize_visit(saved)
@@ -355,6 +356,18 @@ async def assign_visit(visit_id: UUID, body: Assignment, request: Request, conte
         status = row["status"] if row["assigned_agent_id"] == body.agentId else ("Assigned" if body.agentId else "Waiting for Assignment")
         await connection.execute("update public.guruconnect_walkin_visits set assigned_agent_id=%s,assigned_at=case when %s::uuid is null then null when assigned_agent_id=%s then assigned_at else clock_timestamp() end,assignment_note=%s,status=%s,updated_at=clock_timestamp() where id=%s and organisation_id=%s",
                                  (body.agentId, body.agentId, body.agentId, body.note, status, visit_id, context.id))
+        if body.agentId and not row["converted_enquiry_id"]:
+            from .enquiry_routes import create_walkin_enquiry
+            agent = await one(connection, "select display_name from public.profiles where id=%s", (body.agentId,))
+            enquiry_id = await create_walkin_enquiry(connection, context, row, body.agentId, agent["display_name"] if agent else "Salesperson")
+            await connection.execute("update public.guruconnect_walkin_visits set converted_enquiry_id=%s where id=%s and organisation_id=%s", (enquiry_id, visit_id, context.id))
+        elif body.agentId and row["converted_enquiry_id"]:
+            agent = await one(connection, "select display_name from public.profiles where id=%s", (body.agentId,))
+            await connection.execute("""update public.guruconnect_enquiries
+                set assigned_to=%s,
+                    payload=jsonb_set(payload,'{assignedExecutive}',to_jsonb(%s::text),true)
+                where id=%s and organisation_id=%s""",
+                (body.agentId, agent["display_name"] if agent else "Salesperson", row["converted_enquiry_id"], context.id))
         await history(connection, context, row, "Assignment changed", str(row["assigned_agent_id"]) if row["assigned_agent_id"] else None, str(body.agentId) if body.agentId else None, body.note)
         saved = await visit(connection, context, visit_id)
     return serialize_visit(saved)

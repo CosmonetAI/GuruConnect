@@ -407,3 +407,12 @@ class LocalStore:
     def enquiries(self) -> list[dict]:
         with self.transaction() as db:
             return [json.loads(row["data"]) for row in db.execute("select data from enquiries order by number desc")]
+
+    def update_enquiry(self, enquiry_id: str, data: dict) -> dict:
+        with self.transaction() as db:
+            row = db.execute("select data from enquiries where id=?", (enquiry_id,)).fetchone()
+            if not row:
+                raise ValueError("enquiry_not_found")
+            value = {**json.loads(row["data"]), **data, "id": enquiry_id}
+            db.execute("update enquiries set data=? where id=?", (encoded(value), enquiry_id))
+            return value
