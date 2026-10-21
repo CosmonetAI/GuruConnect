@@ -233,6 +233,7 @@ async def voice_session_notes(session_id: str, request: Request):
         with require_db() as db:
             row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
             if not row: raise HTTPException(404, 'Voice session not found')
+            row = row_dict(row)
             notes = db.execute(text("""select id,content,created_at,author_id,session_id
               from voice_session_notes where organisation_id=cast(:org as uuid) and customer_id=:customer
               order by created_at asc"""), {'org': get_organisation_id(), 'customer': row['customer_id']}).all()
@@ -246,6 +247,7 @@ async def add_voice_session_note(session_id: str, payload: VoiceSessionNoteIn, r
         with require_db() as db:
             row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
             if not row: raise HTTPException(404, 'Voice session not found')
+            row = row_dict(row)
             note = db.execute(text("""insert into voice_session_notes
               (organisation_id,customer_id,session_id,author_id,content)
               values(cast(:org as uuid),:customer,:session,cast(:author as uuid),:content)
@@ -261,6 +263,7 @@ async def voice_session_context(session_id: str, request: Request):
         with require_db() as db:
             row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
             if not row: raise HTTPException(404, 'Voice session not found')
+            row = row_dict(row)
             context = row['context'] or {}
             return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else []}
     except HTTPException: raise
@@ -272,6 +275,7 @@ async def update_voice_session_context(session_id: str, payload: VoiceSessionCon
         with require_db() as db:
             row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
             if not row: raise HTTPException(404, 'Voice session not found')
+            row = row_dict(row)
             context = row['context'] if isinstance(row['context'], dict) else {}
             context['product_requirements'] = payload.product_requirements
             db.execute(text("update chat_sessions set context=cast(:context as jsonb),updated_at=now() where id=:session"), {'context': json.dumps(context), 'session': session_id})
