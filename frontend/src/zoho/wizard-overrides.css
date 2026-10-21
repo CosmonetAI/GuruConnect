@@ -1,4 +1,6 @@
-.steps { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.steps { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.steps button { min-width: 0; padding: 11px 9px; }
+.steps span { line-height: 1.2; }
 
 .portal-panel {
   display: grid;

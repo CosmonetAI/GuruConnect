@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import datetime
@@ -18,6 +19,7 @@ from .security import User, Workspace, administrator, conversation, current_user
 from .assignment import least_loaded_salesperson
 
 router = APIRouter(prefix="/api/v1")
+log = logging.getLogger("recorder.api")
 
 
 async def audit(connection, context: Workspace, action: str, metadata: dict | None = None, conversation_id=None):
@@ -101,6 +103,20 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
                 json=invite_payload,
             )
         if response.status_code >= 400:
+            # Supabase's error body can contain provider details, but it must
+            # never be returned to the browser because it may include sensitive
+            # Auth internals. Keep only stable diagnostic fields in Render logs.
+            provider_error = {}
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    provider_error = {key: payload.get(key) for key in ("code", "error_code", "msg", "message") if payload.get(key)}
+            except ValueError:
+                pass
+            log.warning(
+                "supabase_invite_failed request_id=%s status=%s provider_error=%s",
+                getattr(request.state, "request_id", "unavailable"), response.status_code, provider_error or "unstructured_response",
+            )
             if response.status_code in {400, 422}:
                 fail("member_invitation_failed", 409, "This email may already have an account or could not be invited")
             fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
@@ -108,7 +124,11 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
         invited_user_id = auth_user.get("id")
         if not invited_user_id:
             fail("member_invitation_unavailable", 503, "Supabase did not return the invited member")
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
+        log.warning(
+            "supabase_invite_transport_failed request_id=%s exception_type=%s",
+            getattr(request.state, "request_id", "unavailable"), type(exc).__name__,
+        )
         fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
 
     token = secrets.token_urlsafe(32)  # retained only as a non-user-visible audit value
