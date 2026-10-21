@@ -86,13 +86,12 @@ export default function WalkinRegistration() {
       }
       const visit = await registerWalkin(workspace.id, input, saveKey)
       const recordingId = voiceConversation.current
-      let audioNote = ''
       if (recordingId) {
         let linked = false
         try { await attachWalkinRecording(workspace.id, visit.id, recordingId); linked = !isWalkinDemoMode() } catch { linked = false }
-        if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ }; audioNote = ' The voice recording is saved in Recordings but is not yet attached to this visit; it attaches when the assigned agent opens the visit in this browser tab.' }
+        if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ } }
       }
-      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}. Ticket #${visit.ticket?.number ?? '—'}.${audioNote}` } })
+      navigate('/walkins', { replace: true })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import date, datetime
@@ -17,10 +18,11 @@ from .db import many, one
 from .errors import fail
 from .routes import audit
 from .security import Workspace, administrator, owned_conversation, workspace
-from .assignment import next_daily_ticket
-from app.zoho import zoho
+from .assignment import least_loaded_salesperson, next_daily_ticket
+from app.zoho import set_member_id, set_organisation_id, zoho
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
+log = logging.getLogger(__name__)
 Purpose = Literal["Product enquiry", "New business enquiry", "Product demonstration", "Pricing or quotation request", "Existing order enquiry", "Service or support request", "Meeting with a specific employee", "Follow-up meeting", "Other"]
 Status = Literal["Registered", "Waiting for Assignment", "Assigned", "Waiting for Sales Agent", "In Discussion", "Requirements Captured", "Follow-up Required", "Converted to Enquiry", "Completed", "Cancelled"]
 Availability = Literal["Available", "Busy", "Unavailable"]
@@ -145,6 +147,25 @@ class AvailabilityChange(BaseModel):
 class RecordingLink(BaseModel):
     model_config = ConfigDict(extra="forbid")
     conversationId: UUID
+
+
+async def ensure_walkin_books_contact(body: WalkinCreate, context: Workspace):
+    """Register a walk-in in the selected Books organization when available."""
+    set_organisation_id(str(context.id))
+    set_member_id(str(context.user.id))
+    status = zoho.status()
+    books_org = status.get("organization_id")
+    if not status.get("connected") or not books_org:
+        return None
+    contact = await zoho.ensure_books_contact(
+        books_org,
+        name=body.customerName,
+        email=body.email,
+        phone=body.mobileNumber,
+    )
+    if not isinstance(contact, dict):
+        return None
+    return contact.get("contact_id") or contact.get("id")
 
 
 SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name
@@ -292,8 +313,8 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             visible = await visit(connection, context, prior["id"])
             response.status_code = 200
             return serialize_visit(visible)
-        salesperson = None
-        assigned = None
+        salesperson = await least_loaded_salesperson(connection, context.id)
+        assigned = salesperson["user_id"] if salesperson else None
         status = "Assigned" if assigned else "Waiting for Assignment"
         row = await one(connection, """insert into public.guruconnect_walkin_visits
             (organisation_id,registered_by,assigned_agent_id,assigned_at,idempotency_key,payload_hash,payload,customer_name,mobile_number,purpose,status)
@@ -316,14 +337,10 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         ticket_hash = hashlib.sha256(json.dumps(ticket_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
         books_contact_id = None
         try:
-            zoho_status = zoho.status()
-            books_org = zoho_status.get("organization_id")
-            if books_org and (body.email or body.mobileNumber):
-                books_contact = await zoho.ensure_books_contact(books_org, name=body.customerName, email=body.email, phone=body.mobileNumber)
-                books_contact_id = books_contact.get("contact_id") or books_contact.get("contact_id") or books_contact.get("id")
+            books_contact_id = await ensure_walkin_books_contact(body, context)
         except Exception:
             # Visitor registration remains available when Books is disconnected or temporarily unavailable.
-            books_contact_id = None
+            log.warning("Unable to register walk-in %s as a Zoho Books contact", row["id"], exc_info=True)
         enquiry = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
             values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
