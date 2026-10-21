@@ -1,4 +1,5 @@
 from datetime import timedelta
+import logging
 import asyncio, httpx
 from contextvars import ContextVar
 from sqlalchemy import text
@@ -7,6 +8,7 @@ from .settings import settings
 
 _organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
 _member_id: ContextVar[str | None] = ContextVar('zoho_member_id', default=None)
+log = logging.getLogger(__name__)
 
 def set_organisation_id(value: str | None):
     _organisation_id.set(value)
@@ -97,13 +99,21 @@ class ZohoClient:
                 response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
         response.raise_for_status(); return response.json() if response.content else {'ok': True}
     async def smoke_test(self):
-        result=await self.request('GET','/books/v3/organizations'); orgs=result.get('organizations',result.get('data',[]));
+        result=await self.request('GET','/books/v3/organizations')
+        raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
+        if isinstance(raw_orgs, dict): raw_orgs = [raw_orgs]
+        orgs = []
+        for org in raw_orgs if isinstance(raw_orgs, list) else []:
+            if not isinstance(org, dict): continue
+            org_id = org.get('organization_id') or org.get('id')
+            if org_id: orgs.append({**org, 'organization_id': str(org_id), 'organization_name': org.get('organization_name') or org.get('name') or org.get('org_name') or str(org_id)})
         current=self._connection() or {}; selected=current.get('organization_id')
         ids={str(org.get('organization_id')) for org in orgs if org.get('organization_id')}
         if len(orgs)==1:
             selected=orgs[0].get('organization_id'); self.select_organization(selected)
         elif selected not in ids:
             selected=None
+        log.info('zoho_books_organizations count=%s selected=%s', len(orgs), bool(selected))
         return {'organizations':orgs,'organization_id':selected}
     def select_organization(self, organization_id):
         self._member()
