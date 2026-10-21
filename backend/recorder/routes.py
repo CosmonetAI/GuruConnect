@@ -163,6 +163,69 @@ async def revoke_member(user_id: UUID, request: Request, context: Workspace = De
     return {"revoked": True}
 
 
+@router.delete("/team/{user_id}/delete")
+async def delete_member(user_id: UUID, request: Request, context: Workspace = Depends(administrator)):
+    """Permanently remove a non-owner member and member-scoped data."""
+    if context.role != "owner":
+        fail("membership_change_denied", 403)
+    settings = request.app.state.settings
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        fail("auth_not_configured", 503, "Supabase admin authentication is not configured")
+    if user_id == context.user.id:
+        fail("membership_change_denied", 403, "The workspace owner cannot delete their own account here")
+
+    owner_id = context.user.id
+    async with request.app.state.db.connection() as connection:
+        member = await one(connection, "select role from members where organisation_id=%s and user_id=%s for update", (context.id, user_id))
+        if not member:
+            fail("member_not_found", 404)
+        if member["role"] == "owner":
+            fail("membership_change_denied", 403)
+        if await one(connection, "select 1 from members where user_id=%s and organisation_id<>%s limit 1", (user_id, context.id)):
+            fail("member_in_other_workspace", 409, "Remove this member from their other workspaces before deleting their Auth account")
+        if await one(connection, "select 1 from conversations where organisation_id=%s and owner_id=%s limit 1", (context.id, user_id)):
+            fail("member_has_workspace_data", 409, "Move or remove this member's conversations before deleting the account")
+
+        # Delete the member's Zoho credentials and all Zoho pipeline cache data.
+        await connection.execute("delete from zoho_pipeline_records where organisation_id=%s and member_id=%s", (context.id, user_id))
+        await connection.execute("delete from zoho_pipeline_sync where organisation_id=%s and member_id=%s", (context.id, user_id))
+        await connection.execute("delete from zoho_connections where organisation_id=%s and member_id=%s", (context.id, user_id))
+
+        # Preserve ordinary workspace history under the owner while removing all
+        # foreign-key references that would block Auth account deletion.
+        await connection.execute("delete from recording_leases where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await connection.execute("delete from guruconnect_walkin_agents where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await connection.execute("update guruconnect_walkin_visits set registered_by=%s where organisation_id=%s and registered_by=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_walkin_visits set assigned_agent_id=null, assigned_at=null, status='Waiting for Assignment' where organisation_id=%s and assigned_agent_id=%s", (context.id, user_id))
+        await connection.execute("update guruconnect_walkin_history set actor_id=%s where organisation_id=%s and actor_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_walkin_recordings set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_enquiries set owner_id=%s, assigned_to=case when assigned_to=%s then %s else assigned_to end where organisation_id=%s and owner_id=%s", (owner_id, user_id, owner_id, context.id, user_id))
+        await connection.execute("update customers set owner_id=%s, member_id=case when member_id=%s then %s else member_id end where organisation_id=%s and owner_id=%s", (owner_id, user_id, owner_id, context.id, user_id))
+        await connection.execute("update chat_sessions set member_id=%s where organisation_id=%s and member_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update conversations set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update recorder_private.conversation_requests set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update speaker_assignments set assigned_by=%s where assigned_by=%s", (owner_id, user_id))
+        await connection.execute("update transcript_revisions set actor_id=%s where actor_id=%s", (owner_id, user_id))
+        await connection.execute("update comparisons set requested_by=%s where requested_by=%s", (owner_id, user_id))
+        await connection.execute("update audit_events set actor_id=%s where organisation_id=%s and actor_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update invites set invited_by=%s where organisation_id=%s and invited_by=%s", (owner_id, context.id, user_id))
+        await connection.execute("update invites set accepted_by=null where organisation_id=%s and accepted_by=%s", (context.id, user_id))
+        await connection.execute("delete from members where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await audit(connection, context, "membership.deleted", {"user_id": str(user_id)})
+
+    key = settings.supabase_service_role_key.get_secret_value()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.delete(f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{user_id}", headers={"Authorization": f"Bearer {key}", "apikey": key})
+        if response.status_code not in {200, 204, 404}:
+            log.error("supabase_user_delete_failed request_id=%s status=%s user_id=%s", getattr(request.state, "request_id", "unavailable"), response.status_code, user_id)
+            fail("member_deletion_incomplete", 503, "Workspace data was removed, but the Auth account could not be deleted")
+    except httpx.HTTPError:
+        log.error("supabase_user_delete_transport_failed request_id=%s user_id=%s", getattr(request.state, "request_id", "unavailable"), user_id)
+        fail("member_deletion_incomplete", 503, "Workspace data was removed, but the Auth account could not be deleted")
+    return {"deleted": True, "user_id": str(user_id)}
+
+
 @router.get("/customers")
 async def customers(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), limit: int = Query(default=50, ge=1, le=100), cursor: UUID | None = None):
     async with request.app.state.db.connection() as connection:

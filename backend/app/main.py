@@ -136,6 +136,10 @@ class VoiceSessionIn(BaseModel):
     email: str | None = None
 class VoiceSessionLinkIn(BaseModel):
     conversation_id: str = Field(min_length=8)
+class VoiceSessionNoteIn(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+class VoiceSessionContextIn(BaseModel):
+    product_requirements: list[dict] = Field(default_factory=list, max_length=25)
 def _db_http_error(error: Exception):
     detail = 'Database unavailable. Configure Render DATABASE_URL with the Supabase IPv4 pooler URI and redeploy.'
     if isinstance(error, OperationalError):
@@ -187,7 +191,7 @@ async def open_voice_session(payload: VoiceSessionIn, request: Request):
                 customer = db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and normalized_email=cast(:email as text) limit 1"), {'org': org, 'email': email}).first() if org else None
             if customer:
                 customer = row_dict(customer)
-                session = db.execute(text("select * from chat_sessions where organisation_id=cast(:org as uuid) and customer_id=:customer and ((cast(:phone as text) is not null and identity_phone=cast(:phone as text)) or (cast(:phone as text) is null and identity_email=cast(:email as text))) order by updated_at desc limit 1"), {'org': org, 'customer': customer['id'], 'phone': phone, 'email': email}).first()
+                session = db.execute(text("select * from chat_sessions where organisation_id=cast(:org as uuid) and customer_id=:customer and cast(:phone as text) is not null and identity_phone=cast(:phone as text) order by updated_at desc limit 1"), {'org': org, 'customer': customer['id'], 'phone': phone}).first()
             else:
                 customer = db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,owner_id,member_id) values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid),cast(:member as uuid)) returning *"), {'name': payload.name.strip(), 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
                 customer = row_dict(customer)
@@ -209,7 +213,8 @@ async def voice_session_history(session_id: str, request: Request):
             if not session: raise HTTPException(404, 'Voice session not found')
             messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session_id}).all()]
             chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session_id}).all()]
-            return {'session': row_dict(session), 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
+            session = row_dict(session)
+            return {'session': session, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
     except HTTPException: raise
     except Exception as e: raise HTTPException(500, f'Unable to load voice session history: {e}')
 
@@ -221,6 +226,59 @@ async def link_voice_conversation(session_id: str, payload: VoiceSessionLinkIn, 
             db.commit()
         return {'linked': True, 'session_id': session_id, 'conversation_id': payload.conversation_id}
     except Exception as e: raise HTTPException(500, f'Unable to link saved conversation: {e}')
+
+@app.get('/api/voice-sessions/{session_id}/notes')
+async def voice_session_notes(session_id: str, request: Request):
+    try:
+        with require_db() as db:
+            row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
+            if not row: raise HTTPException(404, 'Voice session not found')
+            notes = db.execute(text("""select id,content,created_at,author_id,session_id
+              from voice_session_notes where organisation_id=cast(:org as uuid) and customer_id=:customer
+              order by created_at asc"""), {'org': get_organisation_id(), 'customer': row['customer_id']}).all()
+            return {'notes': [row_dict(note) for note in notes]}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(500, f'Unable to load voice session notes: {e}')
+
+@app.post('/api/voice-sessions/{session_id}/notes')
+async def add_voice_session_note(session_id: str, payload: VoiceSessionNoteIn, request: Request):
+    try:
+        with require_db() as db:
+            row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
+            if not row: raise HTTPException(404, 'Voice session not found')
+            note = db.execute(text("""insert into voice_session_notes
+              (organisation_id,customer_id,session_id,author_id,content)
+              values(cast(:org as uuid),:customer,:session,cast(:author as uuid),:content)
+              returning id,content,created_at,author_id,session_id"""), {'org': get_organisation_id(), 'customer': row['customer_id'], 'session': session_id, 'author': request.headers.get('x-user-id'), 'content': payload.content.strip()}).first()
+            db.commit()
+            return {'note': row_dict(note)}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(500, f'Unable to save voice session note: {e}')
+
+@app.get('/api/voice-sessions/{session_id}/context')
+async def voice_session_context(session_id: str, request: Request):
+    try:
+        with require_db() as db:
+            row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
+            if not row: raise HTTPException(404, 'Voice session not found')
+            context = row['context'] or {}
+            return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else []}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(500, f'Unable to load voice session context: {e}')
+
+@app.put('/api/voice-sessions/{session_id}/context')
+async def update_voice_session_context(session_id: str, payload: VoiceSessionContextIn, request: Request):
+    try:
+        with require_db() as db:
+            row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
+            if not row: raise HTTPException(404, 'Voice session not found')
+            context = row['context'] if isinstance(row['context'], dict) else {}
+            context['product_requirements'] = payload.product_requirements
+            db.execute(text("update chat_sessions set context=cast(:context as jsonb),updated_at=now() where id=:session"), {'context': json.dumps(context), 'session': session_id})
+            db.commit()
+            return {'product_requirements': payload.product_requirements}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(500, f'Unable to save voice session context: {e}')
 
 @app.post('/api/voice-sessions/{session_id}/chunks')
 async def save_voice_chunk(session_id: str, request: Request, chunk_index: int = 0, duration_seconds: float = 0, mime_type: str = 'audio/webm'):
@@ -600,6 +658,7 @@ async def create_invoice(payload: dict):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'):
             raise HTTPException(422, 'Customer is required')
+        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')

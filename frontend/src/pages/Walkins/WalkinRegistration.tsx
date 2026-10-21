@@ -14,6 +14,8 @@ const registrationSchema = z.object({
   mobileNumber: z.string().trim().regex(/^\+?[0-9().\-\s]{7,20}$/, 'Enter a valid mobile number.').refine((value) => value.replace(/\D/g, '').length >= 7 && value.replace(/\D/g, '').length <= 15, 'Enter a valid mobile number.'),
   email: z.string().trim().refine((value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
   companyName: z.string().trim().max(150, 'Company name is too long.'),
+  projectName: z.string().trim().max(150, 'Project or site is too long.'),
+  preferredContactMethod: z.string().trim().max(80, 'Preferred contact is too long.'),
 })
 
 type FormValues = z.infer<typeof registrationSchema>
@@ -24,6 +26,8 @@ const initialValues: FormValues = {
   mobileNumber: '',
   email: '',
   companyName: '',
+  projectName: '',
+  preferredContactMethod: '',
 }
 
 export default function WalkinRegistration() {
@@ -43,8 +47,6 @@ export default function WalkinRegistration() {
     setSaveKey(crypto.randomUUID())
     setErrors((previous) => ({ ...previous, [field]: undefined }))
   }
-
-  const validateField = (field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -70,6 +72,8 @@ export default function WalkinRegistration() {
       mobileNumber: values.mobileNumber,
       email: values.email || '',
       companyName: values.companyName || '',
+      projectName: values.projectName || '',
+      preferredContactMethod: values.preferredContactMethod || '',
       // Provide defaults for fields not collected on the registration form
       purpose: 'Other',
       purposeDescription: '',
@@ -84,15 +88,11 @@ export default function WalkinRegistration() {
       const recordingId = voiceConversation.current
       let audioNote = ''
       if (recordingId) {
-        // Only the assigned agent may link audio; reception keeps the recording staged until then.
         let linked = false
         try { await attachWalkinRecording(workspace.id, visit.id, recordingId); linked = !isWalkinDemoMode() } catch { linked = false }
-        if (!linked) {
-          try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* staging is best-effort */ }
-          audioNote = ' The voice recording is saved in Recordings but is not yet attached to this visit; it attaches when the assigned agent opens the visit in this browser tab.'
-        }
+        if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ }; audioNote = ' The voice recording is saved in Recordings but is not yet attached to this visit; it attaches when the assigned agent opens the visit in this browser tab.' }
       }
-      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}. Ticket #${visit.ticket?.number ?? '—'}. Tracking token: ${visit.ticket?.token ?? 'not available'}${audioNote}` } })
+      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}. Ticket #${visit.ticket?.number ?? '—'}.${audioNote}` } })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {
@@ -110,19 +110,24 @@ export default function WalkinRegistration() {
           <p>Capture just enough to direct the customer to the right person.</p>
         </div>
       </header>
-      {isWalkinDemoMode() && <div className="walkin-notice">Demo mode — records are saved to this browser. Check-in time and visit number are generated when you save.</div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
-      <VoiceAssistPanel customerName={form.customerName} values={form} validate={validateField} onApply={(field, value) => update(field, value)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id }} onBusyChange={setVoiceBusy} />
+      <VoiceAssistPanel customerName={form.customerName} values={form} validate={(field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null} onApply={(field, value) => update(field as keyof FormValues, value as never)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id }} onBusyChange={setVoiceBusy} />
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
           <div className="walkin-section-heading"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div>
           <div className="walkin-form-grid">
-            <Field label="Customer full name" name="customerName" ai={aiFields.includes('customerName')} required error={errors.customerName}><input id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Customer name" /></Field>
-            <Field label="Mobile number" name="mobileNumber" ai={aiFields.includes('mobileNumber')} required error={errors.mobileNumber}><input id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="+91 98765 43210" /></Field>
-            <Field label="Company or organization" name="companyName" ai={aiFields.includes('companyName')} error={errors.companyName}><input id="companyName" autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', event.target.value)} placeholder="Optional" /></Field>
-            <Field label="Email address" name="email" ai={aiFields.includes('email')} error={errors.email}><input id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="name@company.com" /></Field>
+            <Field label="Name (customer full name)" name="customerName" required error={errors.customerName} ai={aiFields.includes('customerName')}><input id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
+            <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber} ai={aiFields.includes('mobileNumber')}><input id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
+            <Field label="Email" name="email" error={errors.email}><input id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="Not provided" /></Field>
+            <Field label="Source" name="source"><input id="source" value="Retail walk-in" readOnly /></Field>
+            <Field label="Branch" name="branch"><input id="branch" value="Walk-in" readOnly /></Field>
+            <Field label="Assigned executive" name="assignedExecutive"><input id="assignedExecutive" value="Unassigned" readOnly /></Field>
+            <Field label="Customer type" name="customerType"><input id="customerType" value="Retail" readOnly /></Field>
+            <Field label="Company" name="companyName" error={errors.companyName}><input id="companyName" autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', event.target.value)} placeholder="Not provided" /></Field>
+            <Field label="Project / site" name="projectName" error={errors.projectName}><input id="projectName" value={form.projectName} onChange={(event) => update('projectName', event.target.value)} placeholder="Not provided" /></Field>
+            <Field label="Preferred contact" name="preferredContactMethod" error={errors.preferredContactMethod}><input id="preferredContactMethod" value={form.preferredContactMethod} onChange={(event) => update('preferredContactMethod', event.target.value)} placeholder="Not provided" /></Field>
           </div>
         </section>
 

@@ -45,3 +45,4 @@
 @media (max-width: 640px) {
   .enquiries-grid { grid-template-columns: 1fr }
 }
+.enquiry-card-actions { display: flex; gap: 10px; flex-wrap: wrap; }

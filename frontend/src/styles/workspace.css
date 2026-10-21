@@ -107,6 +107,10 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .settings-account-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 22px; }
 .settings-account-actions button { display: inline-flex; align-items: center; gap: 8px; }
 .team-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #e0e8f4; padding: 14px 0; }
+.team-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.team-delete-button { border: 1px solid #f0b8b1; color: #b42318; background: #fff7f6; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.team-delete-button:hover:not(:disabled) { background: #ffebe9; }
+.team-delete-button:disabled { cursor: not-allowed; opacity: .55; }
 .team-member-info { display: grid; gap: 3px; min-width: 0; color: #17365f; }
 .team-member-info strong { font-weight: 650; }
 .team-member-info small { overflow: hidden; color: #7890ad; text-overflow: ellipsis; white-space: nowrap; }
@@ -120,7 +124,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .team-pill-status-revoked, .team-pill-status-inactive { color: #b42318; background: #ffebe9; border-color: #f7c6c2; }
 .team-pill-status-invited { color: #9a6700; background: #fff7db; border-color: #f5dc91; }
 .team-pill-status-pending, .team-pill-status-not_active { color: #667085; background: #f2f4f7; border-color: #dfe3e8; }
-@media (max-width: 560px) { .team-row { align-items: flex-start; flex-direction: column; }.team-pills { justify-content: flex-start; } }
+@media (max-width: 560px) { .team-row { align-items: flex-start; flex-direction: column; }.team-row-actions { justify-content: flex-start; width: 100%; }.team-pills { justify-content: flex-start; } }
 .skip-navigation { position: fixed; top: -100px; left: 16px; padding: 12px; border-radius: 8px; background: white; color: #2563eb; z-index: 1100; }
 .skip-navigation:focus { top: 16px; }
 .app-content:focus { outline: none; }

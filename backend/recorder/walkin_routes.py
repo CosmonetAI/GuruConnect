@@ -17,7 +17,7 @@ from .db import many, one
 from .errors import fail
 from .routes import audit
 from .security import Workspace, administrator, owned_conversation, workspace
-from .assignment import least_loaded_salesperson, next_daily_ticket
+from .assignment import next_daily_ticket
 from app.zoho import zoho
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
@@ -50,6 +50,8 @@ class WalkinCreate(BaseModel):
     mobileNumber: Annotated[str, Field(min_length=7, max_length=20)]
     email: Annotated[str, Field(max_length=320)] = ""
     companyName: Annotated[str, Field(max_length=150)] = ""
+    projectName: Annotated[str, Field(max_length=150)] = ""
+    preferredContactMethod: Annotated[str, Field(max_length=80)] = ""
     purpose: Purpose = "Other"
     purposeDescription: Annotated[str, Field(max_length=2000)] = ""
     productOrService: Text200 = ""
@@ -290,8 +292,8 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             visible = await visit(connection, context, prior["id"])
             response.status_code = 200
             return serialize_visit(visible)
-        salesperson = await least_loaded_salesperson(connection, context.id)
-        assigned = salesperson["user_id"] if salesperson else None
+        salesperson = None
+        assigned = None
         status = "Assigned" if assigned else "Waiting for Assignment"
         row = await one(connection, """insert into public.guruconnect_walkin_visits
             (organisation_id,registered_by,assigned_agent_id,assigned_at,idempotency_key,payload_hash,payload,customer_name,mobile_number,purpose,status)
@@ -307,6 +309,7 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             "assignedExecutive": salesperson["display_name"] if salesperson else "Unassigned",
             "product": body.productOrService, "quantity": 1, "unit": "nos", "notes": body.internalNotes or body.purposeDescription,
             "sourceEventId": f"walkin:{row['id']}", "sourceWalkinId": str(row["id"]), "customerType": "Retail",
+            "company": body.companyName, "projectName": body.projectName, "preferredContactMethod": body.preferredContactMethod,
             "priority": "Normal"
         }
         ticket_payload["ticketNumber"] = daily_sequence

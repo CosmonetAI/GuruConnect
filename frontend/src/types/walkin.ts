@@ -41,6 +41,8 @@ export type WalkinVisit = {
   mobileNumber: string
   email: string
   companyName: string
+  projectName?: string
+  preferredContactMethod?: string
   purpose: WalkinPurpose
   purposeDescription: string
   productOrService: string
@@ -102,7 +104,7 @@ export type RegisterWalkinInput = Pick<
   | 'appointmentStatus'
   | 'appointmentReference'
   | 'internalNotes'
->
+> & Partial<Pick<WalkinVisit, 'projectName' | 'preferredContactMethod'>>
 
 export type WalkinFilters = {
   query?: string
