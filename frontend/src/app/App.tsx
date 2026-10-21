@@ -1,5 +1,5 @@
 import { lazy, Suspense, type FC, type ReactNode } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import AppLayout from '../layouts/AppLayout'
 import '../styles/forms.css'
 const Dashboard = lazy(() => import('../pages/Dashboard/Dashboard'))
@@ -85,7 +85,9 @@ export default function App() {
 
 function ScopedLayout() {
   const { user, workspace } = useOffice()
+  const location = useLocation()
   // Tear down pending page state when the security context changes. Async hooks
   // still check their identity tickets before accepting late responses.
+  if (workspace?.role === 'receptionist' && location.pathname !== '/settings' && !location.pathname.startsWith('/walkins')) return <Navigate to="/walkins" replace />
   return <AppLayout key={`${user?.id}:${workspace?.id}`} />
 }

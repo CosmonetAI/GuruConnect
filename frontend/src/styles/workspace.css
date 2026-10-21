@@ -104,6 +104,8 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .welcome-links { display: flex; flex-wrap: wrap; gap: 12px; }
 .welcome-links button { color: #2563eb; border: none; background: transparent; padding: 0; font-size: 12px; }
 .settings-form .button { justify-self: start; }
+.settings-account-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 22px; }
+.settings-account-actions button { display: inline-flex; align-items: center; gap: 8px; }
 .team-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #e0e8f4; padding: 14px 0; }
 .team-member-info { display: grid; gap: 3px; min-width: 0; color: #17365f; }
 .team-member-info strong { font-weight: 650; }
