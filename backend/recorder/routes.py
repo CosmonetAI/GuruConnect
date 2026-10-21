@@ -277,7 +277,7 @@ async def customer_history(customer_id: UUID, request: Request, context: Workspa
 @router.get("/conversations")
 async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: datetime | None = None):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select * from conversations where organisation_id=%s and deleted_at is null and (%s or owner_id=%s) and (customer_name_snapshot ilike %s or title ilike %s) and (%s::text is null or capture_state=%s or final_state=%s) and (%s::timestamptz is null or created_at>=%s) and (%s::timestamptz is null or created_at<=%s) and (%s::timestamptz is null or created_at<%s) order by created_at desc,id desc limit %s", (context.id, context.admin, context.user.id, "%"+q+"%", "%"+q+"%", state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
+        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and (%s or c.owner_id=%s) and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s) order by c.created_at desc,c.id desc limit %s", (context.id, context.admin, context.user.id, "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
     return {"items": rows[:limit], "next_cursor": rows[limit-1]["created_at"].isoformat() if len(rows)>limit else None}
 
 
@@ -337,7 +337,12 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
             if not customer:
                 fail("customer_not_found", 404)
         else:
-            customer = await one(connection, "insert into customers(organisation_id,owner_id,name,is_unnamed) values(%s,%s,%s,%s) returning *", (context.id, context.user.id, "Name not provided" if body.is_unnamed else body.customer_name, body.is_unnamed))
+            phone = (body.phone or '').strip() or None
+            email = (body.email or '').strip().lower() or None
+            normalized_phone = re.sub(r'\D', '', phone or '')[-15:] or None
+            customer = await one(connection, "select * from customers where organisation_id=%s and owner_id=%s and deleted_at is null and ((%s is not null and right(regexp_replace(coalesce(normalized_phone,''),'\\D','','g'),10)=right(regexp_replace(%s,'\\D','','g'),10)) or (%s is not null and normalized_email=%s)) limit 1", (context.id, context.user.id, normalized_phone, normalized_phone, email, email))
+            if not customer:
+                customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, "Name not provided" if body.is_unnamed else body.customer_name, email, phone, email, normalized_phone, body.is_unnamed))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))
         row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed) values(%s,%s,%s,%s,%s,%s,%s,%s,true) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint))
         run = None if body.audio_only else await create_run(connection, context, row, engine_id, "production", "initial")

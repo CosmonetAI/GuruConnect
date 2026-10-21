@@ -1,6 +1,6 @@
 import workletUrl from './capture.worklet.ts?worker&url';
 import { apiBase, localMode } from '../services/officeApi';
-import { finishRecovery, listRecoveries, pending, putChunk, removeChunk, saveRecovery, scopeKey, type ChunkMeta, type Recovery, type Scope } from './outbox';
+import { discardRecovery, finishRecovery, listRecoveries, pending, putChunk, removeChunk, saveRecovery, scopeKey, type ChunkMeta, type Recovery, type Scope } from './outbox';
 export { listRecoveries } from './outbox';
 export type { Scope, ChunkMeta } from './outbox';
 export interface Manifest { part_id: string; expected_chunks: number; total_samples: number; lease_token: string }
@@ -122,10 +122,13 @@ export class RecorderSession {
   private closing = false;
   private disposed = false;
   private finalized = false;
+  private listeners = new Set<(state: CaptureState) => void>();
   constructor(private readonly options: RecordingOptions) {
     this.recovery = { key: `${scopeKey(options.scope)}/${options.conversationId}`, scope: scopeKey(options.scope), conversationId: options.conversationId, partId: options.partId, leaseToken: options.leaseToken, totalSamples: 0, chunkCount: 0, stopped: false, updatedAt: new Date().toISOString() };
   }
-  private update(values: Partial<CaptureState>) { this.state = { ...this.state, ...values }; this.options.onState({ ...this.state }); }
+  private update(values: Partial<CaptureState>) { this.state = { ...this.state, ...values }; const snapshot = { ...this.state }; this.options.onState(snapshot); this.listeners.forEach(listener => listener(snapshot)); }
+  snapshot() { return { ...this.state }; }
+  subscribe(listener: (state: CaptureState) => void) { this.listeners.add(listener); listener(this.snapshot()); return () => this.listeners.delete(listener); }
   private unload = (event: BeforeUnloadEvent) => { if (this.state.capture === 'recording' || this.state.pendingChunks) { event.preventDefault(); event.returnValue = ''; } };
   private async lock() {
     if (!navigator.locks) throw new Error('This browser cannot safely coordinate recording tabs. Use a current browser.');
@@ -230,6 +233,16 @@ export class RecorderSession {
       await this.options.hooks.finalize({ part_id: this.recovery.partId, expected_chunks: this.recovery.chunkCount, total_samples: this.recovery.totalSamples, lease_token: this.recovery.leaseToken });
       await finishRecovery(this.recovery.key); await this.cleanup(); this.finalized = true; this.update({ saving: false, error: undefined, samples: this.recovery.totalSamples, elapsedSeconds: this.recovery.totalSamples / 16000 });
     } catch (error) { await this.cleanup(); this.update({ saving: false, error: error instanceof Error ? error.message : 'Finalization needs recovery' }); throw error; }
+  }
+  async discard() {
+    if (this.finalized) return;
+    this.closing = true;
+    await this.command('stop').catch(() => undefined);
+    await this.persisting.catch(() => undefined);
+    await this.cleanup();
+    await discardRecovery(this.options.scope, this.options.conversationId).catch(() => undefined);
+    this.finalized = true;
+    this.update({ capture: 'stopped', saving: false, level: 0, error: undefined });
   }
   private async interrupt(reason: string) {
     if (this.closing) return; this.closing = true; this.update({ capture: 'interrupted', error: reason, level: 0 });

@@ -483,7 +483,7 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
               description="Capture context now; review it later."
               step="02"
             />
-            <ConversationRecorder customerName={form.customerName.trim().length >= 2 ? form.customerName : ''} title="Sales enquiry conversation" initialConversationId={conversationId} onConversationChange={changeConversation} onBusyChange={setRecordingBusy} onSaved={audioSaved} />
+            <ConversationRecorder customerName={form.customerName.trim().length >= 2 ? form.customerName : ''} customerPhone={form.phone} customerEmail={form.email} title="Sales enquiry conversation" initialConversationId={conversationId} onConversationChange={changeConversation} onBusyChange={setRecordingBusy} onSaved={audioSaved} />
           </section>
 
           <section className="enquiry-card" aria-labelledby="products-section-title">

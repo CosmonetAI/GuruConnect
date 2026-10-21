@@ -5,6 +5,8 @@ import './Walkins.css'
 
 export interface VoiceAssistPanelProps {
   customerName: string
+  customerPhone?: string
+  customerEmail?: string
   onConversationChange: (id: string | null) => void
   onBusyChange: (busy: boolean) => void
   values?: Record<VisitorField, string>
@@ -13,7 +15,7 @@ export interface VoiceAssistPanelProps {
   onAiFieldsChange?: (fields: VisitorField[]) => void
 }
 
-export default function VoiceAssistPanel({ customerName, onConversationChange, onBusyChange }: VoiceAssistPanelProps) {
+export default function VoiceAssistPanel({ customerName, customerPhone, customerEmail, onConversationChange, onBusyChange }: VoiceAssistPanelProps) {
   return (
     <section className="walkin-card voice-assist voice-assist-simple" aria-labelledby="voice-assist-title">
       <div className="walkin-section-heading">
@@ -26,7 +28,7 @@ export default function VoiceAssistPanel({ customerName, onConversationChange, o
       <div className="voice-simple-recorder">
         <Mic2 size={30} aria-hidden />
         <ConversationRecorder
-          customerName={customerName.trim() || 'Walk-in visitor'}
+          customerName={customerName.trim() || 'Walk-in visitor'} customerPhone={customerPhone} customerEmail={customerEmail}
           title="Walk-in registration"
           onConversationChange={onConversationChange}
           onBusyChange={onBusyChange}

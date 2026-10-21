@@ -132,7 +132,7 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await valid_lease(connection, context, conversation_id, body.lease_token)
     data = await request.app.state.storage.read(row["object_path"], request.app.state.settings.upload_max_bytes)
     try:
-        # Microphone capture is persisted in 30-second WAV chunks.
+        # The final WAV chunk may be shorter than the page's configured chunk duration.
         info = validate_wav(data, expected_samples=body.sample_count, max_samples=3 * 60 * 16000)
     except ValueError:
         fail("invalid_wav_content", 422)

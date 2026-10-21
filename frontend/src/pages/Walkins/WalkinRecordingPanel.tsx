@@ -9,7 +9,7 @@ import { attachWalkinRecording, isWalkinDemoMode, walkinRecordingsPath, type Wal
 import WalkinPagination from './WalkinPagination'
 import '../Enquiries/NewEnquiry.css'
 
-export default function WalkinRecordingPanel({ visitId, customerName, disabled = false, canRecord = true }: { visitId: string; customerName: string; disabled?: boolean; canRecord?: boolean }) {
+export default function WalkinRecordingPanel({ visitId, customerName, customerPhone, customerEmail, disabled = false, canRecord = true }: { visitId: string; customerName: string; customerPhone?: string; customerEmail?: string; disabled?: boolean; canRecord?: boolean }) {
   const { user, workspace, setCaptureBusy } = useOffice()
   const key = `guruconnect:walkin-audio:${user?.id}:${workspace?.id}:${visitId}`
   const [currentId, setCurrentId] = useState<string | null>(() => { try { return sessionStorage.getItem(key) } catch { return null } })
@@ -33,7 +33,7 @@ export default function WalkinRecordingPanel({ visitId, customerName, disabled =
   const recordings = result.data?.items.filter(recording => !isWalkinDemoMode() || recording.title === `Walk-in visit ${visitId}`) ?? []
   return <section className="walkin-card new-enquiry-page walkin-connected-audio"><div className="walkin-card-heading"><div><h2>Conversation audio & English transcript</h2><p>Record or upload consented audio. The GuruConnect worker saves playback, transcribes speech and translates non-English turns.</p></div></div>
     {(error || result.error) && <p className="flow-error" role="alert">{error || result.error}</p>}
-    {disabled ? <p>This visit is closed. Saved recordings remain available below.</p> : !canRecord ? <p>The assigned sales agent can record this conversation. Authorized saved recordings remain available below.</p> : <ConversationRecorder customerName={customerName} title={`Walk-in visit ${visitId}`} initialConversationId={currentId} onConversationChange={attach} onBusyChange={setBusy} onSaved={saved} />}
+    {disabled ? <p>This visit is closed. Saved recordings remain available below.</p> : !canRecord ? <p>The assigned sales agent can record this conversation. Authorized saved recordings remain available below.</p> : <ConversationRecorder customerName={customerName} customerPhone={customerPhone} customerEmail={customerEmail} title={`Walk-in visit ${visitId}`} initialConversationId={currentId} onConversationChange={attach} onBusyChange={setBusy} onSaved={saved} />}
     <div className="walkin-audio-links">{result.loading && <p role="status">Loading saved visit recordings…</p>}{recordings.map(recording => <button type="button" key={recording.id} disabled={busy} onClick={() => setSelected(recording.id)}>Review recording · {new Date(recording.created_at).toLocaleString()}</button>)}</div>
     {!isWalkinDemoMode() && <WalkinPagination page={page} total={result.data?.total ?? 0} loading={result.loading || busy} onPage={setPage} />}
     {selected && <ConversationTranscript conversationId={selected} />}

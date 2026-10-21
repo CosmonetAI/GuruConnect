@@ -230,6 +230,8 @@ export default function WalkinDetail() {
             key={visit.id}
             visitId={visit.id}
             customerName={visit.customerName}
+            customerPhone={visit.mobileNumber}
+            customerEmail={visit.email}
             disabled={!!closed}
             canRecord={canConvert}
           />

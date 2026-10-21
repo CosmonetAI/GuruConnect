@@ -32,6 +32,8 @@ class CustomerCreate(Input):
 class ConversationCreate(Input):
     customer_id: Id | None = None
     customer_name: Name | None = None
+    phone: str | None = Field(default=None, max_length=24)
+    email: str | None = Field(default=None, max_length=320)
     is_unnamed: bool = False
     title: str | None = Field(default=None, max_length=200)
     location: str | None = Field(default=None, max_length=200)

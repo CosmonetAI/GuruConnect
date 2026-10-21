@@ -112,7 +112,7 @@ export default function WalkinRegistration() {
       </header>
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
-      <VoiceAssistPanel customerName={form.customerName} values={form} validate={(field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null} onApply={(field, value) => update(field as keyof FormValues, value as never)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id }} onBusyChange={setVoiceBusy} />
+      <VoiceAssistPanel customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} values={form} validate={(field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null} onApply={(field, value) => update(field as keyof FormValues, value as never)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id }} onBusyChange={setVoiceBusy} />
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>

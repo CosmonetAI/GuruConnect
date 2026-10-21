@@ -11,3 +11,5 @@
 .connected-audio-recovery { margin-top: 12px; padding: 14px; background: #fff8e7; border: 1px solid #f2dfb3; border-radius: 8px; }
 .connected-audio-recovery p { margin: 6px 0 10px; }
 .connected-recorder .recorder-controls button:disabled { opacity: .55; cursor: not-allowed; }
+.recorder-trash-button { color: #fff !important; background: #c63f4a !important; border-color: #c63f4a !important; }
+.recorder-trash-button:hover:not(:disabled) { background: #a72d38 !important; border-color: #a72d38 !important; }

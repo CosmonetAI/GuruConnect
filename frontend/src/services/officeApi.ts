@@ -116,7 +116,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
   const conversation = (r: Record<string, unknown>) => {
     const production = Array.isArray(r.runs) ? (r.runs as Record<string, unknown>[]).find(v=>v.kind==='production') : undefined;
     const version = Array.isArray(r.versions) ? (r.versions as Record<string, unknown>[]).find(v=>v.id===r.active_version_id) : undefined;
-    return { ...r, ...translation(version ?? production ?? r), finalization_state: r.final_state ?? r.finalization_state ?? 'pending', active_transcript_version_id: r.active_version_id ?? r.active_transcript_version_id, engine_id: r.engine_id ?? production?.engine_id };
+    return { ...r, phone: r.phone ?? r.customer_phone, email: r.email ?? r.customer_email, ...translation(version ?? production ?? r), finalization_state: r.final_state ?? r.finalization_state ?? 'pending', active_transcript_version_id: r.active_version_id ?? r.active_transcript_version_id, engine_id: r.engine_id ?? production?.engine_id };
   };
   const run = (r: Record<string, unknown>) => ({...r, ...translation(r), model:r.model_version, covered_seconds:typeof r.coverage_samples==='number'?r.coverage_samples/16000:undefined});
   if (/\/transcript(?:\?|$)/.test(path)) { const version = row.version as Record<string, unknown> | null; return { ...row, ...translation(version ?? row), id:version?.id, version_id:version?.id, run_id:version?.run_id, status:version?.english_state, manual_review_required:!!(version?.provenance as Record<string, unknown>|undefined)?.manual_review_required, speaker_state:version?.speaker_state, covered_seconds:typeof version?.coverage_samples==='number'?version.coverage_samples/16000:undefined, turns:(row.turns as Record<string, unknown>[]||[]).map(t=>({...t,speaker_id:t.speaker_ref,is_uncertain:t.speaker_confidence==='uncertain'||t.speaker_confidence==='overlap'||t.attribution_state==='uncertain'||t.attribution_state==='unresolved'||!t.speaker_ref})), speaker_assignments:(row.speakers as Record<string, unknown>[]||[]).map(s=>({...s,speaker_id:s.speaker_ref,name:s.display_name})) }; }
@@ -133,6 +133,7 @@ export interface Workspace { id: string; name: string; role: Role; }
 export interface Customer { id: string; name: string; created_at: string; notes?: string; }
 export interface Conversation {
   id: string; customer_name_snapshot: string; salesperson_name_snapshot?: string; title?: string; location?: string;
+  phone?: string; email?: string; customer_id?: string;
   created_at: string; duration_seconds?: number; total_samples?: number; capture_state: string; upload_state: string;
   transcription_state: string; english_state?: string; speaker_state: string; finalization_state: string;
   source_language?: string; active_transcript_version_id?: string; engine_id?: string; owner_user_id?: string;

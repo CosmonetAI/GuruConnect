@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Upload } from 'lucide-react'
+import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Trash2, Upload } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
@@ -8,8 +8,13 @@ import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
 import '../../styles/recording.css'
 
+let persistentRecorder: RecorderSession | null = null
+let persistentConversationId: string | null = null
+
 export interface ConversationRecorderProps {
   customerName: string
+  customerPhone?: string
+  customerEmail?: string
   title?: string
   initialConversationId?: string | null
   onConversationChange: (id: string | null) => void
@@ -22,7 +27,7 @@ const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, chunkSeconds }: ConversationRecorderProps & { compact?: boolean }) {
+export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, chunkSeconds }: ConversationRecorderProps & { compact?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -44,6 +49,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const mounted = useRef(false)
   const generation = useRef(0)
   const active = useRef<RecorderSession | null>(null)
+  const persistentSubscription = useRef<(() => void) | null>(null)
   const abort = useRef<AbortController | null>(null)
   const operationRef = useRef(false)
   const idRef = useRef<string | null>(initialConversationId || null)
@@ -78,9 +84,12 @@ export default function ConversationRecorder({ customerName, title, initialConve
   }
   useEffect(() => {
     mounted.current = true
+    if (persistentRecorder && (!initialConversationId || persistentConversationId === initialConversationId)) {
+      active.current = persistentRecorder; idRef.current = persistentConversationId; setConversationId(persistentConversationId); persistentSubscription.current = persistentRecorder.subscribe(state => { if (mounted.current) setCapture(state) })
+    }
     return () => {
       mounted.current = false; generation.current++
-      abort.current?.abort(); disposeCapture()
+      persistentSubscription.current?.(); persistentSubscription.current = null
       callbacks.current.onBusyChange?.(false)
     }
   }, [])
@@ -105,7 +114,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
       setPolicy({ engineId, ready: localMode || (!!engineId && connections.items.some(item => item.engine_id === engineId && item.enabled && item.state === 'connected')) })
       setRecoveries(rows)
     }).catch(err => { if (current) { setPolicy(null); setError(message(err)) } }).finally(() => { if (current) setPolicyLoading(false) })
-    return () => { current = false; controller.abort(); generation.current++; abort.current?.abort(); disposeCapture() }
+    return () => { current = false; controller.abort(); generation.current++ }
   }, [user?.id, workspace?.id])
   useEffect(() => {
     if (!initialConversationId || !workspace || !user) return
@@ -118,17 +127,8 @@ export default function ConversationRecorder({ customerName, title, initialConve
     }).catch(err => { if (!controller.signal.aborted && mounted.current) setError(message(err)) })
     return () => controller.abort()
   }, [initialConversationId, user?.id, workspace?.id])
-  useEffect(() => {
-    if (!busy) return
-    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
-    const leave = (event: MouseEvent) => {
-      const target = event.target
-      const link = target instanceof Element ? target.closest('a') : null
-      if (link && link.getAttribute('href')?.startsWith('/')) { event.preventDefault(); event.stopPropagation(); setError('Finish saving or recover this audio before leaving the enquiry.') }
-    }
-    window.addEventListener('beforeunload', unload); document.addEventListener('click', leave, true)
-    return () => { window.removeEventListener('beforeunload', unload); document.removeEventListener('click', leave, true) }
-  }, [busy])
+  // Route changes are allowed while capture is active; the RecorderSession remains alive.
+  // Its own beforeunload guard still protects an in-progress recording from accidental tab close.
   useEffect(() => {
     if (capture.capture === 'stopped' && !capture.saving && !capture.error && capture.samples > 0 && idRef.current) showSaved(idRef.current)
   }, [capture.capture, capture.saving, capture.error, capture.samples])
@@ -150,7 +150,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
     if (idRef.current) return idRef.current
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false },
+      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false },
     }
     const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal })
     signal.throwIfAborted()
@@ -190,6 +190,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
         },
       })
       active.current = session
+      persistentRecorder = session; persistentConversationId = id
       await session.start()
       if (!isCurrent(epoch, controller)) await session.dispose()
     } catch (err) { if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error') } }
@@ -201,6 +202,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
     try {
       await active.current[action]()
       if (action === 'stop' && idRef.current && mounted.current) showSaved(idRef.current)
+      if (action === 'stop') { persistentRecorder = null; persistentConversationId = null; active.current = null }
     } catch (err) {
       // Keep Stop available after a pause/resume error; the session still owns its stream.
       if (mounted.current) { setError(message(err)); if (action === 'stop') setPhase('error') }
@@ -208,6 +210,19 @@ export default function ConversationRecorder({ customerName, title, initialConve
       operationRef.current = false
       if (mounted.current) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
     }
+  }
+  async function discardRecording() {
+    if (operationRef.current || !workspace || !user) return
+    if (!window.confirm('Discard this recording and permanently delete its saved audio?')) return
+    const id = idRef.current
+    operationRef.current = true; setOperation(true); setError('')
+    try {
+      await active.current?.discard()
+      if (id) await request(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: 'DELETE' })
+      persistentRecorder = null; persistentConversationId = null; active.current = null; idRef.current = null
+      setConversationId(null); setCapture(emptyCapture); setSaved(false); setFile(null); setProgress(null); setRetryFile(false); setPhase('idle')
+      callbacks.current.onConversationChange(null)
+    } catch (err) { setError(message(err)) } finally { operationRef.current = false; setOperation(false); void refreshRecoveries().catch(() => undefined) }
   }
   function chooseFile(next: File | null) {
     if (operation || captureActive || capture.saving || saved || recoveries.some(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)) return
@@ -294,6 +309,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
         {captureActive && <>
           <button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>
           {compact ? <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop</button> : <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button> }
+          <button type="button" className="button button-danger recorder-trash-button" disabled={operation} onClick={() => void discardRecording()} aria-label="Discard recording"><Trash2 size={14} />Discard</button>
         </>}
 
         {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}

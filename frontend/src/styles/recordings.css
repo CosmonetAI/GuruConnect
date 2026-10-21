@@ -1,0 +1,16 @@
+.recording-history { display: grid; gap: 18px; }
+.recording-customer { border: 1px solid #dce7f5; border-radius: 18px; overflow: hidden; background: #fff; }
+.recording-customer > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; background: #f5f8fd; border-bottom: 1px solid #e3ebf5; }
+.recording-customer h2 { margin: 0; color: #12345b; font-size: 1.05rem; }
+.recording-customer header p, .recording-customer header span, .recording-row small { margin: 4px 0 0; color: #6680a1; font-size: .85rem; }
+.recording-customer header > span { margin: 0; white-space: nowrap; }
+.recording-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 20px; border-bottom: 1px solid #edf2f8; }
+.recording-row:last-child { border-bottom: 0; }
+.recording-row strong, .recording-row small { display: block; }
+.recording-state { text-transform: capitalize; }
+.recording-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.recording-playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.recording-playback audio { width: min(360px, 42vw); height: 38px; }
+.recording-error { color: #b42318; max-width: 220px; }
+.button-quiet { border: 1px solid #dce7f5; background: #f8fbff; color: #24558c; }
+@media (max-width: 720px) { .recording-row, .recording-customer > header { align-items: flex-start; flex-direction: column; } .recording-actions { justify-content: flex-start; } .recording-playback audio { width: 100%; } }
