@@ -135,6 +135,8 @@ describe('authenticated conversation audio', () => {
     mocks.upload.mockImplementation(async () => { mocks.recoveries.mockResolvedValue([recovery]); throw new AudioUploadError('Your audio is preserved.', true) })
     const callbacks = setup(); consent(); await ready(); file(); fireEvent.click(screen.getByRole('button', { name: 'Upload & process' }))
     await screen.findByRole('button', { name: 'Recover audio' })
+    expect(screen.queryByText('Audio is waiting on this device')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Recover it to attach its saved conversation/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry audio upload' })).not.toBeInTheDocument()
     expect(mocks.upload).toHaveBeenCalledOnce(); expect(callbacks.onSaved).not.toHaveBeenCalled()
     expect(callbacks.onBusyChange).toHaveBeenLastCalledWith(true)

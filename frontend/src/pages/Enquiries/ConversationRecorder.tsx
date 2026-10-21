@@ -27,7 +27,7 @@ const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, chunkSeconds }: ConversationRecorderProps & { compact?: boolean }) {
+export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false, chunkSeconds }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -281,6 +281,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
   const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : unfinished ? 'AUDIO NEEDS ATTENTION' : 'READY TO ADD AUDIO'
 
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}`}>
+    <div className={grouped ? 'session-recording-container' : undefined}>
     <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
       {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>}
       {!compact && <div className="recorder-copy">
@@ -325,6 +326,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}
     {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
     {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
-    {!compact && !operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="audio-storage-notice connected-audio-recovery" key={row.key}><RotateCcw size={18} /><div><strong>Audio is waiting on this device</strong><p>Recording {row.conversationId.slice(0, 8)} · {duration(row.totalSamples / 16000)}. Recover it to attach its saved conversation to this enquiry.</p><button type="button" className="button button-secondary" onClick={() => void recover(row)}>Recover audio</button></div></div>)}
+    {!compact && !operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="connected-audio-recovery" key={row.key}><button type="button" className="button button-secondary" onClick={() => void recover(row)}><RotateCcw size={14} />Recover audio</button></div>)}
+    </div>
   </div>
 }

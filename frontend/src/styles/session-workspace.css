@@ -1,9 +1,49 @@
-.voice-sessions-page { height: calc(100vh - 96px); min-height: 780px; }
+.voice-sessions-page { height: calc(100vh - 48px); min-height: 0; }
+.voice-sessions-layout { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); height: 100%; min-height: 0; }
+.voice-sessions-layout .conversation { min-width: 0; }
 .voice-sessions-layout .voice-composer { padding: 12px; max-height: 72%; overflow: hidden; }
-.session-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr); gap: 12px; min-height: 0; height: 100%; }
+.session-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr); gap: 12px; min-height: 0; height: 100%; align-items: start; }
 .session-workspace-left { min-width: 0; min-height: 0; overflow: visible; padding-right: 4px; display: contents; }
 .session-workspace-left .needs-panel { order: 1; }
-.session-workspace-left > .connected-recorder { grid-column: 1 / -1; order: 2; position: sticky; bottom: 0; z-index: 4; padding-top: 10px; background: #fff; }
+.session-workspace-left > .connected-recorder { grid-column: 1 / -1; order: 2; position: sticky; bottom: 0; z-index: 4; display: block; padding-top: 10px; background: #fff; }
+.session-recording-container { display: grid; gap: 8px; padding: 12px; border: 1px solid #dce8f2; border-radius: 12px; background: #fff; box-shadow: 0 3px 12px rgba(19, 55, 93, .04); }
+.voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .recorder-panel.is-recording,
+.voice-sessions-layout .connected-recorder .recorder-panel.has-clip { background: transparent; }
+.voice-sessions-layout .connected-recorder .recorder-visual { display: grid; width: 34px; height: 34px; place-items: center; }
+.voice-sessions-layout .connected-recorder .microphone-orbit { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #c9e4df; border-radius: 50%; background: #eaf1ff; }
+.voice-sessions-layout .connected-recorder .microphone-button { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; background: #2563eb; color: #fff; }
+.voice-sessions-layout .connected-recorder .microphone-button svg { width: 16px; height: 16px; }
+.voice-sessions-layout .connected-recorder .recorder-copy { min-width: 0; }
+.voice-sessions-layout .connected-recorder .recording-ready-label,
+.voice-sessions-layout .connected-recorder .recording-live { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: #507c78; font-size: 9px; font-weight: 750; letter-spacing: .07em; }
+.voice-sessions-layout .connected-recorder .recording-live { color: #c65047; }
+.voice-sessions-layout .connected-recorder .recorder-copy h3 { overflow: hidden; margin: 0; color: #213847; font-size: 13px; font-weight: 700; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.voice-sessions-layout .connected-recorder .recorder-copy p { display: none; }
+.voice-sessions-layout .connected-recorder .elapsed-timer { margin-top: 3px; color: #a84640; font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.voice-sessions-layout .connected-recorder .recorder-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.voice-sessions-layout .connected-recorder .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 35px; padding: 0 11px; border: 1px solid #d5e0ec; border-radius: 8px; background: #fff; color: #36516e; font-size: 11px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.voice-sessions-layout .connected-recorder .button-primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+.voice-sessions-layout .connected-recorder .button-stop { border-color: #d9675e; background: #d9675e; color: #fff; }
+.voice-sessions-layout .connected-recorder .button-upload:hover,
+.voice-sessions-layout .connected-recorder .button-secondary:hover { border-color: #a9c4e1; background: #f4f8fc; }
+.voice-sessions-layout .connected-recorder .button-upload input { display: none; }
+.voice-sessions-layout .connected-recorder .recording-consent { margin: 0; padding: 4px 2px; border: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .checkbox-field { display: flex; align-items: flex-start; gap: 8px; color: #52677f; font-size: 10px; line-height: 1.45; }
+.voice-sessions-layout .connected-recorder .checkbox-field input { width: 15px; height: 15px; flex: 0 0 auto; margin: 0; accent-color: #2563eb; }
+.voice-sessions-layout .connected-recorder .audio-storage-notice,
+.voice-sessions-layout .connected-recorder .recorder-error { margin: 0; padding: 5px 2px; border: 0; background: transparent; color: #45688e; font-size: 11px; line-height: 1.45; }
+.voice-sessions-layout .connected-recorder .recorder-error { color: #a34840; }
+.voice-sessions-layout .connected-recorder .connected-recording-metrics,
+.voice-sessions-layout .connected-recorder .connected-recording-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: #52677f; font-size: 10px; }
+.voice-sessions-layout .connected-recorder .connected-recording-metrics meter,
+.voice-sessions-layout .connected-recorder .connected-recording-progress progress { width: min(180px, 100%); accent-color: #2563eb; }
+.voice-sessions-layout .connected-recorder .connected-recording-progress p { flex-basis: 100%; margin: 0; }
+.voice-sessions-layout .connected-recorder .audio-preview { display: grid; gap: 8px; padding: 8px 2px; border: 0; border-top: 1px solid #e8eef5; border-radius: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .audio-preview audio { width: 100%; }
+.voice-sessions-layout .connected-recorder .audio-preview p { margin: 0; color: #71839b; font-size: 10px; }
+.voice-sessions-layout .connected-recorder .connected-audio-recovery { margin: 0; padding-top: 6px; border-top: 1px solid #e8eef5; }
+.voice-sessions-layout .connected-recorder .connected-audio-recovery .button { min-height: 32px; }
 .voice-sessions-layout .contact-record { cursor: pointer; align-items: center; min-height: 72px; padding: 12px 22px; }
 .voice-sessions-layout .contact-record > div { display: grid; gap: 4px; }
 .voice-sessions-layout .contact-record > div > span { display: none; }
@@ -11,27 +51,27 @@
 .voice-sessions-layout .contact-record aside { width: auto; min-width: 0; padding: 0; background: transparent; color: inherit; }
 .voice-sessions-layout .contact-record aside i, .voice-sessions-layout .contact-record aside small { display: none; }
 .voice-sessions-layout .contact-record .contact-phone-link { font-size: 12px; }
-.voice-sessions-layout .recorder-panel { grid-template-columns: 38px minmax(0, 1fr) auto; min-height: 72px; padding: 8px 12px; gap: 8px; }
-.voice-sessions-layout .connected-recorder .recorder-visual { width: 34px; height: 34px; }
-.voice-sessions-layout .connected-recorder .microphone-orbit { width: 32px; height: 32px; }
-.voice-sessions-layout .connected-recorder .microphone-button { width: 26px; height: 26px; }
-.voice-sessions-layout .connected-recorder .microphone-button svg { width: 16px; height: 16px; }
-.voice-sessions-layout .connected-recorder .recording-consent { margin-top: 6px; padding: 7px 10px; }
-.voice-sessions-layout .connected-recorder .checkbox-field { font-size: 11px; }
-.voice-sessions-layout .connected-recorder .recorder-copy p { display: none; }
-.voice-sessions-layout .connected-recorder .recorder-copy h3 { margin-top: 2px; }
 .voice-sessions-layout .connected-recorder .recorder-panel.is-recording { min-height: 82px; }
-.voice-sessions-layout .recorder-visual { width: 48px; height: 48px; }
-.voice-sessions-layout .microphone-orbit { width: 44px; height: 44px; }
-.voice-sessions-layout .microphone-button { width: 32px; height: 32px; }
-.voice-sessions-layout .recorder-copy h3 { font-size: 13px; }
-.voice-sessions-layout .recorder-copy p { margin: 3px 0 0; font-size: 10px; }
-.voice-sessions-layout .recorder-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .voice-level-wave { display: flex; align-items: center; gap: 2px; height: 30px; margin-top: 6px; overflow: hidden; }
 .voice-level-wave i { flex: 1 0 2px; min-width: 2px; max-width: 4px; border-radius: 3px; background: #d8685f; transition: height .08s ease; animation: voice-wave-drift 1.2s linear infinite; }
 @keyframes voice-wave-drift { from { transform: translateX(0); opacity: .55; } 50% { opacity: 1; } to { transform: translateX(-3px); opacity: .7; } }
-.session-notes { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid #dce8f2; border-radius: 12px; background: #fbfdff; overflow: hidden; }
+.session-notes { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid #dce8f2; border-radius: 12px; background: #fbfdff; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
 .notes-heading, .needs-heading { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; padding: 14px; border-bottom: 1px solid #e4edf4; }
+.session-panel-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.session-panel-toggle > div { min-width: 0; flex: 1; }
+.session-panel-toggle > svg { flex: 0 0 auto; color: #71839b; }
+.session-panel-toggle:focus-visible { outline-offset: 2px; }
+.session-panel-content { min-width: 0; min-height: 0; display: flex; flex: 1; flex-direction: column; }
+.session-panel-content[hidden] { display: none; }
+.session-notes .session-panel-content { flex: 0 0 auto; }
+.session-notes .notes-list { min-height: 0; flex: 0 0 auto; overflow: visible; }
+.session-notes .note-editor { flex: 0 0 auto; }
+.needs-panel.is-collapsed,
+.session-notes.is-collapsed { height: auto; min-height: 0; max-height: none; align-self: start; }
+.needs-panel.is-collapsed .needs-heading,
+.session-notes.is-collapsed .notes-heading { border-bottom: 0; }
+.needs-panel.is-collapsed .session-panel-toggle h3,
+.session-notes.is-collapsed .session-panel-toggle h3 { margin-bottom: 0; }
 .notes-heading small, .needs-heading small { color: #2476d9; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
 .notes-heading h3, .needs-heading h3 { margin: 4px 0 0; color: #17375d; font-size: 15px; }
 .notes-heading span, .needs-heading > span { display: grid; place-items: center; min-width: 28px; height: 28px; border-radius: 50%; background: #eaf3ff; color: #1762a5; font-size: 12px; font-weight: 800; }
@@ -73,7 +113,7 @@
 body[data-document-party="unknown"] .document-actions { display: none; }
 body[data-document-party="vendor"] .document-actions button:nth-child(-n+3) { display: none; }
 body[data-document-party="customer"] .document-actions button:nth-child(4) { display: none; }
-.contact-phone-link { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: #1762a5; cursor: pointer; font-size: 11px; text-align: left; }
+.contact-phone-link { display: inline-flex; align-items: center; gap: 5px; width: max-content; min-height: 0; padding: 0; border: 0; background: transparent; color: #1762a5; cursor: pointer; font-size: 11px; text-align: left; }
 .session-modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(9, 35, 65, .42); }
 .customer-modal { width: min(760px, 100%); max-height: 86vh; overflow-y: auto; border-radius: 16px; background: #fff; box-shadow: 0 22px 60px rgba(9, 35, 65, .28); }
 .customer-modal-heading { display: flex; justify-content: space-between; gap: 20px; padding: 20px; border-bottom: 1px solid #e4edf4; }
