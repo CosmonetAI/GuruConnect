@@ -315,7 +315,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
         {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
       </div>
     </div>
-    {!compact && <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label><span className="consent-detail"><ShieldCheck size={14} />Consent is recorded by the authenticated backend before audio is captured or uploaded.</span></div>}
+    {!compact && <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label></div>}
     {loading && <p role="status">Loading workspace…</p>}
     {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
     {!loading && user && workspace && policyLoading && <p role="status">Checking processing connections…</p>}
