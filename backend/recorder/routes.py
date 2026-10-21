@@ -94,7 +94,7 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(
-                f"{settings.supabase_url}/auth/v1/admin/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}" ,
+                f"{settings.supabase_url}/auth/v1/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}" ,
                 headers={
                     "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
                     "apikey": settings.supabase_service_role_key.get_secret_value(),
