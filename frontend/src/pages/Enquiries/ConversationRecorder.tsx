@@ -16,12 +16,13 @@ export interface ConversationRecorderProps {
   onBusyChange?: (busy: boolean) => void
   onSaved?: (id: string) => void
   onCaptureChange?: (state: CaptureState) => void
+  chunkSeconds?: number
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact }: ConversationRecorderProps & { compact?: boolean }) {
+export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, chunkSeconds }: ConversationRecorderProps & { compact?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -178,6 +179,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
+        chunkSeconds: chunkSeconds ?? (compact ? 30 : 180),
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
         onState: state => {
           if (!isCurrent(epoch, controller)) return
@@ -225,6 +227,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
       controller.signal.throwIfAborted(); setPhase('uploading')
       await uploadAudioFile({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
+        chunkSeconds: chunkSeconds ?? (compact ? 30 : 180),
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
         onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
       })
@@ -269,6 +272,7 @@ export default function ConversationRecorder({ customerName, title, initialConve
         <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
         <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
         <p>{saved ? 'Transcription and English translation run in the background. Open the saved enquiry to follow progress.' : 'Audio saves privately. ElevenLabs transcribes the original speech, then OpenAI translates it into English.'}</p>
+        {captureActive && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
         {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
       </div>}
       <div className="recorder-controls">
@@ -284,6 +288,8 @@ export default function ConversationRecorder({ customerName, title, initialConve
             {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
           </>
         )}
+
+        {compact && captureActive && <div className="voice-level-wave compact-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
 
         {captureActive && <>
           <button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>

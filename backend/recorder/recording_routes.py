@@ -103,7 +103,9 @@ async def authorize(conversation_id: UUID, body: s.Chunk, request: Request, cont
         overlap = await one(connection, "select id from audio_chunks where conversation_id=%s and id<>coalesce(%s::uuid,'00000000-0000-0000-0000-000000000000') and sample_start<%s and sample_start+sample_count>%s limit 1", (conversation_id, row["id"] if row else None, body.start_sample+body.sample_count, body.start_sample))
         if overlap:
             fail("chunk_timeline_conflict", 409)
-        path = f"{context.id}/{context.user.id}/{conversation_id}/{body.part_id}/{body.sequence}.wav"
+        customer = await one(connection, "select phone from customers where id=%s and organisation_id=%s", (conv["customer_id"], context.id))
+        phone = ''.join(character for character in str(customer.get("phone") if customer else "") if character.isdigit())[-15:] or "no-phone"
+        path = f"{context.id}/{context.user.id}/{conversation_id}/{phone}/{body.part_id}/{body.sequence}.wav"
         if not row:
             await connection.execute("insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
         else:
@@ -130,7 +132,7 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await valid_lease(connection, context, conversation_id, body.lease_token)
     data = await request.app.state.storage.read(row["object_path"], request.app.state.settings.upload_max_bytes)
     try:
-        # Microphone capture is persisted in three-minute WAV chunks.
+        # Microphone capture is persisted in 30-second WAV chunks.
         info = validate_wav(data, expected_samples=body.sample_count, max_samples=3 * 60 * 16000)
     except ValueError:
         fail("invalid_wav_content", 422)

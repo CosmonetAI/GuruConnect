@@ -30,6 +30,7 @@ export default function VoiceAssistPanel({ customerName, onConversationChange, o
           title="Walk-in registration"
           onConversationChange={onConversationChange}
           onBusyChange={onBusyChange}
+          chunkSeconds={30}
           compact
         />
       </div>

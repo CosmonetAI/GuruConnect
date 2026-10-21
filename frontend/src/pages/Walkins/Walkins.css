@@ -372,7 +372,7 @@
 }
 
 .walkin-form {
-  max-width: 930px;
+  max-width: none;
 }
 
 .walkin-form > section + section {
@@ -985,8 +985,9 @@
 .voice-simple-recorder { display: flex; align-items: center; gap: 12px; }
 .voice-simple-recorder > svg { flex: none; color: var(--primary-600); }
 .voice-simple-recorder .connected-recorder { flex: 1; min-width: 0; }
-.compact-recorder .recorder-panel { display: block; }
-.compact-recorder .recorder-controls { margin: 0; }
+.compact-recorder .recorder-panel { display: flex; align-items: center; min-height: 64px; padding: 10px 12px; }
+.compact-recorder .recorder-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0; }
+.compact-recorder .voice-level-wave { flex: 1 1 150px; min-width: 120px; margin: 0 4px; }
 .compact-recorder .record-start-button { min-height: 42px; }
 .voice-status { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 13px; color: #334155; }
 .voice-options { display: grid; gap: 8px; margin-top: 14px; }

@@ -12,7 +12,7 @@ export interface RecordingHooks {
   event(kind: string, sample: number): Promise<void>;
   finalize(manifest: Manifest): Promise<void>;
 }
-export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; outboxLimitBytes?: number }
+export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; chunkSeconds?: number; outboxLimitBytes?: number }
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   signal?.throwIfAborted();
   const aborted = () => { clearTimeout(timer); signal?.removeEventListener('abort', aborted); reject(signal?.reason ?? new DOMException('The audio upload was cancelled.', 'AbortError')); };
@@ -148,7 +148,7 @@ export class RecorderSession {
       const prepared = await prepareMicrophone(this.options.deviceId); this.stream = prepared.stream;
       this.checkActive();
       this.context = new AudioContext(); await this.context.audioWorklet.addModule(workletUrl); this.checkActive(); await this.context.resume(); this.checkActive();
-      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000 } });
+      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000, chunkSamples: (this.options.chunkSeconds ?? 180) * 16000 } });
       this.node.port.onmessage = (event: MessageEvent) => this.message(event.data);
       const mute = this.context.createGain(); mute.gain.value = 0;
       this.context.createMediaStreamSource(this.stream).connect(this.node).connect(mute).connect(this.context.destination);
