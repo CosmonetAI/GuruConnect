@@ -116,6 +116,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .team-pill-role-receptionist { color: #a34b09; background: #fff3d6; border-color: #f9d99b; }
 .team-pill-status-active { color: #18794e; background: #e8f8ef; border-color: #bce8cc; }
 .team-pill-status-revoked, .team-pill-status-inactive { color: #b42318; background: #ffebe9; border-color: #f7c6c2; }
+.team-pill-status-invited { color: #9a6700; background: #fff7db; border-color: #f5dc91; }
 .team-pill-status-pending, .team-pill-status-not_active { color: #667085; background: #f2f4f7; border-color: #dfe3e8; }
 @media (max-width: 560px) { .team-row { align-items: flex-start; flex-direction: column; }.team-pills { justify-content: flex-start; } }
 .skip-navigation { position: fixed; top: -100px; left: 16px; padding: 12px; border-radius: 8px; background: white; color: #2563eb; z-index: 1100; }

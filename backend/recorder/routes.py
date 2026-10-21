@@ -73,7 +73,7 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
 @router.get("/team")
 async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select m.*,p.display_name,p.availability_status,p.last_seen_at,u.email from members m left join profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
+        rows = await many(connection, "select m.*,p.display_name,p.availability_status,p.last_seen_at,u.email,case when m.status <> 'active' then m.status when u.confirmed_at is null then 'invited' else 'active' end as status from members m left join profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}
 

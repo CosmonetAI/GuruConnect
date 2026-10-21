@@ -101,6 +101,8 @@ class ZohoClient:
     async def smoke_test(self):
         result=await self.request('GET','/books/v3/organizations')
         raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
+        if isinstance(raw_orgs, dict):
+            raw_orgs = raw_orgs.get('organizations') or raw_orgs.get('data') or raw_orgs.get('organization') or [raw_orgs]
         if isinstance(raw_orgs, dict): raw_orgs = [raw_orgs]
         orgs = []
         for org in raw_orgs if isinstance(raw_orgs, list) else []:
@@ -111,8 +113,10 @@ class ZohoClient:
         ids={str(org.get('organization_id')) for org in orgs if org.get('organization_id')}
         if len(orgs)==1:
             selected=orgs[0].get('organization_id'); self.select_organization(selected)
-        elif selected not in ids:
+        elif orgs and selected not in ids:
             selected=None
+        if not orgs and selected:
+            orgs=[{'organization_id': str(selected), 'organization_name': 'Selected Books organization'}]
         log.info('zoho_books_organizations count=%s selected=%s', len(orgs), bool(selected))
         return {'organizations':orgs,'organization_id':selected}
     def select_organization(self, organization_id):
