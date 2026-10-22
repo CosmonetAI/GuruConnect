@@ -6,6 +6,9 @@ button, a.button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 a { color: var(--primary); }
 button { border: 1px solid #dbe3ef; background: white; color: #243650; border-radius: 8px; padding: 8px 12px; min-height: 40px; }
+button:not(:disabled), a.button { transition: transform .18s ease, box-shadow .18s ease, background-color .18s ease, border-color .18s ease, color .18s ease; }
+button:not(:disabled):hover, a.button:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(28, 67, 108, .14); }
+button:not(:disabled):active, a.button:active { transform: translateY(0) scale(.98); box-shadow: 0 3px 8px rgba(28, 67, 108, .12); }
 :focus-visible { outline: 3px solid #93b4fb; outline-offset: 3px; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { line-height: 1.15; letter-spacing: -.035em; }

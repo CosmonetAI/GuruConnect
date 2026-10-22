@@ -257,3 +257,44 @@
 .contact-modal .modal-actions { position: sticky; bottom: -24px; z-index: 2; margin: 22px -34px -24px; padding: 16px 34px 24px; border-top: 1px solid #e4ebf3; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); }
 .contact-modal .modal-actions .primary { min-height: 44px; border-radius: 10px; padding: 0 18px; }
 @media (max-width: 720px) { .contact-modal { padding: 24px 20px 20px; } .contact-form-section { margin: 0 -20px; padding: 20px; } .contact-form-grid, .structured-inline-row { grid-template-columns: 1fr; } .contact-modal .modal-actions { bottom: -20px; margin: 16px -20px -20px; padding: 14px 20px 20px; } }
+
+/* Shared Zoho record cards: one visual system for products, contacts and documents. */
+.product-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+.product-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 214px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d7e5f1;
+  border-radius: 16px;
+  padding: 18px;
+  background: linear-gradient(145deg, #ffffff 0%, #f7fbff 72%, #edf6ff 100%);
+  box-shadow: 0 7px 20px rgba(26, 66, 104, .07);
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+.product-card::after { content: ''; position: absolute; right: -28px; top: -34px; width: 110px; height: 110px; border-radius: 50%; background: rgba(220, 239, 255, .46); pointer-events: none; }
+.product-card:hover { border-color: #b7d2e9; box-shadow: 0 13px 30px rgba(26, 66, 104, .13); transform: translateY(-3px); }
+.product-card-top, .product-card h3, .product-summary, .product-card-actions, .product-card > .success { position: relative; z-index: 1; }
+.product-card h3 { margin: 10px 0 12px; font-size: 16px; }
+.product-card-actions { margin-top: auto; padding-top: 16px; }
+.product-card-actions button { border-radius: 9px; padding: 8px 11px; }
+
+/* Section guidance is intentionally visible before the fields begin. */
+.document-form .form-section-heading { align-items: flex-start; }
+.document-form .form-section-heading > div { min-width: 0; flex: 1; }
+.document-form .form-section-heading .section-guidance { display: block; width: fit-content; max-width: 100%; margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 11px; line-height: 1.4; font-weight: 600; }
+.document-form .form-section-heading .required-guidance { border: 1px solid #f2d08c; color: #8c5a08; background: #fff7e5; }
+.document-form .form-section-heading .optional-guidance { border: 1px solid #d6e4f0; color: #5f7894; background: #f5f9fd; }
+.document-form .form-section-heading .section-marker { flex: 0 0 auto; margin-top: 1px; color: #7890aa; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.document-field small { color: #8b9bae; }
+.document-field small:first-letter { text-transform: uppercase; }
+.contact-modal .required-copy { color: #9a6207; }
+.contact-modal .form-section-heading p { padding: 7px 10px; border: 1px solid #d6e4f0; border-radius: 8px; background: #f5f9fd; color: #5f7894; width: fit-content; max-width: 100%; }
+.contact-modal .form-section-heading p.required-guidance { border-color: #f2d08c; background: #fff7e5; color: #8c5a08; }
+
+/* Pipeline cards use the same elevated, gradient treatment. */
+.kanban-column { border: 1px solid #dce8ef; background: linear-gradient(180deg, #f8fbfd 0%, #f0f7f8 100%); box-shadow: 0 5px 16px rgba(26, 66, 104, .05); }
+.deal-card { border: 1px solid #d7e5f1; border-radius: 14px; background: linear-gradient(145deg, #ffffff 0%, #f7fbff 72%, #edf8f5 100%); box-shadow: 0 5px 15px rgba(26, 66, 104, .07); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.deal-card:hover { border-color: #9ed8c8; box-shadow: 0 10px 24px rgba(26, 66, 104, .12); transform: translateY(-2px); }

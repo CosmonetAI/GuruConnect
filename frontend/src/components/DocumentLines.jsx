@@ -5,7 +5,7 @@ import { LookupField } from './Records';
 export const newDocumentLine = () => ({ item_id: '', item_name: '', description: '', quantity: 1, rate: '', unit: '', discount: '', account_id: '', location_id: '', hsn_or_sac: '', tax_id: '', project_id: '', tag_id: '', tag_option_id: '', custom_value: '', stock_on_hand: null, available_stock: null });
 const display = value => value?.name || value?.location_name || value?.project_name || value?.tax_name || value?.tag_name || value?.option_name || value?.account_name || value?.currency_name_formatted || value?.id || 'Unnamed';
 function Select({ value, onChange, children, required = false }) { return <select value={value ?? ''} onChange={event => onChange(event.target.value)} required={required}>{children}</select>; }
-function Field({ label, required = false, children }) { return <label className="document-field"><span>{label} <small>{required ? 'Required' : 'Optional'}</small></span>{children}</label>; }
+function Field({ label, required = false, children }) { return <label className="document-field"><span>{label} <small className={required ? 'field-required' : 'field-optional'}>{required ? 'Required' : 'Optional'}</small></span>{children}</label>; }
 
 export default function DocumentLines({ lines, setLines, items, lookupItems, options, includeAccount = false, purchaseMode = false, itemDiscounts = false }) {
   const [tagOptions, setTagOptions] = useState({});

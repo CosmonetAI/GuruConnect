@@ -11,12 +11,20 @@
   border-top: 1px solid #e4ebf3;
 }
 .document-form-section:first-of-type { border-top: 0; padding-top: 0; }
+.document-form .form-section-heading { align-items: flex-start; }
+.document-form .form-section-heading > div { min-width: 0; flex: 1; }
+.document-form .form-section-heading .section-guidance { display: block; width: fit-content; max-width: 100%; margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 11px; line-height: 1.4; font-weight: 600; }
+.document-form .form-section-heading .required-guidance { border: 1px solid #f2d08c; color: #8c5a08; background: #fff7e5; }
+.document-form .form-section-heading .optional-guidance { border: 1px solid #d6e4f0; color: #5f7894; background: #f5f9fd; }
+.document-form .form-section-heading .section-marker { flex: 0 0 auto; margin-top: 1px; color: #7890aa; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .document-form-section h4 { margin: 0 0 4px; color: #12365e; font-size: 17px; letter-spacing: -.01em; }
 .document-form-section > p { margin: 0 0 16px; color: #7890aa; font-size: 12px; line-height: 1.5; }
 .document-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .document-field { display: flex; flex-direction: column; gap: 7px; color: #365676; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
 .document-field > span { display: flex; justify-content: space-between; gap: 8px; }
 .document-field small, .document-checkbox small, .document-checkboxes small { color: #8b9bae; font-size: 10px; font-weight: 500; letter-spacing: 0; }
+.document-field small.field-required { color: #a86400; font-weight: 800; }
+.document-field small.field-optional { color: #8b9bae; }
 .document-field em { color: #7a8ba0; font-size: 10px; font-style: normal; font-weight: 400; line-height: 1.35; letter-spacing: 0; }
 .document-field input, .document-field select, .document-field textarea {
   width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #cbdbea; border-radius: 10px; padding: 11px 13px; color: #17385e; background: #fff; font: inherit; font-size: 13px; font-weight: 600; outline: none; transition: border-color .15s, box-shadow .15s;

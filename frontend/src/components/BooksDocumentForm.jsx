@@ -23,8 +23,8 @@ const defaults = type => ({
 
 const display = value => value?.name || value?.location_name || value?.project_name || value?.tax_name || value?.tag_name || value?.account_name || value?.currency_name_formatted || value?.id || 'Unnamed';
 function Select({ value, onChange, children, required = false }) { return <select value={value ?? ''} onChange={event => onChange(event.target.value)} required={required}>{children}</select>; }
-function Field({ label, required = false, children, hint }) { return <label className="document-field"><span>{label} <small>{required ? 'Required' : 'Optional'}</small></span>{children}{hint && <em>{hint}</em>}</label>; }
-function Section({ title, description, children }) { return <section className="document-form-section"><div className="form-section-heading"><h4>{title}</h4><span>{description}</span></div><div className="document-form-grid">{children}</div></section>; }
+function Field({ label, required = false, children, hint }) { return <label className="document-field"><span>{label} <small className={required ? 'field-required' : 'field-optional'}>{required ? 'Required' : 'Optional'}</small></span>{children}{hint && <em>{hint}</em>}</label>; }
+function Section({ title, description, children }) { const required = /required|necessary|reveals/i.test(description || ''); return <section className="document-form-section"><div className="form-section-heading"><div><h4>{title}</h4><span className={`section-guidance ${required ? 'required-guidance' : 'optional-guidance'}`}>{description}</span></div><span className="section-marker">{required ? 'Required' : 'Optional'}</span></div><div className="document-form-grid">{children}</div></section>; }
 
 export default function BooksDocumentForm({ type, setError, onCreated }) {
   const purchase = isPurchaseOrder(type);
