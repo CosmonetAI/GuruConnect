@@ -189,3 +189,60 @@
 .record-actions .secondary:disabled { opacity: .6; cursor: wait; }
 .mail-success { color: #17875a; font-size: 12px; font-weight: 700; }
 .mail-error { color: #b42318; font-size: 12px; }
+
+/* Books contact creation: structured, reusable form sections instead of raw JSON inputs. */
+.contact-modal {
+  width: min(100%, 920px);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 30px 34px 24px;
+  border: 1px solid #dce7f1;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+  box-shadow: 0 24px 70px rgba(13, 40, 70, .24);
+}
+.contact-modal > p { margin: 7px 0 25px; color: #7890aa; }
+.contact-modal .form-section-heading { margin-top: 24px; padding: 0 0 11px; border-bottom: 1px solid #dce7f1; }
+.contact-modal .form-section-heading h4 { color: #12365e; font-size: 17px; }
+.contact-modal .form-section-heading p { margin: 4px 0 0; color: #7890aa; font-size: 12px; font-weight: 400; }
+.contact-modal .form-two { gap: 16px; }
+.contact-modal .form-two > input,
+.contact-modal input,
+.contact-modal select,
+.contact-modal textarea {
+  min-height: 44px;
+  border: 1px solid #cbdbea;
+  border-radius: 10px;
+  padding: 11px 13px;
+  color: #17385e;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.contact-modal textarea { min-height: 82px; resize: vertical; }
+.contact-modal input:focus, .contact-modal select:focus, .contact-modal textarea:focus { border-color: #1d6db5; box-shadow: 0 0 0 3px rgba(29, 109, 181, .12); }
+.contact-form-section { margin: 0 -34px; padding: 24px 34px; border-top: 1px solid #e4ebf3; }
+.contact-form-section .form-section-heading { margin-top: 0; border-bottom: 0; }
+.contact-field { display: flex; min-width: 0; flex-direction: column; gap: 7px; color: #365676; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.contact-field > span { display: flex; justify-content: space-between; gap: 8px; }
+.contact-field small { color: #8b9bae; font-size: 10px; font-weight: 500; letter-spacing: 0; }
+.contact-field-wide { width: 100%; }
+.contact-address-grid { align-items: start; }
+.contact-subsection { margin-top: 22px; }
+.contact-subsection .form-section-heading { margin-bottom: 13px; }
+.contact-empty-row { padding: 13px 15px; border: 1px dashed #cbdbea; border-radius: 10px; color: #7890aa; background: #f8fbff; font-size: 12px; }
+.structured-row { margin-top: 12px; padding: 16px; border: 1px solid #dbe7f2; border-radius: 14px; background: #fff; box-shadow: 0 4px 14px rgba(26, 66, 104, .05); }
+.contact-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
+.structured-row-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #edf2f7; }
+.structured-inline-row { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(220px, 1fr) auto; gap: 13px; align-items: end; margin-top: 12px; padding: 13px; border: 1px solid #dbe7f2; border-radius: 12px; background: #fff; }
+.structured-inline-row .contact-field { min-width: 0; }
+.checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 15px; color: #526a83; font-size: 12px; font-weight: 700; }
+.checkbox-row input { width: auto; min-height: auto; accent-color: #1762a5; }
+.secondary-add-button { margin-top: 14px; border: 1px dashed #1d6db5; border-radius: 9px; padding: 10px 14px; color: #1762a5; background: #f4f9ff; font-weight: 800; cursor: pointer; }
+.secondary-add-button:hover { background: #e8f3ff; }
+.danger-link { border: 0; padding: 5px 0; color: #b42318; background: transparent; font-size: 12px; font-weight: 800; cursor: pointer; }
+.contact-modal .modal-actions { position: sticky; bottom: -24px; z-index: 2; margin: 22px -34px -24px; padding: 16px 34px 24px; border-top: 1px solid #e4ebf3; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); }
+.contact-modal .modal-actions .primary { min-height: 44px; border-radius: 10px; padding: 0 18px; }
+@media (max-width: 720px) { .contact-modal { padding: 24px 20px 20px; } .contact-form-section { margin: 0 -20px; padding: 20px; } .contact-form-grid, .structured-inline-row { grid-template-columns: 1fr; } .contact-modal .modal-actions { bottom: -20px; margin: 16px -20px -20px; padding: 14px 20px 20px; } }

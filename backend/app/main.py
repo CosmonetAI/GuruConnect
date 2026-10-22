@@ -559,7 +559,10 @@ async def purchase_order_vendor(vendor_id: str):
             zoho.get_books_contact_persons(org, vendor_id),
         )
         contact = detail.get('contact', detail.get('data', detail))
-        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('data') or contact.get('contact_persons', [])
+        if isinstance(contact, list):
+            contact = contact[0] if contact else {}
+        contact = contact if isinstance(contact, dict) else {}
+        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('contactpersons') or persons.get('data') or contact.get('contact_persons') or contact.get('contactpersons') or []
         return {
             'vendor': contact,
             'contact_persons': contact_persons,
@@ -581,7 +584,10 @@ async def document_contact(contact_id: str):
             zoho.get_books_contact_persons(org, contact_id),
         )
         contact = detail.get('contact', detail.get('data', detail))
-        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('data') or contact.get('contact_persons', [])
+        if isinstance(contact, list):
+            contact = contact[0] if contact else {}
+        contact = contact if isinstance(contact, dict) else {}
+        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('contactpersons') or persons.get('data') or contact.get('contact_persons') or contact.get('contactpersons') or []
         return {'contact': contact, 'contact_persons': contact_persons, 'organization_id': org}
     except HTTPException:
         raise

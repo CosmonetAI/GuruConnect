@@ -55,7 +55,9 @@ export default function BooksDocumentForm({ type, setError, onCreated }) {
     try {
       const result = await call(`${purchase ? '/purchase-orders/vendors/' : '/documents/contacts/'}${id}`);
       const detail = result.contact || result.vendor || {};
-      const persons = result.contact_persons || [];
+      const persons = result.contact_persons?.length
+        ? result.contact_persons
+        : detail.contact_persons || detail.contactpersons || result.contacts || result.contactpersons || [];
       const primary = persons.find(person => person.is_primary_contact) || persons[0];
       setPartyDetail({ ...detail, contact_persons: persons });
       setForm(current => ({ ...current, currency_id: detail.currency_id || current.currency_id, contact_person_id: primary?.contact_person_id || '', billing_address_id: detail.billing_address?.address_id || '', shipping_address_id: detail.shipping_address?.address_id || '', attention: detail.billing_address?.attention || [primary?.first_name, primary?.last_name].filter(Boolean).join(' ') || current.attention, gst_treatment: detail.gst_treatment || current.gst_treatment, gst_no: detail.gst_no || '', is_email_enabled: primary?.communication_preference?.is_email_enabled ?? true, is_sms_enabled: primary?.communication_preference?.is_sms_enabled ?? false, is_whatsapp_enabled: primary?.communication_preference?.is_whatsapp_enabled ?? false }));
