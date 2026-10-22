@@ -88,7 +88,7 @@ def create_app(settings=None, *, allow_local=False):
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                        allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Workspace-ID", "Idempotency-Key"],
-                       expose_headers=["Content-Disposition", "X-Request-ID"], max_age=600)
+                       expose_headers=["Content-Disposition", "X-Request-ID", "Content-Length", "X-Playback-Mode", "X-Playback-Start-Sample", "X-Playback-Sample-Rate"], max_age=600)
 
     app.add_middleware(RequestBoundary, settings=settings)
 

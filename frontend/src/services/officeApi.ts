@@ -101,6 +101,40 @@ export async function request<T>(path: string, workspace?: string | null, init: 
     init.signal?.removeEventListener('abort', cancelled);
   }
 }
+
+/** Authenticated binary response for progressive audio and other streamed media. */
+export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}): Promise<Response> {
+  if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
+  if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
+  const abort = new AbortController();
+  const cancelled = () => abort.abort(init.signal?.reason ?? new DOMException('The request was cancelled.', 'AbortError'));
+  init.signal?.addEventListener('abort', cancelled, { once: true });
+  if (init.signal?.aborted) cancelled();
+  try {
+    const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+    if (abort.signal.aborted) throw abort.signal.reason;
+    if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
+    const headers = new Headers(init.headers);
+    if (session) {
+      headers.set('Authorization', `Bearer ${session.access_token}`);
+      if (session.user?.id) headers.set('X-User-ID', session.user.id);
+    }
+    if (workspace) headers.set('X-Workspace-ID', workspace);
+    const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
+    if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { detail?: string | Record<string, unknown>; error?: Record<string, unknown> };
+      const detail = typeof body.detail === 'string' ? { message: body.detail } : body.detail || body.error || {};
+      throw new ApiError(response.status, String(detail.code || 'request_failed'), String(detail.message || `The request failed (${response.status}). Please try again.`), detail);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof TypeError && !abort.signal.aborted) throw new ApiError(503, 'api_unreachable', 'Workspace services could not be reached.');
+    throw error;
+  } finally {
+    init.signal?.removeEventListener('abort', cancelled);
+  }
+}
 // These presentation aliases mirror the validated API's snake_case schema. They do not infer completion.
 export function normalizeResponse(path: string, input: unknown): unknown {
   if (!input || typeof input !== 'object') return input;

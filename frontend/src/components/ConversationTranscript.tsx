@@ -4,6 +4,7 @@ import { useOffice } from '../contexts/OfficeContext'
 import { ApiError, duration, errorMessageForCode, json, message, request, type Progress, type Transcript, type Turn } from '../services/officeApi'
 import { OfficeDialog, OfficeNotice, OfficeStatus, useOfficeResource } from './OfficeUi'
 import PageLoader from './PageLoader'
+import ProgressivePlayback from './ProgressivePlayback'
 
 const activeJobStates = new Set(['queued', 'retry', 'running', 'processing'])
 const finalStates = new Set(['complete', 'completed', 'failed', 'blocked', 'cancelled', 'deleted'])
@@ -37,12 +38,12 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
   const [confirmation, setConfirmation] = useState<'translation' | 'all' | 'replay' | null>(null)
   const [assignment, setAssignment] = useState(false)
   const [editing, setEditing] = useState<Turn | null>(null)
-  const audio = useRef<HTMLAudioElement>(null)
   const alive = useRef(true)
   const operations = useRef(new Set<AbortController>())
   const submission = useRef(false)
   const playbackSubmission = useRef(false)
   const expiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const audio = useRef<HTMLAudioElement>(null)
   const c = progress.data?.conversation
   const versionId = transcript.data?.version_id || transcript.data?.id || c?.active_transcript_version_id
   const admin = workspace?.role === 'owner'
@@ -88,12 +89,8 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
           const parsed = new URL(result.url)
           if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('The service returned an invalid playback link.')
           clearTimeout(expiry.current)
-          setUrl(result.url)
-          setPlaybackPending(false)
-          expiry.current = setTimeout(() => {
-            audio.current?.pause(); setUrl(''); setTime(-1)
-            setNotice('Playback access expired. Load a fresh authorised link to continue.')
-          }, Math.max(1, Math.min(result.expires_in || 60, 3600)) * 1000)
+          setUrl(result.url); setPlaybackPending(false)
+          expiry.current = setTimeout(() => { audio.current?.pause(); setUrl(''); setTime(-1); setNotice('Playback access expired. Load a fresh authorised link to continue.') }, Math.max(1, Math.min(result.expires_in || 60, 3600)) * 1000)
           return
         } catch (failure) {
           if (!(failure instanceof ApiError) || failure.code !== 'playback_assembly_pending' || attempt === delays.length - 1) throw failure
@@ -145,6 +142,9 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
   const translationJobs = progress.data?.jobs?.filter(job => job.job_type === 'translate' && translationFailures.has(job.status) && (!transcript.data?.run_id || !job.run_id || job.run_id === transcript.data.run_id)) || []
   const translationAttention = translationJobs.length > 0 || ['failed', 'blocked', 'partial'].includes(c?.english_state || '')
   const speechJobs = progress.data?.jobs?.filter(job => ['transcribe', 'finalise'].includes(job.job_type) && translationFailures.has(job.status)) || []
+  // The legacy signed-link retry state remains for backwards-compatible API responses;
+  // the visible player below uses the progressive chunk stream instead.
+  void playbackPending
 
   return <section className="office-processing" aria-label="Conversation processing">
     <div className="office-row office-between"><div><h2>Recording & transcript</h2><p>Private audio → ElevenLabs source transcript and speakers → OpenAI English translation.</p></div><button type="button" className="office-button office-secondary" disabled={progress.refreshing || transcript.refreshing} onClick={reload}>Refresh status</button></div>
@@ -158,8 +158,8 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
     {!!speechJobs.length && <OfficeNotice><strong>Speech transcription needs attention</strong>{speechJobs.map(job => <p key={job.id}>{errorMessageForCode(job.error_code || '', 'Check your transcription connection and retry the failed stage. Saved audio is preserved.')}</p>)}<div className="office-row"><Link className="office-button office-secondary" to="/integrations">Check transcription connection</Link><button type="button" className="office-button" disabled={busy} onClick={() => setConfirmation('all')}>Retry failed stages</button></div></OfficeNotice>}
     <section className="office-panel">
       <div className="office-row office-between"><div><h3>Source audio</h3><p className="office-small">Timing refers to original speech intervals. Translated words have no invented exact alignment.</p></div>{!url && <button type="button" className="office-button office-secondary" disabled={playbackLoading || !c} onClick={() => void loadPlayback()}>{playbackLoading ? 'Preparing playback…' : 'Load playback'}</button>}</div>
+      {c && workspace && <ProgressivePlayback conversationId={conversationId} workspaceId={workspace.id} onTimeChange={setTime} />}
       {playbackPending && <OfficeNotice>{c?.upload_state === 'saved' ? 'Playback assembly is pending. Your audio is saved while we assemble the complete recording from its verified chunks.' : 'Playback becomes available after the recording stops and all audio is saved.'}</OfficeNotice>}
-      {url && <audio ref={audio} controls preload="metadata" src={url} aria-label="Conversation source audio" onTimeUpdate={event => setTime(event.currentTarget.currentTime)} onError={() => { clearTimeout(expiry.current); setUrl(''); setTime(-1); setError('Playback access may have expired. Load a fresh authorised link.') }} />}
     </section>
     <section className="office-panel">
       <div className="office-row office-between"><h3>English transcript</h3><OfficeStatus value={transcript.data?.status || c?.english_state} /></div>

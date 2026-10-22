@@ -57,6 +57,7 @@
 .office-connection-meta dt { color: var(--text-muted); }
 .office-connection-meta dd { margin: 0; text-align: right; }
 .office-processing audio { width: 100%; margin-top: 12px; }
+.office-processing > .office-panel:first-of-type > .office-row.office-between button { display: none; }
 .office-pipeline { padding-left: 20px; line-height: 1.8; color: var(--text-muted); }
 @media (max-width: 760px) {
   .office-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); }

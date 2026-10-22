@@ -8,7 +8,7 @@ from . import schemas as s
 from .audio import validate_wav
 from .db import one, many
 from .errors import fail
-from .processing import plan_windows, schedule
+from .processing import plan_windows
 from .routes import audit
 from .security import Workspace, workspace, conversation, owned_conversation
 
@@ -180,8 +180,9 @@ async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, co
         await connection.execute("update processing_runs set audio_manifest_hash=%s where conversation_id=%s", (digest, conversation_id))
         await connection.execute("delete from recording_leases where conversation_id=%s and user_id=%s and token=%s", (conversation_id, context.user.id, body.lease_token))
         if expected:
-            playback_job = await schedule(connection, conversation_id, None, "assemble", "playback", {"sample_start": 0, "sample_end": expected}, priority=20)
-            log.info("playback_assembly_queued conversation_id=%s job_id=%s chunks=%s samples=%s", conversation_id, playback_job, len(chunks), expected)
+            # Playback is assembled on demand from the validated bucket chunks.
+            # No background playback job is required for a recording to be playable.
+            log.info("playback_ready_for_on_demand_stream conversation_id=%s chunks=%s samples=%s", conversation_id, len(chunks), expected)
             await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
         else:
             await connection.execute("update conversations set final_state='complete',english_state='unavailable',speaker_state='unavailable',transcription_state='complete' where id=%s", (conversation_id,))

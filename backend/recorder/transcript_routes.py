@@ -1,12 +1,16 @@
 import json
+import hashlib
 import logging
+import struct
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 from . import schemas as s
 from .db import one, many
 from .errors import fail
 from .processing import plan_windows, schedule
+from .audio import MAX_SESSION_SAMPLES, validate_wav
 from .routes import audit, create_run
 from .security import Workspace, workspace, conversation
 
@@ -111,6 +115,61 @@ async def playback(conversation_id: UUID, request: Request, context: Workspace =
              job_id=str(assembly["id"]) if assembly else None,
              job_error_code=assembly["error_code"] if assembly else None)
     return {"url": await request.app.state.storage.signed_read(conv["playback_object_path"]), "expires_in": request.app.state.settings.signed_url_seconds}
+
+
+def _wav_header(samples: int) -> bytes:
+    """Return a PCM WAV header whose data section can be streamed progressively."""
+    data_bytes = samples * 2
+    return b"RIFF" + struct.pack("<I4s4sIHHIIHH4sI", 36 + data_bytes, b"WAVE", b"fmt ", 16,
+        1, 1, 16000, 32000, 2, 16, b"data", data_bytes)
+
+
+@router.get("/{conversation_id}/playback/stream")
+async def playback_stream(conversation_id: UUID, request: Request, start_sample: int = Query(default=0, ge=0), context: Workspace = Depends(workspace)):
+    """Stream one continuous WAV directly from the validated bucket chunks.
+
+    This is the playback fallback for deployments without the background assembly
+    worker. The first validated chunk is sent as soon as it is read; subsequent
+    chunks are yielded as contiguous PCM so the browser can keep playing.
+    """
+    async with request.app.state.db.connection() as connection:
+        conv = await conversation(connection, context, conversation_id)
+        chunks = await many(connection, "select object_path,sample_start,sample_count,bytes,sha256,state from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
+    total_samples = int(conv.get("total_samples") or 0)
+    if not chunks or total_samples <= 0 or total_samples > MAX_SESSION_SAMPLES:
+        fail("playback_unavailable", 409, "Saved audio is not ready for playback")
+    expected = 0
+    for chunk in chunks:
+        if chunk["state"] != "validated" or int(chunk["sample_start"]) != expected:
+            fail("playback_chunks_incomplete", 409, "Some saved audio is still being verified")
+        expected += int(chunk["sample_count"])
+    if expected != total_samples or start_sample >= total_samples:
+        fail("playback_chunks_incomplete", 409, "Saved audio is incomplete")
+    selected = [chunk for chunk in chunks if int(chunk["sample_start"]) + int(chunk["sample_count"]) > start_sample]
+    samples_to_stream = total_samples - start_sample
+
+    async def body():
+        yield _wav_header(samples_to_stream)
+        for chunk in selected:
+            data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+            try:
+                info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+            except ValueError as exc:
+                log.error("playback_chunk_invalid conversation_id=%s sample_start=%s exception_type=%s", conversation_id, chunk["sample_start"], type(exc).__name__)
+                raise RuntimeError("playback_chunk_invalid") from None
+            if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+                log.error("playback_chunk_checksum_mismatch conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
+                raise RuntimeError("playback_chunk_checksum_mismatch")
+            left = max(0, start_sample - int(chunk["sample_start"]))
+            yield info.pcm[left * 2:]
+
+    log.info("playback_stream_started conversation_id=%s start_sample=%s samples=%s chunks=%s", conversation_id, start_sample, samples_to_stream, len(selected))
+    return StreamingResponse(body(), media_type="audio/wav", headers={
+        "Content-Length": str(44 + samples_to_stream * 2),
+        "X-Playback-Mode": "progressive-bucket",
+        "X-Playback-Start-Sample": str(start_sample),
+        "X-Playback-Sample-Rate": "16000",
+    })
 
 
 def srt_time(seconds: float) -> str:

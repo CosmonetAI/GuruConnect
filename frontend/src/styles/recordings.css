@@ -9,7 +9,9 @@
 .recording-row strong, .recording-row small { display: block; }
 .recording-state { text-transform: capitalize; }
 .recording-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
-.recording-playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.recording-playback, .progressive-playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.progressive-playback progress { width: min(180px, 22vw); height: 7px; accent-color: #1764aa; }
+.progressive-playback.is-compact progress { width: 140px; }
 .recording-playback audio { width: min(360px, 42vw); height: 38px; }
 .recording-error { color: #b42318; max-width: 220px; }
 .recording-spin { animation: recording-spin .9s linear infinite; }
