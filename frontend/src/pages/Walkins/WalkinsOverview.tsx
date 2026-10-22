@@ -4,6 +4,7 @@ import { Clock3, Plus, RefreshCw, UsersRound } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinVisit } from '../../types/walkin'
 import { isWalkinDemoMode, listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
+import PageLoader from '../../components/PageLoader'
 import WalkinPagination from './WalkinPagination'
 import './Walkins.css'
 
@@ -94,7 +95,7 @@ export default function WalkinsOverview() {
           <label>Purpose<select value={purpose} onChange={(event) => { setPurpose(event.target.value); setPage(1) }}><option value="">All purposes</option>{walkinPurposes.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}><option value="">All statuses</option>{walkinStatuses.map((item) => <option key={item}>{item}</option>)}</select></label>
         </div>
-        {loading ? <div className="walkin-empty">Loading visitor queue…</div> : visits.length === 0 ? (
+        {loading ? <div className="walkin-empty"><PageLoader kind="walkins" label="Loading visitor queue" detail="Preparing today’s customer visits and priorities." /></div> : visits.length === 0 ? (
           <div className="walkin-empty"><Clock3 size={21} /><strong>No walk-in visitors yet</strong><span>Register a visitor to start the queue.</span></div>
         ) : (
           <div className="walkin-table-wrap">

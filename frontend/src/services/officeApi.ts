@@ -12,7 +12,7 @@ export const supabase = configured ? createClient(url!, key!, { auth: { persistS
 export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
 const serviceErrorMessages: Record<string, string> = {
   api_unreachable: localMode ? 'Local services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
-  configuration_mismatch: 'The frontend is configured for Supabase but the API is running in local mode. Finish the backend setup for the same project, then restart the API.',
+  configuration_mismatch: 'Workspace services are using different modes. Ask your administrator to finish the workspace setup, then try again.',
   engine_unconfigured: 'Configure ElevenLabs in Connections, then explicitly retry the failed speech stage. Your saved audio is preserved.',
   database_schema_missing: 'GuruConnect setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
   recording_not_saved: 'Stop recording and finish saving the audio before saving this enquiry.',
@@ -21,7 +21,7 @@ const serviceErrorMessages: Record<string, string> = {
   database_not_configured: 'Workspace services are not configured yet. Ask your administrator to finish the database setup, then try again.',
   database_busy: 'Workspace services are temporarily unavailable. Wait a moment and try again. If this continues, ask your administrator to check the database connection.',
   request_timeout: 'The request took too long. Check your connection and try again. If you were saving a change, refresh its status before submitting it again.',
-  configuration_missing: 'Workspace services are not configured yet. Ask your administrator to connect Supabase and the API, then try again.',
+  configuration_missing: 'Workspace services are not configured yet. Ask your administrator to finish the workspace setup, then try again.',
   invalid_credentials: 'The provider rejected the saved API key. Copy a complete, active key from its dashboard, save it here, and test again.',
   metadata_permission_denied: 'This connection check needs User → Read (user_read) permission on your ElevenLabs key. Enable it, save changes in ElevenLabs, and test again.',
   provider_permission_denied: 'The API key does not allow this action. Check its permissions in the provider dashboard and try again.',
@@ -60,7 +60,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 export async function request<T>(path: string, workspace?: string | null, init: RequestInit = {}): Promise<T> {
-  if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Connect Supabase and the API before continuing.');
+  if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
   const abort = new AbortController();
   const cancelled = () => abort.abort(init.signal?.reason ?? new DOMException('The request was cancelled.', 'AbortError'));

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom'
+import PageLoader from '../../components/PageLoader'
 import {
   AlertCircle,
   ArrowLeft,
@@ -194,8 +195,8 @@ export default function NewEnquiry() {
   const { id } = useParams()
   const conversion = (location.state as { walkinConversion?: WalkinConversion } | null)?.walkinConversion
   const resource = useScopedResource<Enquiry>(id ? `/enquiries/${encodeURIComponent(id)}` : null)
-  if (!user || !workspace) return <p role="status">Loading your workspace…</p>
-  if (id && !resource.data) return <p role="status">{resource.loading ? 'Loading enquiry…' : resource.error || 'Enquiry unavailable.'}</p>
+  if (!user || !workspace) return <PageLoader kind="enquiries" label="Loading your workspace" detail="Preparing the enquiry capture workspace." />
+  if (id && !resource.data) return resource.loading ? <PageLoader kind="enquiries" label="Loading enquiry" detail="Preparing the saved customer opportunity." /> : <p role="status">{resource.error || 'Enquiry unavailable.'}</p>
   return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${id || conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${id ? `:edit:${id}` : conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} existing={resource.data} />
 }
 

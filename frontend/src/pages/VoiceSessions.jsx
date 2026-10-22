@@ -14,6 +14,7 @@ import {
 import { call } from "../zoho/shared/api.js";
 import ConversationRecorder from "./Enquiries/ConversationRecorder";
 import ConversationTranscript from "../components/ConversationTranscript";
+import PageLoader from "../components/PageLoader";
 import "../zoho/styles.css";
 import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
@@ -499,7 +500,7 @@ export default function VoiceSessions() {
     null;
   const createDocument = async (type) => {
     if (customerType === "unknown") {
-      setError("The Zoho Books contact type is still being checked.");
+      setError("Customer account details are still being checked.");
       return;
     }
     if (customerType === "dealer" && type !== "purchase-order") {
@@ -516,7 +517,7 @@ export default function VoiceSessions() {
       (line) => line.item_id && Number(line.quantity) > 0,
     );
     if (!lines.length) {
-      setError("Search and select at least one Zoho Books product first.");
+      setError("Search and select at least one catalogue product first.");
       return;
     }
     const contactId = booksContactId || biginContactId;
@@ -566,7 +567,7 @@ export default function VoiceSessions() {
           notes: "Generated from GuruConnect voice session",
         }),
       });
-      setError(`${type.replace("-", " ")} generated in Zoho Books.`);
+      setError(`${type.replace("-", " ")} generated successfully.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -601,8 +602,9 @@ export default function VoiceSessions() {
             />
           </div>
           <div className="contact-heading">
-            <BookUser size={15} /> Recent contacts {contactBusy && "…"}
+            <BookUser size={15} /> Recent contacts
           </div>
+          {contactBusy && <PageLoader kind="contacts" label="Loading contacts" detail="Finding recent customer records." compact />}
           {contacts.map((contact) => (
             <button
               type="button"
@@ -770,7 +772,7 @@ export default function VoiceSessions() {
                       hidden={needsCollapsed}
                     >
                       <p className="catalogue-note">
-                        Search the Zoho Books catalogue, then capture the
+                        Search the product catalogue, then capture the
                         requested quantity, pricing context, and stock needs.
                       </p>
                       {productRequirements.map((line, index) => (

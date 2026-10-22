@@ -181,6 +181,9 @@ class ZohoClient:
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
     async def update_pipeline(self, record_id, data): return await self.request('PUT',f'/bigin/v2/Pipelines/{record_id}',json={'data':[{'id': record_id, **data}]})
     async def delete_pipeline(self, record_id): return await self.request('DELETE',f'/bigin/v2/Pipelines/{record_id}')
+    async def delete_task(self, task_id): return await self.request('DELETE',f'/bigin/v2/Tasks/{task_id}')
+    async def list_deleted_bigin_records(self, module, deleted_type='recycle', page=1):
+        return await self.request('GET', f'/bigin/v2/{module}/deleted', params={'type': deleted_type, 'page': page, 'per_page': 200})
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
     async def list_pipeline_records(self, pipeline_id, page=1):
         fields = 'id,Deal_Name,Stage,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Sub_Pipeline,Pipeline,Description,Created_Time,Modified_Time,Created_By,Modified_By,Last_Activity_Time,Tag,Associated_Products,Secondary_Contacts'
@@ -204,7 +207,7 @@ class ZohoClient:
             if value not in (None,''): params[key]=value
         return await self.request('GET','/books/v3/items',params=params)
     async def search_books_items(self, org, query='', date=None, page=1):
-        params = {'organization_id': org, 'per_page': 40, 'page': page}
+        params = {'organization_id': org, 'status': 'active', 'per_page': 200, 'page': page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/items',params=params)

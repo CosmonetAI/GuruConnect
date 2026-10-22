@@ -62,14 +62,17 @@ class RequestBoundary:
             await self.app(scope, receive, send)
             return
         request_id = str(uuid4())
+        started_at = time.perf_counter()
+        status_code = 500
         scope.setdefault("state", {})["request_id"] = request_id
         response_headers = security_headers(self.settings, request_id)
         response_started, response_ended = False, False
 
         async def secure_send(message):
-            nonlocal response_started, response_ended
+            nonlocal response_started, response_ended, status_code
             if message["type"] == "http.response.start":
                 response_started = True
+                status_code = message["status"]
                 replacement = {key.lower().encode(): value.encode() for key, value in response_headers.items()}
                 message = {**message, "headers": [(key, value) for key, value in message.get("headers", []) if key.lower() not in replacement]
                            + list(replacement.items())}
@@ -190,5 +193,8 @@ class RequestBoundary:
                     await JSONResponse({"detail": {"code": "internal_error", "request_id": request_id}}, 500)(scope, bounded_receive, secure_send)
                 elif not response_ended:
                     await secure_send({"type": "http.response.body", "body": b"", "more_body": False})
+            log.info("request_complete request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+                     request_id, scope.get("method", ""), scope.get("path", ""), status_code,
+                     (time.perf_counter() - started_at) * 1000)
         finally:
             self.active -= 1

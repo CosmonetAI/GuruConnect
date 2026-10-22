@@ -29,12 +29,12 @@ function ZohoDataPage({ title, pill, children }) {
   </PageFrame>
 }
 
-export function Products() { return <ZohoDataPage title="My Products" pill="Live Zoho Books search">{setError => <ProductsPage setError={setError} />}</ZohoDataPage> }
-export function Contacts() { return <ZohoDataPage title="Contacts" pill="Live Zoho Bigin search">{setError => <ContactsPage setError={setError} />}</ZohoDataPage> }
-export function Quotes() { return <ZohoDataPage title="Quotes" pill="Live Zoho Books search">{setError => <QuotesPage setError={setError} />}</ZohoDataPage> }
-export function SalesOrders() { return <ZohoDataPage title="Sales Orders" pill="Live Zoho Books search">{setError => <OrdersPage setError={setError} />}</ZohoDataPage> }
-export function PurchaseOrders() { return <ZohoDataPage title="Purchase Orders" pill="Live Zoho Books search">{setError => <PurchaseOrdersPage setError={setError} />}</ZohoDataPage> }
-export function Invoices() { return <ZohoDataPage title="Invoices" pill="Live Zoho Books search">{setError => <InvoicesPage setError={setError} />}</ZohoDataPage> }
+export function Products() { return <ZohoDataPage title="Product catalogue" pill="Connected catalogue">{setError => <ProductsPage setError={setError} />}</ZohoDataPage> }
+export function Contacts() { return <ZohoDataPage title="Customer directory" pill="Connected records">{setError => <ContactsPage setError={setError} />}</ZohoDataPage> }
+export function Quotes() { return <ZohoDataPage title="Quotes" pill="Connected transactions">{setError => <QuotesPage setError={setError} />}</ZohoDataPage> }
+export function SalesOrders() { return <ZohoDataPage title="Sales orders" pill="Connected transactions">{setError => <OrdersPage setError={setError} />}</ZohoDataPage> }
+export function PurchaseOrders() { return <ZohoDataPage title="Purchase orders" pill="Connected transactions">{setError => <PurchaseOrdersPage setError={setError} />}</ZohoDataPage> }
+export function Invoices() { return <ZohoDataPage title="Invoices" pill="Connected transactions">{setError => <InvoicesPage setError={setError} />}</ZohoDataPage> }
 
 export function AIChats() {
   const [chats, setChats] = useState([])

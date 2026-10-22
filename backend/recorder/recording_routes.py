@@ -1,6 +1,7 @@
 import hashlib
 import json
 from uuid import UUID
+import logging
 from fastapi import APIRouter, Depends, Request
 from psycopg.types.json import Jsonb
 from . import schemas as s
@@ -12,6 +13,7 @@ from .routes import audit
 from .security import Workspace, workspace, conversation, owned_conversation
 
 router = APIRouter(prefix="/api/v1/conversations")
+log = logging.getLogger("recorder.api")
 
 
 async def valid_lease(connection, context: Workspace, conversation_id: UUID, token: UUID):
@@ -144,6 +146,7 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await connection.execute("update audio_chunks set state='validated',confirmed_at=now(),validated_at=now() where id=%s", (row["id"],))
         await connection.execute("update conversations set total_samples=greatest(total_samples,%s),duration_seconds=greatest(duration_seconds,%s),updated_at=now() where id=%s", (body.start_sample+body.sample_count, (body.start_sample+body.sample_count)/16000, conversation_id))
         await plan_windows(connection, conversation_id, request.app.state.settings)
+    log.info("chunk_validated conversation_id=%s part_id=%s sequence=%s bytes=%s", conversation_id, body.part_id, body.sequence, len(data))
     return {"confirmed": True, "chunk_id": row["id"], "sample_count": info.sample_count}
 
 
@@ -177,7 +180,8 @@ async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, co
         await connection.execute("update processing_runs set audio_manifest_hash=%s where conversation_id=%s", (digest, conversation_id))
         await connection.execute("delete from recording_leases where conversation_id=%s and user_id=%s and token=%s", (conversation_id, context.user.id, body.lease_token))
         if expected:
-            await schedule(connection, conversation_id, None, "assemble", "playback", {"sample_start": 0, "sample_end": expected}, priority=20)
+            playback_job = await schedule(connection, conversation_id, None, "assemble", "playback", {"sample_start": 0, "sample_end": expected}, priority=20)
+            log.info("playback_assembly_queued conversation_id=%s job_id=%s chunks=%s samples=%s", conversation_id, playback_job, len(chunks), expected)
             await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
         else:
             await connection.execute("update conversations set final_state='complete',english_state='unavailable',speaker_state='unavailable',transcription_state='complete' where id=%s", (conversation_id,))

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import PageLoader from '../../components/PageLoader'
 import { ArrowLeft, CalendarDays, Check, Clock3, FileText, UserRound, UsersRound } from 'lucide-react'
 import {
   assignWalkin,
@@ -171,7 +172,7 @@ export default function WalkinDetail() {
     })
   }
 
-  if (loading) return <div className="walkin-page"><div className="walkin-empty">Loading visitor details…</div></div>
+  if (loading) return <div className="walkin-page"><div className="walkin-empty"><PageLoader kind="walkins" label="Loading visitor details" detail="Preparing the customer visit record." /></div></div>
   if (!visit) return <div className="walkin-page"><div className="walkin-alert error">{error || 'Walk-in visit not found.'}</div><Link className="walkin-button secondary" to="/walkins"><ArrowLeft size={16} /> Back to queue</Link></div>
 
   return (

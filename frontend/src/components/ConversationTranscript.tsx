@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useOffice } from '../contexts/OfficeContext'
 import { ApiError, duration, errorMessageForCode, json, message, request, type Progress, type Transcript, type Turn } from '../services/officeApi'
 import { OfficeDialog, OfficeNotice, OfficeStatus, useOfficeResource } from './OfficeUi'
+import PageLoader from './PageLoader'
 
 const activeJobStates = new Set(['queued', 'retry', 'running', 'processing'])
 const finalStates = new Set(['complete', 'completed', 'failed', 'blocked', 'cancelled', 'deleted'])
@@ -79,16 +80,26 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
     const controller = new AbortController()
     operations.current.add(controller)
     try {
-      const result = await request<{ url: string; expires_in: number }>(`/conversations/${conversationId}/playback`, workspace.id, { signal: controller.signal })
-      if (!alive.current) return
-      const parsed = new URL(result.url)
-      if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('The service returned an invalid playback link.')
-      clearTimeout(expiry.current)
-      setUrl(result.url)
-      expiry.current = setTimeout(() => {
-        audio.current?.pause(); setUrl(''); setTime(-1)
-        setNotice('Playback access expired. Load a fresh authorised link to continue.')
-      }, Math.max(1, Math.min(result.expires_in || 60, 3600)) * 1000)
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          const result = await request<{ url: string; expires_in: number }>(`/conversations/${conversationId}/playback`, workspace.id, { signal: controller.signal })
+          if (!alive.current) return
+          const parsed = new URL(result.url)
+          if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('The service returned an invalid playback link.')
+          clearTimeout(expiry.current)
+          setUrl(result.url)
+          setPlaybackPending(false)
+          expiry.current = setTimeout(() => {
+            audio.current?.pause(); setUrl(''); setTime(-1)
+            setNotice('Playback access expired. Load a fresh authorised link to continue.')
+          }, Math.max(1, Math.min(result.expires_in || 60, 3600)) * 1000)
+          return
+        } catch (failure) {
+          if (!(failure instanceof ApiError) || failure.code !== 'playback_assembly_pending' || attempt === 5) throw failure
+          if (alive.current) setPlaybackPending(true)
+          await new Promise<void>(resolve => setTimeout(resolve, 1500))
+        }
+      }
     } catch (failure) {
       if (!alive.current || controller.signal.aborted) return
       if (failure instanceof ApiError && failure.code === 'playback_assembly_pending') setPlaybackPending(true)
@@ -137,26 +148,26 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
     {(error || progress.error || transcript.error) && <OfficeNotice error>{error || progress.error || transcript.error}</OfficeNotice>}
     {notice && <OfficeNotice>{notice}</OfficeNotice>}
     {progress.pollPaused && <OfficeNotice>Automatic status checks paused after repeated checks. Refresh status to continue.</OfficeNotice>}
-    {progress.loading && <p role="status">Loading authorised processing status…</p>}
+    {progress.loading && <PageLoader kind="connections" label="Checking processing status" detail="Reviewing transcription and translation readiness." compact />}
     {c && <dl className="office-stages">{[
       ['Capture', c.capture_state], ['Audio saved', c.upload_state], ['Source transcript', c.transcription_state], ['English transcript', c.english_state], ['Speakers', c.speaker_state], ['Final processing', c.finalization_state],
     ].map(([label, value]) => <div className="office-stage" key={label}><dt>{label}</dt><dd><OfficeStatus value={value} /></dd></div>)}</dl>}
     {!!speechJobs.length && <OfficeNotice><strong>Speech transcription needs attention</strong>{speechJobs.map(job => <p key={job.id}>{errorMessageForCode(job.error_code || '', 'Check your transcription connection and retry the failed stage. Saved audio is preserved.')}</p>)}<div className="office-row"><Link className="office-button office-secondary" to="/integrations">Check transcription connection</Link><button type="button" className="office-button" disabled={busy} onClick={() => setConfirmation('all')}>Retry failed stages</button></div></OfficeNotice>}
     <section className="office-panel">
-      <div className="office-row office-between"><div><h3>Source audio</h3><p className="office-small">Timing refers to original speech intervals. Translated words have no invented exact alignment.</p></div>{!url && <button type="button" className="office-button office-secondary" disabled={playbackLoading || !c} onClick={() => void loadPlayback()}>{playbackLoading ? 'Loading playback…' : 'Load playback'}</button>}</div>
-      {playbackPending && <OfficeNotice>{c?.upload_state === 'saved' ? 'Your audio is saved. Playback assembly is pending; keep the background worker running, then check again.' : 'Playback becomes available after the recording stops and all audio is saved.'}</OfficeNotice>}
+      <div className="office-row office-between"><div><h3>Source audio</h3><p className="office-small">Timing refers to original speech intervals. Translated words have no invented exact alignment.</p></div>{!url && <button type="button" className="office-button office-secondary" disabled={playbackLoading || !c} onClick={() => void loadPlayback()}>{playbackLoading ? 'Preparing playback…' : 'Load playback'}</button>}</div>
+      {playbackPending && <OfficeNotice>{c?.upload_state === 'saved' ? 'Playback assembly is pending. Your audio is saved while we assemble the complete recording from its verified chunks.' : 'Playback becomes available after the recording stops and all audio is saved.'}</OfficeNotice>}
       {url && <audio ref={audio} controls preload="metadata" src={url} aria-label="Conversation source audio" onTimeUpdate={event => setTime(event.currentTarget.currentTime)} onError={() => { clearTimeout(expiry.current); setUrl(''); setTime(-1); setError('Playback access may have expired. Load a fresh authorised link.') }} />}
     </section>
     <section className="office-panel">
       <div className="office-row office-between"><h3>English transcript</h3><OfficeStatus value={transcript.data?.status || c?.english_state} /></div>
-      {translationAttention && <OfficeNotice><strong>English translation needs attention</strong><p>Source text and saved audio are preserved. Connecting a provider does not automatically retry a previously blocked recording.</p>{translationJobs.map(job => <p key={job.id} className="office-small">{errorMessageForCode(job.error_code || '', 'This translation job is blocked. Check the provider connection, worker and usage limits before retrying.')}</p>)}<div className="office-row"><button type="button" disabled={busy} className="office-button" onClick={() => setConfirmation('translation')}>Retry English translation</button>{admin && <Link className="office-button office-secondary" to="/integrations">Check translation connection</Link>}</div></OfficeNotice>}
+      {translationAttention && <OfficeNotice><strong>English translation needs attention</strong><p>Source text and saved audio are preserved. Reconnecting the translation service does not automatically retry a previously blocked recording.</p>{translationJobs.map(job => <p key={job.id} className="office-small">{errorMessageForCode(job.error_code || '', 'This translation job is blocked. Check the translation service and usage limits before retrying.')}</p>)}<div className="office-row"><button type="button" disabled={busy} className="office-button" onClick={() => setConfirmation('translation')}>Retry English translation</button>{admin && <Link className="office-button office-secondary" to="/integrations">Check translation connection</Link>}</div></OfficeNotice>}
       {transcript.data?.manual_review_required && <OfficeNotice>Machine translation requires review. Check meaning, names, numbers and product codes against the source recording.</OfficeNotice>}
       <div className="office-row office-between"><label className="office-field" style={{ flex: '1 1 220px' }}>Find a phrase<input value={query} maxLength={200} onChange={event => setQuery(event.target.value)} placeholder="Search source or English text" /></label><label className="office-checkbox"><input type="checkbox" checked={original} onChange={event => setOriginal(event.target.checked)} />Show original</label></div>
-      {transcript.loading ? <p role="status">Loading transcript…</p> : turns.length ? <ol className="office-turns">{turns.map(turn => {
+      {transcript.loading ? <PageLoader kind="recordings" label="Loading transcript" detail="Preparing the conversation turns for review." compact /> : turns.length ? <ol className="office-turns">{turns.map(turn => {
         const name = turn.speaker_id ? assignments.get(turn.speaker_id)?.name : undefined
         const playing = time >= turn.start_seconds && time < turn.end_seconds
         return <li className={`office-turn${playing ? ' is-playing' : ''}`} key={turn.id}><div className="office-row office-between"><div className="office-row"><strong>{name || (turn.speaker_id ? voices.get(turn.speaker_id) : 'Unresolved speaker')}</strong><span className="office-speaker-tag">{name ? 'Confirmed' : 'Provisional'}</span></div><div className="office-row"><button type="button" className="office-button office-secondary" disabled={!url} aria-label={`Play source audio at ${duration(turn.start_seconds)}`} onClick={() => { if (audio.current) { audio.current.currentTime = turn.start_seconds; void audio.current.play().catch(() => setError('Playback was blocked by your browser. Use the audio player controls.')) } }}>{duration(turn.start_seconds)}–{duration(turn.end_seconds)}</button><button type="button" className="office-button office-secondary" disabled={busy || !versionId} onClick={() => { setError(''); setEditing(turn) }}>Correct text</button></div></div>{turn.english_text != null ? <p>{turn.english_text}</p> : <p className="office-small">English unavailable for this turn. Source text is preserved.</p>}{original && <div className="office-source"><small>Original · {turn.source_language || 'detected language'}</small><p>{turn.source_text || 'Original unavailable for this engine pass.'}</p></div>}{turn.is_uncertain && <p className="office-small">Speaker attribution needs review.</p>}</li>
-      })}</ol> : <p>{query ? 'No matching turns. Try a different phrase.' : 'The transcript appears when the background worker completes processing. Saved audio remains available if transcription or translation fails.'}</p>}
+      })}</ol> : <p>{query ? 'No matching turns. Try a different phrase.' : 'The transcript will appear when processing is complete. Saved audio remains available if transcription or translation needs attention.'}</p>}
       <div className="office-row"><button type="button" className="office-button office-secondary" disabled={busy || !versionId || !speakers.length} onClick={() => { setError(''); setAssignment(true) }}>Assign speaker names</button></div>
       <p className="office-small">Detected voices are provisional groups, not verified identities. Listen before assigning a participant name.</p>
     </section>

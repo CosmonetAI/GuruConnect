@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Annotated, Literal
 from uuid import UUID
@@ -191,6 +191,52 @@ def serialize_requirement(row):
     return result
 
 
+def missed_cutoff(now_local: datetime | None = None) -> datetime:
+    """Return the most recent 9 PM India cutoff for the daily rollup."""
+    current = now_local or datetime.now(ZoneInfo("Asia/Kolkata"))
+    cutoff = current.replace(hour=21, minute=0, second=0, microsecond=0)
+    return cutoff if current >= cutoff else cutoff - timedelta(days=1)
+
+
+async def rollup_missed_visitors(connection, cutoff: datetime | None = None) -> int:
+    """Snapshot visits with no linked recording and purge expired snapshots.
+
+    The unique visit key makes this safe when the nightly task and a page load
+    happen at the same time.
+    """
+    await connection.execute("delete from public.guruconnect_missed_visitors where expires_at <= now()")
+    rows = await many(connection, """
+        select v.*,
+               coalesce(v.assigned_agent_id, v.registered_by) as member_id
+        from public.guruconnect_walkin_visits v
+        where v.check_in_at < %s
+          and v.status <> 'Cancelled'
+          and not exists (
+            select 1 from public.guruconnect_walkin_recordings r
+            where r.organisation_id=v.organisation_id and r.visit_id=v.id
+          )
+          and not exists (
+            select 1 from public.guruconnect_missed_visitors m
+            where m.organisation_id=v.organisation_id and m.visit_id=v.id
+          )
+        order by v.check_in_at asc
+        limit 5000
+    """, (cutoff or missed_cutoff(),))
+    for row in rows:
+        payload = row["payload"] if isinstance(row["payload"], dict) else {}
+        await connection.execute("""
+            insert into public.guruconnect_missed_visitors
+              (organisation_id,member_id,visit_id,registered_by,assigned_agent_id,
+               visit_number,customer_name,mobile_number,email,purpose,payload,check_in_at)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            on conflict (organisation_id,visit_id) do nothing
+        """, (row["organisation_id"], row["member_id"], row["id"], row["registered_by"],
+              row["assigned_agent_id"], row["visit_number"], row["customer_name"],
+              row["mobile_number"], payload.get("email", ""), row["purpose"], Jsonb(payload),
+              row["check_in_at"]))
+    return len(rows)
+
+
 async def active_context(connection, context):
     # Hold membership stable until this write commits; concurrent revocation or
     # demotion must serialize with the operation rather than reuse cached roles.
@@ -351,6 +397,35 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
     result = serialize_visit(saved)
     result["ticket"] = {"number": daily_sequence, "token": tracking_token, "stage": "new"}
     return result
+
+
+@router.get("/missed-visitors")
+async def list_missed_visitors(request: Request, context: Workspace = Depends(workspace)):
+    async with request.app.state.db.connection() as connection:
+        await rollup_missed_visitors(connection)
+        rows = await many(connection, """
+            select m.*, p.display_name as assigned_agent_name
+            from public.guruconnect_missed_visitors m
+            left join public.profiles p on p.id=m.assigned_agent_id
+            where m.organisation_id=%s
+              and m.expires_at > now()
+              and (%s or m.member_id=%s or m.registered_by=%s or m.assigned_agent_id=%s)
+              and not exists (
+                select 1 from public.guruconnect_walkin_recordings r
+                where r.organisation_id=m.organisation_id and r.visit_id=m.visit_id
+              )
+            order by m.missed_at desc, m.id desc
+            limit 200
+        """, (context.id, context.admin, context.user.id, context.user.id, context.user.id))
+    return {"items": [{
+        "id": str(row["id"]), "visitId": str(row["visit_id"]),
+        "visitNumber": f"WI-{row['check_in_at'].year}-{row['visit_number']:06d}",
+        "customerName": row["customer_name"], "mobileNumber": row["mobile_number"],
+        "email": row["email"], "purpose": row["purpose"], "payload": row["payload"],
+        "assignedAgentName": row["assigned_agent_name"] or "Salesperson",
+        "checkInAt": row["check_in_at"].isoformat(), "missedAt": row["missed_at"].isoformat(),
+        "expiresAt": row["expires_at"].isoformat(),
+    } for row in rows]}
 
 
 @router.get("/{visit_id}")

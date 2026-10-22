@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio, json
+import hashlib
 import secrets
 import re
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -145,6 +146,107 @@ def _db_http_error(error: Exception):
     if isinstance(error, OperationalError):
         raise HTTPException(503, detail) from error
     raise error
+
+RECENT_ZOHO_LIMIT = 40
+
+def _recent_cache_key(dataset: str, row: dict, index: int = 0):
+    """Build a stable key while keeping Bigin and Books records separate."""
+    row = row if isinstance(row, dict) else {}
+    source = str(row.get('__source') or '').strip()
+    if dataset == 'products':
+        value = row.get('item_id') or row.get('id') or row.get('sku') or row.get('name')
+    elif dataset == 'contacts':
+        value = row.get('id') or row.get('contact_id') or row.get('Full_Name') or row.get('contact_name')
+        source = source or str(row.get('source') or 'zoho')
+    elif dataset == 'quotes':
+        value = row.get('estimate_id') or row.get('estimate_number') or row.get('reference_number')
+    elif dataset == 'orders':
+        value = row.get('salesorder_id') or row.get('salesorder_number') or row.get('reference_number')
+    elif dataset == 'purchase_orders':
+        value = row.get('purchaseorder_id') or row.get('purchaseorder_number') or row.get('reference_number')
+    elif dataset == 'invoices':
+        value = row.get('invoice_id') or row.get('invoice_number') or row.get('reference_number')
+    elif dataset == 'pipelines':
+        pipeline = row.get('Pipeline') if isinstance(row.get('Pipeline'), dict) else {}
+        layout = row.get('$layout_id') if isinstance(row.get('$layout_id'), dict) else {}
+        value = f"{pipeline.get('id') or layout.get('id') or ''}:{row.get('id') or row.get('record_id') or ''}"
+    else:
+        value = row.get('id') or row.get('record_id')
+    if value not in (None, ''):
+        return f'{source}:{value}' if source else str(value)
+    raw = json.dumps(row, sort_keys=True, default=str)
+    return f'fallback:{index}:{hashlib.sha256(raw.encode()).hexdigest()}'
+
+def _recent_cache_rows(dataset: str, limit: int = RECENT_ZOHO_LIMIT):
+    org = get_organisation_id(); member = get_member_id()
+    if not org or not member:
+        return []
+    zoho_org = str((zoho.status() or {}).get('organization_id') or '')
+    try:
+        with require_db() as db:
+            rows = db.execute(text("""select data from public.zoho_recent_records
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+                and zoho_organization_id=:zoho_org and dataset=:dataset
+                order by last_seen_at desc limit :limit"""),
+                {'org': org, 'member': member, 'zoho_org': zoho_org, 'dataset': dataset, 'limit': limit}).all()
+        return [row[0] if isinstance(row[0], dict) else json.loads(row[0]) for row in rows]
+    except Exception:
+        # The live Zoho path must continue to work if this optional cache has
+        # not been migrated yet or Supabase is temporarily unavailable.
+        return []
+
+def _cache_recent_rows(dataset: str, records):
+    org = get_organisation_id(); member = get_member_id()
+    rows = [row for row in (records or []) if isinstance(row, dict)]
+    if not org or not member or not rows:
+        return
+    zoho_org = str((zoho.status() or {}).get('organization_id') or '')
+    try:
+        with require_db() as db:
+            # Reverse insertion order so the first row returned by Zoho gets
+            # the newest timestamp and appears first in the next default view.
+            for index, row in enumerate(reversed(rows)):
+                db.execute(text("""insert into public.zoho_recent_records
+                  (organisation_id, member_id, zoho_organization_id, dataset, record_key, data, last_seen_at, updated_at)
+                  values(cast(:org as uuid), cast(:member as uuid), :zoho_org, :dataset, :record_key,
+                    cast(:data as jsonb), :seen_at, :seen_at)
+                  on conflict (organisation_id, member_id, zoho_organization_id, dataset, record_key)
+                  do update set data=excluded.data, last_seen_at=excluded.last_seen_at,
+                    updated_at=excluded.updated_at"""), {
+                    'org': org, 'member': member, 'zoho_org': zoho_org, 'dataset': dataset,
+                    'record_key': _recent_cache_key(dataset, row, index),
+                    'data': json.dumps(row, default=str), 'seen_at': now(),
+                })
+            db.execute(text("""delete from public.zoho_recent_records
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+                and zoho_organization_id=:zoho_org and dataset=:dataset and record_key not in (
+                  select record_key from public.zoho_recent_records
+                  where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+                    and zoho_organization_id=:zoho_org and dataset=:dataset
+                    order by last_seen_at desc limit :limit)"""),
+                {'org': org, 'member': member, 'zoho_org': zoho_org, 'dataset': dataset, 'limit': RECENT_ZOHO_LIMIT})
+            db.commit()
+    except Exception:
+        # Cache writes are deliberately best-effort and never block a Zoho
+        # response or a document form.
+        return
+
+def _recent_cache_remove(dataset: str, record_key: str):
+    org = get_organisation_id(); member = get_member_id()
+    if not org or not member or not record_key:
+        return
+    zoho_org = str((zoho.status() or {}).get('organization_id') or '')
+    try:
+        with require_db() as db:
+            db.execute(text("""delete from public.zoho_recent_records
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+                and zoho_organization_id=:zoho_org and dataset=:dataset
+                and (record_key=:record_key or record_key like :record_suffix)"""),
+                {'org': org, 'member': member, 'zoho_org': zoho_org, 'dataset': dataset,
+                 'record_key': str(record_key), 'record_suffix': f'%:{record_key}'})
+            db.commit()
+    except Exception:
+        return
 @app.get('/api/health')
 def health(): return {'ok':True,'service':'guru-group-ai-sales'}
 @app.get('/api/zoho/status')
@@ -290,9 +392,10 @@ async def save_voice_chunk(session_id: str, request: Request, chunk_index: int =
         audio = await request.body()
         if not audio: raise HTTPException(422, 'Audio chunk is empty')
         with require_db() as db:
-            exists = db.execute(text("select id from chat_sessions where id=:session"), {'session': session_id}).first()
+            exists = db.execute(text("select id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
             if not exists: raise HTTPException(404, 'Voice session not found')
-            path = f"{session_id}/{chunk_index}.webm"
+            extension = {'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/webm': 'webm'}.get(mime_type.split(';', 1)[0].strip(), 'webm')
+            path = f"{session_id}/{chunk_index}.{extension}"
         if not settings.supabase_url or not settings.supabase_service_role_key: raise HTTPException(503, 'Supabase Storage is not configured')
         storage_mime = mime_type.split(';', 1)[0].strip() or 'audio/webm'
         headers = {'Authorization': f'Bearer {settings.supabase_service_role_key}', 'apikey': settings.supabase_service_role_key, 'Content-Type': storage_mime, 'x-upsert': 'true'}
@@ -328,17 +431,25 @@ async def pipeline_layouts(refresh: bool = False):
 @app.get('/api/pipelines')
 async def pipeline_records(pipeline_id: str, page: int = 1):
     try:
+        cached_records = [row for row in _recent_cache_rows('pipelines')
+                          if isinstance(row.get('Pipeline'), dict) and str(row['Pipeline'].get('id')) == str(pipeline_id)]
+        if page == 1 and cached_records:
+            return {'records': cached_records, 'page': 1, 'has_more': True, 'source': 'supabase', 'last_sync': None}
         with require_db() as db:
             rows = db.execute(text("""select record_id,pipeline_id,data,modified_time from zoho_pipeline_records
               where pipeline_id=:pipeline_id and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
-              order by modified_time desc limit 50"""), {'pipeline_id': pipeline_id, 'org': get_organisation_id(), 'member': get_member_id()}).all()
+              order by modified_time desc limit 40"""), {'pipeline_id': pipeline_id, 'org': get_organisation_id(), 'member': get_member_id()}).all()
             last_sync = db.execute(text("""select synced_at from zoho_pipeline_sync
               where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"""), {'org': get_organisation_id(), 'member': get_member_id()}).scalar()
         if page == 1 and rows:
-            return {'records': [json.loads(row[2]) if isinstance(row[2], str) else row[2] for row in rows], 'page': 1, 'has_more': len(rows) == 50, 'source': 'supabase', 'last_sync': last_sync.isoformat() if last_sync else None}
+            records = [json.loads(row[2]) if isinstance(row[2], str) else row[2] for row in rows]
+            _cache_recent_rows('pipelines', records)
+            return {'records': records, 'page': 1, 'has_more': len(rows) == 40, 'source': 'supabase', 'last_sync': last_sync.isoformat() if last_sync else None}
         result = await zoho.list_pipeline_records(pipeline_id, page)
         info = result.get('info', {})
-        return {'records': result.get('data', []), 'page': page, 'has_more': bool(info.get('more_records')), 'source': 'zoho', 'last_sync': last_sync.isoformat() if last_sync else None}
+        records = result.get('data', [])
+        _cache_recent_rows('pipelines', records)
+        return {'records': records, 'page': page, 'has_more': bool(info.get('more_records')), 'source': 'zoho', 'last_sync': last_sync.isoformat() if last_sync else None}
     except Exception as e: raise HTTPException(502, f'Unable to load pipeline records: {e}')
 
 @app.get('/api/pipelines/search')
@@ -348,27 +459,35 @@ async def pipeline_search(word: str):
         return {'records': [], 'info': {'count': 0, 'more_records': False}}
     try:
         result = await zoho.search_pipeline_records(cleaned_word)
-        return {'records': result.get('data', []), 'info': result.get('info', {})}
+        records = result.get('data', [])
+        _cache_recent_rows('pipelines', records)
+        return {'records': records, 'info': result.get('info', {})}
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Bigin pipelines: {e}')
 
 @app.get('/api/pipelines/record/{record_id}')
 async def pipeline_record(record_id: str):
     try:
         result = await zoho.pipeline_record(record_id)
-        return {'record': (result.get('data') or [None])[0]}
+        record = (result.get('data') or [None])[0]
+        _cache_recent_rows('pipelines', [record] if record else [])
+        return {'record': record}
     except Exception as e: raise HTTPException(502, f'Unable to load pipeline record: {e}')
 
 @app.post('/api/pipelines')
 async def create_pipeline_record(body: dict):
     try:
         result = await zoho.create_pipeline(body)
-        return {'record': (result.get('data') or [None])[0], 'response': result}
+        record = (result.get('data') or [None])[0]
+        _cache_recent_rows('pipelines', [record] if record else [])
+        return {'record': record, 'response': result}
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Bigin pipeline record: {e}')
 
 @app.put('/api/pipelines/record/{record_id}')
 async def update_pipeline_record(record_id: str, body: dict):
     try:
         result = await zoho.update_pipeline(record_id, body)
+        record = (result.get('data') or [None])[0]
+        _cache_recent_rows('pipelines', [record] if record else [])
         if 'Stage' in body:
             try:
                 with require_db() as db:
@@ -385,14 +504,44 @@ async def update_pipeline_record(record_id: str, body: dict):
                     db.commit()
             except Exception:
                 pass
-        return {'record': (result.get('data') or [None])[0], 'response': result}
+        return {'record': record, 'response': result}
     except Exception as e: raise HTTPException(502, f'Unable to update Zoho Bigin pipeline record: {e}')
 
 @app.delete('/api/pipelines/record/{record_id}')
 async def delete_pipeline_record(record_id: str):
     try:
-        return await zoho.delete_pipeline(record_id)
+        result = await zoho.delete_pipeline(record_id)
+        _recent_cache_remove('pipelines', record_id)
+        return result
     except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Bigin pipeline record: {e}')
+
+@app.get('/api/bigin/deleted/{module}')
+async def deleted_bigin_records(module: str, type: str = 'recycle', page: int = 1):
+    allowed_modules = {'Pipelines', 'Tasks'}
+    allowed_types = {'all', 'recycle', 'permanent'}
+    if module not in allowed_modules:
+        raise HTTPException(422, 'Only Pipelines and Tasks are supported in the recycle bin')
+    if type not in allowed_types:
+        raise HTTPException(422, 'Deleted record type must be all, recycle, or permanent')
+    if page < 1:
+        raise HTTPException(422, 'Page must be at least 1')
+    try:
+        return await zoho.list_deleted_bigin_records(module, type, page)
+    except Exception as e: raise HTTPException(502, f'Unable to load deleted Zoho Bigin {module.lower()}: {e}')
+
+@app.get('/api/pipelines/deleted')
+async def deleted_pipeline_records(type: str = 'recycle', page: int = 1):
+    return await deleted_bigin_records('Pipelines', type, page)
+
+@app.get('/api/tasks/deleted')
+async def deleted_task_records(type: str = 'recycle', page: int = 1):
+    return await deleted_bigin_records('Tasks', type, page)
+
+@app.delete('/api/tasks/{task_id}')
+async def delete_task(task_id: str):
+    try:
+        return await zoho.delete_task(task_id)
+    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Bigin task: {e}')
 
 @app.post('/api/pipelines/sync')
 async def sync_pipelines():
@@ -409,26 +558,27 @@ async def sync_pipelines():
         for layout in layouts:
             result = await zoho.list_pipeline_records(layout['id'], 1)
             fetched.extend(result.get('data', []))
-        fetched = sorted(fetched, key=lambda row: row.get('Modified_Time') or '', reverse=True)[:50]
+        fetched = sorted(fetched, key=lambda row: row.get('Modified_Time') or '', reverse=True)[:40]
+        _cache_recent_rows('pipelines', fetched)
         with require_db() as db:
             for row in fetched:
                 pipeline = row.get('Pipeline') if isinstance(row.get('Pipeline'), dict) else {}
                 db.execute(text("""insert into zoho_pipeline_records(record_id,pipeline_id,data,modified_time,organisation_id,member_id)
                   values(:record_id,:pipeline_id,cast(:data as jsonb),:modified_time,cast(:org as uuid),cast(:member as uuid))
-                  on conflict(record_id) do update set pipeline_id=:pipeline_id,data=cast(:data as jsonb),modified_time=:modified_time,
+                  on conflict(organisation_id,member_id,record_id) do update set pipeline_id=:pipeline_id,data=cast(:data as jsonb),modified_time=:modified_time,
                     organisation_id=cast(:org as uuid),member_id=cast(:member as uuid)"""), {'record_id': str(row.get('id')), 'pipeline_id': str(pipeline.get('id') or row.get('$layout_id', {}).get('id') or ''), 'data': json.dumps(row), 'modified_time': row.get('Modified_Time'), 'org': get_organisation_id(), 'member': get_member_id()})
             db.execute(text("""insert into zoho_pipeline_sync(tenant_key,organisation_id,member_id,synced_at)
               values(:tenant,cast(:org as uuid),cast(:member as uuid),now())
               on conflict(tenant_key) do update set organisation_id=excluded.organisation_id,member_id=excluded.member_id,synced_at=now()"""), {'tenant': f'guru-group:{get_organisation_id()}:{get_member_id()}', 'org': get_organisation_id(), 'member': get_member_id()})
             db.execute(text("""delete from zoho_pipeline_records
               where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
-              and record_id not in (select record_id from zoho_pipeline_records where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) order by modified_time desc nulls last limit 50)"""), {'org': get_organisation_id(), 'member': get_member_id()})
+              and record_id not in (select record_id from zoho_pipeline_records where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) order by modified_time desc nulls last limit 40)"""), {'org': get_organisation_id(), 'member': get_member_id()})
             db.commit()
         return {'synced': True, 'limited': False, 'last_sync': now().isoformat(), 'count': len(fetched)}
     except Exception as e: raise HTTPException(502, f'Unable to sync Zoho Bigin pipelines: {e}')
 @app.get('/api/products')
 async def products(search: str = '', date: str = '', page: int = 1):
-    """Live Books catalogue search; product records are never copied to Supabase."""
+    """Return the member's recent cache by default, then use live Books search."""
     query = search.strip()
     try:
         status = zoho.status()
@@ -436,11 +586,18 @@ async def products(search: str = '', date: str = '', page: int = 1):
             raise HTTPException(409, 'Connect Zoho before searching products')
         if not status.get('organization_id'):
             raise HTTPException(409, 'Select a Zoho Books organization before searching products')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('products')
+            if cached:
+                return {'items': cached, 'search': '', 'page': 1, 'has_more': True,
+                        'search_by': 'search_text', 'organization_id': status['organization_id'],
+                        'source': 'supabase', 'stored_in_supabase': True}
         payload = await zoho.search_books_items(status['organization_id'], query, date.strip() or None, page)
         rows = payload.get('items', payload.get('products', payload.get('data', [])))
-        items = [row for row in rows if isinstance(row, dict) and str(row.get('status', '')).lower() == 'active']
+        items = [row for row in rows if isinstance(row, dict)]
+        _cache_recent_rows('products', items)
         context = payload.get('page_context', {})
-        return {'items': items[:40], 'search': query, 'page': page, 'has_more': bool(context.get('has_more_page')), 'search_by': 'search_text', 'organization_id': status['organization_id'], 'stored_in_supabase': False}
+        return {'items': items[:40], 'search': query, 'page': page, 'has_more': bool(context.get('has_more_page')), 'search_by': 'search_text', 'organization_id': status['organization_id'], 'source': 'zoho', 'stored_in_supabase': True}
     except HTTPException:
         raise
     except Exception as e:
@@ -457,7 +614,9 @@ async def create_product(payload: dict):
         data['name'] = data['item_name'] = item_name; data['rate'] = float(data['rate'])
         if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
         result = await zoho.create_books_item(org, data)
-        return {'item': result.get('item'), 'response': result}
+        item = result.get('item')
+        _cache_recent_rows('products', [item] if item else [])
+        return {'item': item, 'response': result}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books item: {e}')
 @app.get('/api/books/customers')
@@ -469,7 +628,9 @@ async def books_customers(search: str = '', date: str = ''):
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         payload = await zoho.search_books_customers(status['organization_id'], query, date.strip() or None)
-        return {'customers': payload.get('contacts', payload.get('data', [])), 'info': payload.get('page_context', {})}
+        rows = [{**row, '__source': 'books'} for row in payload.get('contacts', payload.get('data', [])) if isinstance(row, dict)]
+        _cache_recent_rows('contacts', rows)
+        return {'customers': rows, 'info': payload.get('page_context', {})}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Books customers: {e}')
 @app.get('/api/books/vendors')
@@ -481,7 +642,9 @@ async def books_vendors(search: str = ''):
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         payload = await zoho.search_books_vendors(status['organization_id'], query)
-        return {'vendors': payload.get('contacts', payload.get('data', [])), 'info': payload.get('page_context', {})}
+        rows = [{**row, '__source': 'books'} for row in payload.get('contacts', payload.get('data', [])) if isinstance(row, dict)]
+        _cache_recent_rows('contacts', rows)
+        return {'vendors': rows, 'info': payload.get('page_context', {})}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Books vendors: {e}')
 
@@ -513,7 +676,9 @@ async def document_contacts(search: str = '', role: str = 'customer'):
         for row in books_payload.get('contacts', books_payload.get('data', [])):
             if isinstance(row, dict):
                 books.append({**row, '__source': 'books', 'contact_id': row.get('contact_id'), 'contact_name': row.get('contact_name') or row.get('customer_name') or row.get('vendor_name') or 'Unnamed contact', 'contact_role': role})
-        return {'contacts': [*bigin, *books][:40], 'search': query, 'role': role}
+        result_contacts = [*bigin, *books][:40]
+        _cache_recent_rows('contacts', result_contacts)
+        return {'contacts': result_contacts, 'search': query, 'role': role}
     except HTTPException:
         raise
     except Exception as e:
@@ -646,12 +811,19 @@ async def quotes(search: str = '', date: str = '', page: int = 1):
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('quotes')
+            if cached:
+                return {'quotes': cached, 'info': {'has_more_page': True}, 'page': 1,
+                        'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
         params = {'organization_id':status['organization_id'],'per_page':10,'page':page}
         if query: params['search_text'] = query
         if date.strip(): params['date'] = date.strip()
         payload = await zoho.request('GET','/books/v3/estimates',params=params)
         info = payload.get('page_context', {})
-        return {'quotes': payload.get('estimates', payload.get('data', [])), 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id']}
+        rows = payload.get('estimates', payload.get('data', []))
+        _cache_recent_rows('quotes', rows)
+        return {'quotes': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books quotes: {e}')
 @app.post('/api/quotes')
@@ -664,7 +836,9 @@ async def create_quote(payload: dict):
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_estimate(org, payload)
-        return {'quote': (result.get('estimate') or result.get('data') or [None])[0] if isinstance(result.get('data'), list) else result.get('estimate'), 'response': result}
+        quote = (result.get('estimate') or result.get('data') or [None])[0] if isinstance(result.get('data'), list) else result.get('estimate')
+        _cache_recent_rows('quotes', [quote] if quote else [])
+        return {'quote': quote, 'response': result}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books quote: {e}')
 @app.post('/api/quotes/{estimate_id}/email')
@@ -682,9 +856,16 @@ async def orders(search: str = '', date: str = '', page: int = 1):
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('orders')
+            if cached:
+                return {'orders': cached, 'info': {'has_more_page': True}, 'page': 1,
+                        'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
         payload = await zoho.search_sales_orders(status['organization_id'], query, date.strip() or None, page)
         info = payload.get('page_context', {})
-        return {'orders': payload.get('salesorders', payload.get('data', [])), 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id']}
+        rows = payload.get('salesorders', payload.get('data', []))
+        _cache_recent_rows('orders', rows)
+        return {'orders': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books orders: {e}')
 @app.post('/api/orders')
@@ -697,7 +878,9 @@ async def create_order(payload: dict):
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_sales_order(org, payload)
-        return {'order': result.get('salesorder'), 'response': result}
+        order = result.get('salesorder')
+        _cache_recent_rows('orders', [order] if order else [])
+        return {'order': order, 'response': result}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books sales order: {e}')
 @app.post('/api/orders/{salesorder_id}/email')
@@ -715,9 +898,16 @@ async def purchase_orders(search: str = '', date: str = '', page: int = 1):
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('purchase_orders')
+            if cached:
+                return {'purchase_orders': cached, 'info': {'has_more_page': True}, 'page': 1,
+                        'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
         payload = await zoho.search_purchase_orders(status['organization_id'], query, date.strip() or None, page)
         info = payload.get('page_context', {})
-        return {'purchase_orders': payload.get('purchaseorders', payload.get('data', [])), 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id']}
+        rows = payload.get('purchaseorders', payload.get('data', []))
+        _cache_recent_rows('purchase_orders', rows)
+        return {'purchase_orders': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books purchase orders: {e}')
 @app.post('/api/purchase-orders')
@@ -733,7 +923,9 @@ async def create_purchase_order(payload: dict):
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_purchase_order(org, payload)
-        return {'purchase_order': result.get('purchaseorder'), 'response': result}
+        purchase_order = result.get('purchaseorder')
+        _cache_recent_rows('purchase_orders', [purchase_order] if purchase_order else [])
+        return {'purchase_order': purchase_order, 'response': result}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books purchase order: {e}')
 @app.post('/api/purchase-orders/{purchaseorder_id}/email')
@@ -751,9 +943,16 @@ async def invoices(search: str = '', date: str = '', page: int = 1):
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('invoices')
+            if cached:
+                return {'invoices': cached, 'info': {'has_more_page': True}, 'page': 1,
+                        'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
         payload = await zoho.search_invoices(status['organization_id'], query, date.strip() or None, page)
         info = payload.get('page_context', {})
-        return {'invoices': payload.get('invoices', payload.get('data', [])), 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id']}
+        rows = payload.get('invoices', payload.get('data', []))
+        _cache_recent_rows('invoices', rows)
+        return {'invoices': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books invoices: {e}')
 @app.post('/api/invoices')
@@ -769,7 +968,9 @@ async def create_invoice(payload: dict):
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_invoice(org, payload)
-        return {'invoice': result.get('invoice'), 'response': result}
+        invoice = result.get('invoice')
+        _cache_recent_rows('invoices', [invoice] if invoice else [])
+        return {'invoice': invoice, 'response': result}
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books invoice: {e}')
 @app.post('/api/invoices/{invoice_id}/email')
@@ -787,6 +988,12 @@ async def contacts(search: str = '', date: str = '', page: int = 1):
         status = zoho.status()
         if not status.get('connected'):
             raise HTTPException(409, 'Connect Zoho before searching contacts')
+        if not query and not date.strip() and page == 1:
+            cached = _recent_cache_rows('contacts')
+            if cached:
+                return {'contacts': cached, 'info': {'more_records': True, 'has_more_page': True},
+                        'search': '', 'page': 1, 'has_more': True, 'search_by': 'word',
+                        'source': 'supabase'}
         digits = ''.join(ch for ch in query if ch.isdigit())
         if query.isdigit() or (len(digits) == 10 and digits == query):
             search_by = 'phone'
@@ -834,6 +1041,7 @@ async def contacts(search: str = '', date: str = '', page: int = 1):
                     break
             if books_rows:
                 payload = books_payload
+        _cache_recent_rows('contacts', rows)
         info = payload.get('info', payload.get('page_context', {}))
         return {'contacts': rows[:40], 'info': info, 'search': query, 'page': page, 'has_more': bool(info.get('more_records') or info.get('has_more_page')), 'search_by': search_by, 'source': source}
     except HTTPException:
@@ -875,6 +1083,7 @@ async def create_contact(payload: ContactIn):
             if value not in ('', None, [], {}): data[key] = value
         result = await zoho.create_books_contact(org, data)
         updated_contact = result.get('contact') or result.get('contact_person') or ((result.get('contact_persons') or [None])[0])
+        _cache_recent_rows('contacts', [{**updated_contact, '__source': 'books'}] if isinstance(updated_contact, dict) else [])
         return {'contact': updated_contact, 'response': result}
     except HTTPException:
         raise
@@ -910,33 +1119,48 @@ def _books_contact_view(payload: dict):
 
 @app.put('/api/products/{item_id}')
 async def update_product(item_id: str, payload: dict):
-    return {'item': await _update_books_record(zoho.update_books_item, item_id, payload)}
+    result = await _update_books_record(zoho.update_books_item, item_id, payload)
+    item = result.get('item') if isinstance(result, dict) else None
+    _cache_recent_rows('products', [item] if item else [])
+    return {'item': result}
 @app.delete('/api/products/{item_id}')
-async def delete_product(item_id: str): return await _delete_books_record(zoho.delete_books_item, item_id)
+async def delete_product(item_id: str): return await _delete_books_record(zoho.delete_books_item, item_id, 'products')
 
 @app.put('/api/quotes/{estimate_id}')
 async def update_quote(estimate_id: str, payload: dict):
-    return {'quote': await _update_books_record(zoho.update_estimate, estimate_id, payload)}
+    result = await _update_books_record(zoho.update_estimate, estimate_id, payload)
+    quote = result.get('estimate') if isinstance(result, dict) else None
+    _cache_recent_rows('quotes', [quote] if quote else [])
+    return {'quote': result}
 @app.delete('/api/quotes/{estimate_id}')
-async def delete_quote(estimate_id: str): return await _delete_books_record(zoho.delete_estimate, estimate_id)
+async def delete_quote(estimate_id: str): return await _delete_books_record(zoho.delete_estimate, estimate_id, 'quotes')
 
 @app.put('/api/orders/{salesorder_id}')
 async def update_order(salesorder_id: str, payload: dict):
-    return {'order': await _update_books_record(zoho.update_sales_order, salesorder_id, payload)}
+    result = await _update_books_record(zoho.update_sales_order, salesorder_id, payload)
+    order = result.get('salesorder') if isinstance(result, dict) else None
+    _cache_recent_rows('orders', [order] if order else [])
+    return {'order': result}
 @app.delete('/api/orders/{salesorder_id}')
-async def delete_order(salesorder_id: str): return await _delete_books_record(zoho.delete_sales_order, salesorder_id)
+async def delete_order(salesorder_id: str): return await _delete_books_record(zoho.delete_sales_order, salesorder_id, 'orders')
 
 @app.put('/api/purchase-orders/{purchaseorder_id}')
 async def update_purchase_order(purchaseorder_id: str, payload: dict):
-    return {'purchase_order': await _update_books_record(zoho.update_purchase_order, purchaseorder_id, payload)}
+    result = await _update_books_record(zoho.update_purchase_order, purchaseorder_id, payload)
+    purchase_order = result.get('purchaseorder') if isinstance(result, dict) else None
+    _cache_recent_rows('purchase_orders', [purchase_order] if purchase_order else [])
+    return {'purchase_order': result}
 @app.delete('/api/purchase-orders/{purchaseorder_id}')
-async def delete_purchase_order(purchaseorder_id: str): return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id)
+async def delete_purchase_order(purchaseorder_id: str): return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id, 'purchase_orders')
 
 @app.put('/api/invoices/{invoice_id}')
 async def update_invoice(invoice_id: str, payload: dict):
-    return {'invoice': await _update_books_record(zoho.update_invoice, invoice_id, payload)}
+    result = await _update_books_record(zoho.update_invoice, invoice_id, payload)
+    invoice = result.get('invoice') if isinstance(result, dict) else None
+    _cache_recent_rows('invoices', [invoice] if invoice else [])
+    return {'invoice': result}
 @app.delete('/api/invoices/{invoice_id}')
-async def delete_invoice(invoice_id: str): return await _delete_books_record(zoho.delete_invoice, invoice_id)
+async def delete_invoice(invoice_id: str): return await _delete_books_record(zoho.delete_invoice, invoice_id, 'invoices')
 
 @app.put('/api/contacts/{contact_id}')
 async def update_contact(contact_id: str, payload: dict):
@@ -947,7 +1171,10 @@ async def update_contact(contact_id: str, payload: dict):
         raise HTTPException(409, 'Connect Zoho and select a Books organization first')
     books_error = None
     try:
-        return {'contact': await zoho.update_books_contact(org, contact_id, payload), 'source': 'books'}
+        result = await zoho.update_books_contact(org, contact_id, payload)
+        contact = result.get('contact') if isinstance(result, dict) else None
+        _cache_recent_rows('contacts', [{**contact, '__source': 'books'}] if isinstance(contact, dict) else [])
+        return {'contact': result, 'source': 'books'}
     except Exception as error:
         books_error = error
     try:
@@ -964,7 +1191,9 @@ async def update_bigin_contact(contact_id: str, payload: dict):
             raise HTTPException(409, 'Connect Zoho before updating contacts')
         await zoho.update_bigin_contact(contact_id, payload)
         refreshed = await zoho.get_bigin_contact(contact_id)
-        return {'contact': (refreshed.get('data') or [refreshed.get('contact')])[0] if isinstance(refreshed.get('data'), list) else (refreshed.get('data') or refreshed.get('contact') or refreshed)}
+        contact = (refreshed.get('data') or [refreshed.get('contact')])[0] if isinstance(refreshed.get('data'), list) else (refreshed.get('data') or refreshed.get('contact') or refreshed)
+        _cache_recent_rows('contacts', [{**contact, '__source': 'bigin'}] if isinstance(contact, dict) else [])
+        return {'contact': contact}
     except HTTPException:
         raise
     except Exception as e:
@@ -990,15 +1219,21 @@ async def update_books_contact(contact_id: str, payload: dict):
             raise HTTPException(422, 'At least one editable field is required')
         await zoho.update_books_contact(org, contact_id, books_payload)
         refreshed = await zoho.get_books_contact(org, contact_id)
-        return {'contact': _books_contact_view(refreshed)}
+        contact = _books_contact_view(refreshed)
+        _cache_recent_rows('contacts', [{**contact, '__source': 'books'}] if isinstance(contact, dict) else [])
+        return {'contact': contact}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(502, f'Unable to update Zoho Books contact: {e}')
-async def _delete_books_record(delete_fn, record_id: str):
+async def _delete_books_record(delete_fn, record_id: str, dataset: str | None = None):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-    try: return await delete_fn(org, record_id)
+    try:
+        result = await delete_fn(org, record_id)
+        if dataset:
+            _recent_cache_remove(dataset, record_id)
+        return result
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Books record: {e}')
 @app.delete('/api/contacts/{contact_id}')
@@ -1008,11 +1243,15 @@ async def delete_contact(contact_id: str):
         raise HTTPException(409, 'Connect Zoho and select a Books organization first')
     books_error = None
     try:
-        return {'response': await zoho.delete_books_contact(org, contact_id), 'source': 'books'}
+        result = await zoho.delete_books_contact(org, contact_id)
+        _recent_cache_remove('contacts', contact_id)
+        return {'response': result, 'source': 'books'}
     except Exception as error:
         books_error = error
     try:
-        return {'response': await zoho.delete_bigin_contact(contact_id), 'source': 'bigin'}
+        result = await zoho.delete_bigin_contact(contact_id)
+        _recent_cache_remove('contacts', contact_id)
+        return {'response': result, 'source': 'bigin'}
     except Exception as bigin_error:
         raise HTTPException(502, f'Unable to delete contact in Zoho Books or Zoho Bigin: Books={books_error}; Bigin={bigin_error}')
 
@@ -1022,7 +1261,7 @@ async def delete_bigin_contact(contact_id: str):
 
 @app.delete('/api/books/contacts/{contact_id}')
 async def delete_books_contact(contact_id: str):
-    return await _delete_books_record(zoho.delete_books_contact, contact_id)
+    return await _delete_books_record(zoho.delete_books_contact, contact_id, 'contacts')
 
 @app.post('/api/internal/zoho/refresh')
 async def zoho_refresh_cron(x_zoho_refresh_secret: str|None = Header(default=None)):

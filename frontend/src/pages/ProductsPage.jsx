@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { call, withDate } from '../shared/api';
 import { useZohoDateFilter, useGlobalPager } from '../shared/hooks';
 import { ProductCard } from '../components/Records';
+import PageLoader from '../components/PageLoader';
 
 export function ProductsPage({ setError }) {
   const [query, setQuery] = useState('');
@@ -30,5 +31,5 @@ export function ProductsPage({ setError }) {
     catch (e) { setError(e.message); setItems([]); }
     finally { setBusy(false); }
   };
-  return <section className="products-page"><div className="products-heading"><div><small>LIVE ZOHO BOOKS CATALOGUE</small><h2>My Products</h2><p>Search active products directly from Zoho Books. Items are not stored in Supabase.</p></div><span className="live-badge">● Live search</span></div><form className="product-search" onSubmit={search}><input value={query.trim()} onChange={e => setQuery(e.target.value)} placeholder="Search products, descriptions, SKU…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search'}</button></form>{!busy && <p className="product-count">{items.length} active {items.length === 1 ? 'item' : 'items'} found</p>} {!query.trim() && !items.length ? <div className="product-empty">Loading recent products…</div> : !busy && !items.length ? <div className="product-empty">{query.trim() ? `No active products matched “${query.trim()}”.` : 'No active products found.'}</div> : <div className="product-grid">{items.map(item => <ProductCard item={item} key={item.item_id || item.sku || item.name} />)}</div>}</section>;
+  return <section className="products-page"><div className="products-heading"><div><small>SALES CATALOGUE</small><h2>Product catalogue</h2><p>Find approved products, pricing, and availability while preparing a customer quotation or order.</p></div><span className="live-badge">● Catalogue connected</span></div><form className="product-search" onSubmit={search}><input value={query.trim()} onChange={e => setQuery(e.target.value)} placeholder="Search by product, description, or SKU…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search catalogue'}</button></form>{!busy && <p className="product-count">{items.length} active {items.length === 1 ? 'product' : 'products'} available</p>} {!query.trim() && busy ? <PageLoader kind="products" label="Loading product catalogue" detail="Finding the latest approved products and pricing." /> : !query.trim() && !items.length ? <div className="product-empty">No active products are available yet.</div> : !busy && !items.length ? <div className="product-empty">{query.trim() ? `No active products matched “${query.trim()}”.` : 'No active products are available yet.'}</div> : <div className="product-grid">{items.map(item => <ProductCard item={item} key={item.item_id || item.sku || item.name} />)}</div>}</section>;
 }

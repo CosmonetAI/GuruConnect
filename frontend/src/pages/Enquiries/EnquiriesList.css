@@ -61,3 +61,20 @@
   .enquiries-grid { grid-template-columns: 1fr }
 }
 .enquiry-card-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.enquiries-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.missed-visitors-intro { margin-top: 0; color: #62738c; }
+.missed-visitors-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.missed-visitor-card { padding: 16px; border: 1px solid #d8e5f2; border-radius: 14px; background: linear-gradient(145deg, #fff, #f7fbff); box-shadow: 0 7px 20px rgba(26, 66, 104, .07); }
+.missed-visitor-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.missed-visitor-card h3 { margin: 5px 0 0; color: #17385e; font-size: 18px; }
+.missed-visitor-eyebrow { color: #5b7899; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.missed-visitor-status { padding: 5px 8px; border-radius: 999px; color: #9a5410; background: #fff3d9; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.missed-visitor-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 16px 0 0; }
+.missed-visitor-summary div, .missed-visitor-fields div { min-width: 0; }
+.missed-visitor-summary dt, .missed-visitor-fields span { color: #7890a9; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.missed-visitor-summary dd { margin: 3px 0 0; color: #17385e; font-size: 12px; overflow-wrap: anywhere; }
+.missed-visitor-fields { display: grid; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #e4edf6; }
+.missed-visitor-fields strong { display: block; margin-top: 3px; color: #36516e; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.missed-visitors-empty { display: grid; place-items: center; gap: 7px; padding: 48px 20px; color: #6d829a; text-align: center; }
+.missed-visitors-empty strong { color: #17385e; }
+@media (max-width: 760px) { .enquiries-header-actions { width: 100%; } .enquiries-header-actions .button { flex: 1; } .missed-visitors-grid { grid-template-columns: 1fr; } }

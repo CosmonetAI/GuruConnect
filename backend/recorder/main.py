@@ -44,6 +44,7 @@ select
     and to_regclass('public.guruconnect_walkin_history') is not null
     and to_regclass('public.guruconnect_walkin_agents') is not null
     and to_regclass('public.guruconnect_walkin_recordings') is not null
+    and to_regclass('public.guruconnect_missed_visitors') is not null
     and to_regclass('recorder_private.conversation_requests') is not null
     and to_regprocedure('public.create_workspace(uuid,text)') is not null
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
@@ -64,11 +65,14 @@ def create_app(settings=None, *, allow_local=False):
 
     @asynccontextmanager
     async def lifespan(app):
+        log.info("api_starting environment=%s", settings.environment)
         await app.state.db.open()
         gg_refresh_task = asyncio.create_task(gg_refresh_loop())
         try:
+            log.info("api_ready")
             yield
         finally:
+            log.info("api_stopping")
             gg_refresh_task.cancel()
             await asyncio.gather(gg_refresh_task, return_exceptions=True)
             await app.state.db.close()
@@ -150,6 +154,5 @@ def create_app(settings=None, *, allow_local=False):
     # remain under /api/v1; the GG sales assistant keeps its /api routes.
     app.mount("/", gg_sales_app)
     return app
-
 
 app = create_app(allow_local=True)

@@ -6,6 +6,8 @@ import sys
 
 import uvicorn
 
+from .logging_config import configure_logging
+
 
 def windows_selector_loop_factory():
     """Create the loop required by psycopg's async pool on Windows."""
@@ -13,6 +15,7 @@ def windows_selector_loop_factory():
 
 
 def main():
+    configure_logging()
     from .config import Settings
     try:
         Settings()  # Validate production secrets/origins before opening a socket.

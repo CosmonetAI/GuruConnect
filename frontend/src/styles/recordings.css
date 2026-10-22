@@ -12,5 +12,7 @@
 .recording-playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .recording-playback audio { width: min(360px, 42vw); height: 38px; }
 .recording-error { color: #b42318; max-width: 220px; }
+.recording-spin { animation: recording-spin .9s linear infinite; }
+@keyframes recording-spin { to { transform: rotate(360deg); } }
 .button-quiet { border: 1px solid #dce7f5; background: #f8fbff; color: #24558c; }
 @media (max-width: 720px) { .recording-row, .recording-customer > header { align-items: flex-start; flex-direction: column; } .recording-actions { justify-content: flex-start; } .recording-playback audio { width: 100%; } }

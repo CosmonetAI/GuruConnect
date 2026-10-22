@@ -4,6 +4,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinAgent, type WalkinVisit } from '../../types/walkin'
 import { getCurrentWalkinAgentId, isWalkinDemoMode, listWalkinAgents, listWalkinVisitPage, setCurrentDemoWalkinAgentId } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
+import PageLoader from '../../components/PageLoader'
 import WalkinPagination from './WalkinPagination'
 import './Walkins.css'
 
@@ -80,7 +81,7 @@ export default function MyWalkins() {
           <label>From<input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPage(1) }} /></label>
           <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setPage(1) }} /></label>
         </div>
-        {loading ? <div className="walkin-empty">Loading your assigned visitors…</div> : visits.length === 0 ? (
+        {loading ? <div className="walkin-empty"><PageLoader kind="walkins" label="Loading assigned visitors" detail="Preparing your customer visits and follow-up priorities." /></div> : visits.length === 0 ? (
           <div className="walkin-empty">No visitors assigned to your account yet.</div>
         ) : (
           <div className="walkin-table-wrap">

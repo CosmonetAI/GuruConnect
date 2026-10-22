@@ -23,6 +23,7 @@ from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator
 from .providers import AzureTranslator, ElevenLabsAdapter, ProviderError, protect_terms
 from .security import SecretBox
 from .storage import Storage
+from .logging_config import configure_logging
 
 log = logging.getLogger("recorder.worker")
 TRANSLATION_BLOCKED_CODES = {"invalid_credentials", "connection_unavailable", "engine_unconfigured", "translator_unconfigured", "translator_unavailable", "provider_model_access_denied", "provider_access_denied", "provider_permission_denied", "provider_payment_required", "provider_quota_exceeded", "provider_plan_access_denied"}
@@ -210,6 +211,7 @@ class MainWorker:
             if finished["ok"]: await publish_result(connection,job,result)
 
     async def assemble(self, job):
+        log.info("assembly_started job_id=%s conversation_id=%s", job["id"], job["conversation_id"])
         audio, conv = await self.audio_file(job)
         target_job = job["payload"].get("inference_job_id")
         path = f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/artifacts/{target_job}/input.wav" if target_job else f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/playback/{conv['manifest_hash']}.wav"
@@ -223,9 +225,12 @@ class MainWorker:
             if finished["ok"]:
                 if target_job:
                     await connection.execute("insert into inference_artifacts(conversation_id,run_id,job_id,kind,object_path,sha256,bytes) values(%s,%s,%s,'input',%s,%s,%s) on conflict(object_path) do nothing",(conv["id"],job["run_id"],target_job,path,digest.hexdigest(),count))
-                else:await connection.execute("update conversations set playback_object_path=%s,updated_at=now() where id=%s and deleted_at is null",(path,conv["id"]))
+                else:
+                    await connection.execute("update conversations set playback_object_path=%s,updated_at=now() where id=%s and deleted_at is null",(path,conv["id"]))
+                    log.info("assembly_published job_id=%s conversation_id=%s bytes=%s", job["id"], conv["id"], count)
 
     async def execute(self, job):
+        log.info("job_started job_id=%s kind=%s conversation_id=%s attempt=%s", job["id"], job["kind"], job["conversation_id"], job["attempt"])
         renewal = asyncio.create_task(self.renew(job))
         shutdown = asyncio.create_task(self.stopping.wait())
         task = None
@@ -241,13 +246,16 @@ class MainWorker:
                 return
             elif renewal in done:
                 task.cancel(); await asyncio.gather(task,return_exceptions=True); renewal.result()
-            else: task.result()
+            else:
+                task.result()
+                log.info("job_completed job_id=%s kind=%s conversation_id=%s", job["id"], job["kind"], job["conversation_id"])
         except Exception as exc:
             if isinstance(exc,ProviderError): code,uncertain = exc.code,exc.uncertain
             elif isinstance(exc,ValueError): code,uncertain = "invalid_audio",False
             elif isinstance(exc,HTTPException): code,uncertain = exc.detail.get("code","worker_dependency_failed"),False
             else: code,uncertain = "worker_execution_failed",False
-            log.warning("job_failed job_id=%s code=%s",job["id"],code)
+            log.warning("job_failed job_id=%s kind=%s conversation_id=%s code=%s exception_type=%s",
+                        job["id"], job["kind"], job["conversation_id"], code, type(exc).__name__)
             async with self.db.connection() as connection:
                 # Clear submission uncertainty only on a known pre-execution rejection.
                 if isinstance(exc,ProviderError) and not uncertain and code in TRANSLATION_BLOCKED_CODES | {"provider_rate_limited","provider_request_rejected","provider_connection_failed","translator_input_too_large","translator_invalid_input"}:
@@ -295,6 +303,7 @@ class MainWorker:
 
     async def run(self):
         if not self.settings.configured: raise RuntimeError("Set backend Supabase/database configuration before starting the main worker.")
+        log.info("worker_started worker_id=%s", self.id)
         await self.db.open(); last_cleanup=0.0
         try:
             while not self.stopping.is_set():
@@ -307,13 +316,14 @@ class MainWorker:
                         try: await asyncio.wait_for(self.stopping.wait(),timeout=1)
                         except TimeoutError: pass
                     if time.monotonic()-last_cleanup>60: await self.cleanup_deleted();last_cleanup=time.monotonic()
-                except Exception: log.warning("worker_cycle_failed code=dependency_unavailable");await asyncio.sleep(3)
+                except Exception as exc:
+                    log.warning("worker_cycle_failed code=dependency_unavailable exception_type=%s", type(exc).__name__)
+                    await asyncio.sleep(3)
         finally: await self.db.close()
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    configure_logging()
     settings = get_settings()
     if settings.environment in {"development", "local"} and not settings.configured:
         from .local_worker import LocalWorker

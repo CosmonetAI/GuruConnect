@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { AudioLines, ArrowRight, ShieldCheck, Languages } from 'lucide-react'
 import { useOffice } from '../contexts/OfficeContext'
 import { json, request, supabase, message } from '../services/officeApi'
+import PageLoader from '../components/PageLoader'
 
 function WelcomeFrame({ children }: { children: ReactNode }) {
   return <main className="welcome-page"><section className="welcome-story"><div className="welcome-brand"><AudioLines /> GuruConnect</div>
@@ -46,8 +47,8 @@ export default function Welcome() {
       await office.reloadWorkspaces()
     } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
   }
-  if (!office.configured) return <WelcomeFrame><h2>Connect your workspace services</h2><p>GuruConnect is ready for its own Supabase project. Finish the setup in this repository’s README to enable accounts, private audio and processing.</p><p>Start the API and background worker alongside this frontend after configuration.</p><div className="flow-note">Your provider keys belong in Connections after sign-in. They are encrypted on the server.</div></WelcomeFrame>
-  if (office.loading || (office.session && office.workspacesLoading)) return <WelcomeFrame><p role="status">Loading your workspace…</p></WelcomeFrame>
+  if (!office.configured) return <WelcomeFrame><h2>Complete your workspace setup</h2><p>GuruConnect needs a one-time setup before team accounts, conversation capture, and AI processing are available.</p><p>Ask your administrator to complete the setup, then refresh this page.</p><div className="flow-note">Connection details are managed securely by your administrator.</div></WelcomeFrame>
+  if (office.loading || (office.session && office.workspacesLoading)) return <WelcomeFrame><PageLoader kind="dashboard" label="Loading your workspace" detail="Preparing your sales workspace and connected services." /></WelcomeFrame>
   if (office.session) return <WelcomeFrame><h2>Your conversations need a workspace</h2><p>Create a workspace to get started. Team members are added automatically when an administrator sends their email invitation.</p>
     {(error || office.error) && <p role="alert" className="flow-error">{error || office.error}</p>}
     <form onSubmit={event => { event.preventDefault(); void createWorkspace() }}><label>Workspace name<input required minLength={2} maxLength={200} value={workspaceName} onChange={event => setWorkspaceName(event.target.value)} /></label><button className="button button-primary" disabled={busy}>Create workspace <ArrowRight size={16} /></button></form>

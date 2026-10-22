@@ -1,4 +1,5 @@
 import json
+import logging
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Query, Request, Response
 from psycopg.types.json import Jsonb
@@ -10,6 +11,7 @@ from .routes import audit, create_run
 from .security import Workspace, workspace, conversation
 
 router = APIRouter(prefix="/api/v1/conversations")
+log = logging.getLogger("recorder.api")
 
 
 async def transcript_data(connection, context, conversation_id, version_id=None):
@@ -99,8 +101,15 @@ async def revise(conversation_id: UUID, body: s.Revision, request: Request, cont
 async def playback(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
         conv = await conversation(connection, context, conversation_id)
+        assembly = await one(connection, "select id,state,error_code,attempt,updated_at from processing_jobs where conversation_id=%s and kind='assemble' and payload->>'inference_job_id' is null order by created_at desc limit 1", (conversation_id,))
     if not conv["playback_object_path"]:
-        fail("playback_assembly_pending", 409)
+        log.warning("playback_pending conversation_id=%s job_id=%s job_state=%s error_code=%s",
+                    conversation_id, assembly["id"] if assembly else None,
+                    assembly["state"] if assembly else "missing",
+                    assembly["error_code"] if assembly else None)
+        fail("playback_assembly_pending", 409, job_state=assembly["state"] if assembly else "missing",
+             job_id=str(assembly["id"]) if assembly else None,
+             job_error_code=assembly["error_code"] if assembly else None)
     return {"url": await request.app.state.storage.signed_read(conv["playback_object_path"]), "expires_in": request.app.state.settings.signed_url_seconds}
 
 
