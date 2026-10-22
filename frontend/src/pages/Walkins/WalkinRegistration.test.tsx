@@ -43,13 +43,13 @@ describe('WalkinRegistration voice assist', () => {
   it('registers without audio exactly as before', async () => {
     setup(); fill(); submit()
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled())
+    expect(mocks.navigate).toHaveBeenCalledWith('/walkins', { replace: true })
     expect(mocks.attach).not.toHaveBeenCalled()
-    expect(mocks.navigate.mock.calls[0][1].state.confirmation).not.toMatch(/voice recording/)
   })
   it('attaches saved audio after registration', async () => {
     setup(); fill(); mocks.panel!.onConversationChange('c1'); submit()
     await waitFor(() => expect(mocks.attach).toHaveBeenCalledWith('w1', 'v1', 'c1'))
-    expect(mocks.navigate.mock.calls[0][1].state.confirmation).not.toMatch(/not yet attached/)
+    expect(mocks.navigate).toHaveBeenCalledWith('/walkins', { replace: true })
     expect(sessionStorage.length).toBe(0)
   })
   it('stages audio and still navigates when the backend refuses the link', async () => {
@@ -57,6 +57,6 @@ describe('WalkinRegistration voice assist', () => {
     setup(); fill(); mocks.panel!.onConversationChange('c1'); submit()
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled())
     expect(sessionStorage.getItem('guruconnect:walkin-audio:u1:w1:v1')).toBe('c1')
-    expect(mocks.navigate.mock.calls[0][1].state.confirmation).toMatch(/not yet attached/)
+    expect(mocks.navigate).toHaveBeenCalledWith('/walkins', { replace: true })
   })
 })
