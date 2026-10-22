@@ -16,16 +16,21 @@ function Playback({ conversation }: { conversation: Conversation }) {
     setLoading(true); setError('')
     let pending = false
     try {
-      for (let attempt = 0; attempt < 6; attempt += 1) {
+      const delays = [750, 1500, 2500, 4000, 6000, 8000, 10000, 10000]
+      for (let attempt = 0; attempt < delays.length; attempt += 1) {
         try {
           const result = await request<{ url: string }>(`/conversations/${conversation.id}/playback`, workspace.id)
           const parsed = new URL(result.url)
           if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Invalid playback URL')
           setUrl(result.url); return
         } catch (cause) {
-          if (!(cause instanceof ApiError) || cause.code !== 'playback_assembly_pending' || attempt === 5) throw cause
+          if (!(cause instanceof ApiError) || cause.code !== 'playback_assembly_pending' || attempt === delays.length - 1) throw cause
           pending = true; setError('Preparing the complete recording from its saved audio chunks…')
-          await new Promise<void>(resolve => { retryTimer.current = setTimeout(resolve, 1500) })
+          const state = String(cause.details?.job_state || 'queued')
+          if (['failed', 'blocked', 'dead'].includes(state)) {
+            throw new Error('Recording preparation needs attention. Open the transcript to review processing status.')
+          }
+          await new Promise<void>(resolve => { retryTimer.current = setTimeout(resolve, delays[attempt]) })
         }
       }
     } catch (cause) { setError(pending ? 'The recording is still being prepared. Try again shortly.' : cause instanceof Error ? cause.message : 'Playback is unavailable.') }

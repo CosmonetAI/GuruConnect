@@ -47,7 +47,7 @@ export function errorMessageForCode(code: string, fallback = 'The request failed
   return Object.hasOwn(serviceErrorMessages, code) ? serviceErrorMessages[code] : fallback;
 }
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) { super(errorMessageForCode(code, message)); this.name = 'ApiError'; }
+  constructor(public readonly status: number, public readonly code: string, message: string, public readonly details?: Record<string, unknown>) { super(errorMessageForCode(code, message)); this.name = 'ApiError'; }
 }
 function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -86,7 +86,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { detail?: string | { message?: string; code?: string }; error?: { message?: string; code?: string } };
         const detail = typeof body.detail === 'string' ? { message: body.detail } : body.detail || body.error;
-        throw new ApiError(response.status, detail?.code || 'request_failed', detail?.message || `The request failed (${response.status}). Please try again.`);
+        throw new ApiError(response.status, detail?.code || 'request_failed', detail?.message || `The request failed (${response.status}). Please try again.`, typeof detail === 'object' ? detail as Record<string, unknown> : undefined);
       }
       return response.status === 204 ? undefined as T : normalizeResponse(path, await response.json()) as T;
     })(), abort.signal);

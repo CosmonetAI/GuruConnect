@@ -13,6 +13,7 @@ import wave
 from uuid import uuid4
 
 from fastapi import HTTPException
+from psycopg import Error as DatabaseError
 from psycopg.types.json import Jsonb
 
 from .audio import MAX_SESSION_SAMPLES, assemble_wav, validate_wav
@@ -303,21 +304,31 @@ class MainWorker:
 
     async def run(self):
         if not self.settings.configured: raise RuntimeError("Set backend Supabase/database configuration before starting the main worker.")
-        log.info("worker_started worker_id=%s", self.id)
+        log.info("worker_starting worker_id=%s worker_type=main", self.id)
         await self.db.open(); last_cleanup=0.0
+        last_status_log = 0.0
+        log.info("worker_ready worker_id=%s lease_seconds=%s", self.id, self.settings.worker_lease_seconds)
         try:
             while not self.stopping.is_set():
                 try:
                     async with self.db.connection() as connection:
-                        await connection.execute("insert into worker_heartbeats(worker_id,worker_type) values(%s,'main') on conflict(worker_id) do update set last_seen_at=now()",(self.id,))
+                        queue = await one(connection, "select count(*) filter(where state in ('queued','retry')) as queued, count(*) filter(where state='running') as running from processing_jobs where worker_type='main'")
+                        await connection.execute("insert into worker_heartbeats(worker_id,worker_type,metrics) values(%s,'main',%s) on conflict(worker_id) do update set last_seen_at=now(),metrics=excluded.metrics",(self.id, Jsonb({"queued": int(queue["queued"]), "running": int(queue["running"])})))
                         jobs=await many(connection,"select * from claim_jobs(%s,'main',1,%s)",(self.id,self.settings.worker_lease_seconds))
-                    if jobs: await self.execute(jobs[0])
+                    if jobs:
+                        log.info("job_claimed job_id=%s kind=%s conversation_id=%s attempt=%s", jobs[0]["id"], jobs[0]["kind"], jobs[0]["conversation_id"], jobs[0]["attempt"])
+                        await self.execute(jobs[0])
                     else:
+                        now = time.monotonic()
+                        if now - last_status_log >= 60:
+                            log.info("worker_heartbeat worker_id=%s queued=%s running=%s", self.id, queue["queued"], queue["running"])
+                            last_status_log = now
                         try: await asyncio.wait_for(self.stopping.wait(),timeout=1)
                         except TimeoutError: pass
                     if time.monotonic()-last_cleanup>60: await self.cleanup_deleted();last_cleanup=time.monotonic()
                 except Exception as exc:
-                    log.warning("worker_cycle_failed code=dependency_unavailable exception_type=%s", type(exc).__name__)
+                    sqlstate = getattr(exc, "sqlstate", None) if isinstance(exc, DatabaseError) else None
+                    log.warning("worker_cycle_failed code=dependency_unavailable exception_type=%s sqlstate=%s", type(exc).__name__, sqlstate or "unknown")
                     await asyncio.sleep(3)
         finally: await self.db.close()
 

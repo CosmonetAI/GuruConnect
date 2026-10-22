@@ -80,7 +80,8 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
     const controller = new AbortController()
     operations.current.add(controller)
     try {
-      for (let attempt = 0; attempt < 6; attempt += 1) {
+      const delays = [750, 1500, 2500, 4000, 6000, 8000, 10000, 10000]
+      for (let attempt = 0; attempt < delays.length; attempt += 1) {
         try {
           const result = await request<{ url: string; expires_in: number }>(`/conversations/${conversationId}/playback`, workspace.id, { signal: controller.signal })
           if (!alive.current) return
@@ -95,9 +96,11 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
           }, Math.max(1, Math.min(result.expires_in || 60, 3600)) * 1000)
           return
         } catch (failure) {
-          if (!(failure instanceof ApiError) || failure.code !== 'playback_assembly_pending' || attempt === 5) throw failure
+          if (!(failure instanceof ApiError) || failure.code !== 'playback_assembly_pending' || attempt === delays.length - 1) throw failure
           if (alive.current) setPlaybackPending(true)
-          await new Promise<void>(resolve => setTimeout(resolve, 1500))
+          const state = String(failure.details?.job_state || 'queued')
+          if (['failed', 'blocked', 'dead'].includes(state)) throw new Error('Recording preparation needs attention. Review processing status before trying again.')
+          await new Promise<void>(resolve => setTimeout(resolve, delays[attempt]))
         }
       }
     } catch (failure) {
