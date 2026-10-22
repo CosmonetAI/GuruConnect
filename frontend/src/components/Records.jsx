@@ -41,7 +41,8 @@ export function PhoneExtensionSelect({ value, onChange }) {
 export function DetailModal({ eyebrow, title, fields, onClose, action, onSave, editableKeys = [] }) {
   const label = key => key.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
   const [editing, setEditing] = useState(false); const [draft, setDraft] = useState({}); const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(Object.fromEntries(fields)), [fields]);
+  const fieldsSignature = JSON.stringify(fields);
+  useEffect(() => setDraft(Object.fromEntries(fields)), [fieldsSignature]);
   const groups = [
     ['Identity', ['id', 'contact_id', 'estimate_id', 'estimate_number', 'salesorder_id', 'salesorder_number', 'purchaseorder_id', 'purchaseorder_number', 'invoice_id', 'invoice_number', 'reference_number']],
     ['People & account', ['customer_name', 'customer_id', 'vendor_name', 'vendor_id', 'company_name', 'email', 'phone', 'mobile', 'Full_Name', 'First_Name', 'Last_Name', 'Title', 'Account_Name']],

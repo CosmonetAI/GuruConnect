@@ -280,6 +280,7 @@
 .product-card h3 { margin: 10px 0 12px; font-size: 16px; }
 .product-card-actions { margin-top: auto; padding-top: 16px; }
 .product-card-actions button { border-radius: 9px; padding: 8px 11px; }
+.product-card:has(> .modal-backdrop) { transform: none; overflow: visible; }
 
 /* Section guidance is intentionally visible before the fields begin. */
 .document-form .form-section-heading { align-items: flex-start; }
