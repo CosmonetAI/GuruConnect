@@ -76,6 +76,17 @@
 .product-search .primary { min-height: 46px; }
 .product-count { color: #71839b; font-size: 13px; }
 .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; margin-top: 18px; }
+.contacts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 16px; margin-top: 18px; align-items: stretch; }
+.contacts-grid .product-card { display: flex; min-width: 0; min-height: 205px; flex-direction: column; padding: 17px; border-radius: 14px; background: linear-gradient(180deg, #fff 0%, #f9fcff 100%); box-shadow: 0 5px 16px rgba(26, 66, 104, .05); transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.contacts-grid .product-card:hover { border-color: #b8d2e8; box-shadow: 0 9px 24px rgba(26, 66, 104, .11); transform: translateY(-2px); }
+.contacts-grid .product-card h3 { margin: 9px 0 12px; font-size: 16px; }
+.contacts-grid .product-card-top { align-items: flex-start; flex-wrap: wrap; }
+.contacts-grid .active-label { white-space: nowrap; }
+.contacts-grid .product-sku { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.contacts-grid .contact-summary { flex: 1; min-height: 0; }
+.contacts-grid .contact-summary span { grid-template-columns: 48px minmax(0, 1fr); }
+.contacts-grid .product-card-actions { margin-top: auto; padding-top: 15px; flex-wrap: nowrap; }
+@media (max-width: 700px) { .contacts-grid { grid-template-columns: 1fr; } }
 .product-card { border: 1px solid #dfe8f1; border-radius: 12px; padding: 13px; background: #fbfdff; }
 .product-card-top, .product-meta { display: flex; justify-content: space-between; gap: 10px; }
 .active-label { color: #14845d; font-size: 11px; font-weight: 700; }
