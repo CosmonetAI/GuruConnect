@@ -27,7 +27,7 @@ const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false, chunkSeconds }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
+export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -103,19 +103,24 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
   useEffect(() => {
     let current = true
     if (!workspace || !user) { setPolicy(null); setPolicyLoading(false); return }
-    const controller = new AbortController(); setPolicyLoading(true); setError('')
-    void Promise.all([
-      request<EngineSettings>('/engine-settings', workspace.id, { signal: controller.signal }),
-      request<Page<Connection>>('/connections', workspace.id, { signal: controller.signal }),
-      listRecoveries({ userId: user.id, workspaceId: workspace.id }),
-    ]).then(([settings, connections, rows]) => {
+    const controller = new AbortController(); setPolicyLoading(source === 'upload'); if (source === 'upload') setError('')
+    const recoveries = listRecoveries({ userId: user.id, workspaceId: workspace.id })
+    const policy = source === 'upload'
+      ? Promise.all([
+        request<EngineSettings>('/engine-settings', workspace.id, { signal: controller.signal }),
+        request<Page<Connection>>('/connections', workspace.id, { signal: controller.signal }),
+      ]).then(([settings, connections]) => {
+        const engineId = settings.default_engine_id
+        return { engineId, ready: localMode || (!!engineId && connections.items.some(item => item.engine_id === engineId && item.enabled && item.state === 'connected')) }
+      })
+      : Promise.resolve(null)
+    void Promise.all([policy, recoveries]).then(([nextPolicy, rows]) => {
       if (!current) return
-      const engineId = settings.default_engine_id
-      setPolicy({ engineId, ready: localMode || (!!engineId && connections.items.some(item => item.engine_id === engineId && item.enabled && item.state === 'connected')) })
+      if (nextPolicy) setPolicy(nextPolicy)
       setRecoveries(rows)
-    }).catch(err => { if (current) { setPolicy(null); setError(message(err)) } }).finally(() => { if (current) setPolicyLoading(false) })
+    }).catch(err => { if (current && source === 'upload') { setPolicy(null); setError(message(err)) } }).finally(() => { if (current) setPolicyLoading(false) })
     return () => { current = false; controller.abort(); generation.current++ }
-  }, [user?.id, workspace?.id])
+  }, [source, user?.id, workspace?.id])
   useEffect(() => {
     if (!initialConversationId || !workspace || !user) return
     const controller = new AbortController()
@@ -133,24 +138,23 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     if (capture.capture === 'stopped' && !capture.saving && !capture.error && capture.samples > 0 && idRef.current) showSaved(idRef.current)
   }, [capture.capture, capture.saving, capture.error, capture.samples])
 
-  function validateStart(skipEngineCheck = false, consentGranted = false) {
+  function validateStart(consentGranted = false) {
     if (!consent && !consentGranted) throw new Error('Confirm participant consent before recording or uploading audio.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
-    if (!skipEngineCheck && !policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
   }
 
   // When compact mode is used, offer a small consent confirmation when the user presses Start.
   async function startMicrophoneCompactFlow() {
     if (operationRef.current || captureActive || saved) return
     setConsent(true)
-    await startMicrophone(true, true)
+    await startMicrophone(true)
   }
   async function createConversation(signal: AbortSignal) {
     if (idRef.current) return idRef.current
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false },
+      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: true },
     }
     const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal })
     signal.throwIfAborted()
@@ -168,9 +172,9 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     operationRef.current = false
     if (isCurrent(epoch, controller)) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
   }
-  async function startMicrophone(skipEngineCheck = false, consentGranted = false) {
+  async function startMicrophone(consentGranted = false) {
     if (operationRef.current || captureActive || saved) return
-    try { validateStart(skipEngineCheck, consentGranted) } catch (err) { setError(message(err)); return }
+    try { validateStart(consentGranted) } catch (err) { setError(message(err)); return }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
       const hadId = !!idRef.current
@@ -179,7 +183,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
-        chunkSeconds: chunkSeconds ?? (compact ? 30 : 180),
+        chunkSeconds: 180,
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
         onState: state => {
           if (!isCurrent(epoch, controller)) return
@@ -242,7 +246,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       controller.signal.throwIfAborted(); setPhase('uploading')
       await uploadAudioFile({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
-        chunkSeconds: chunkSeconds ?? (compact ? 30 : 180),
+        chunkSeconds: 180,
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
         onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
       })
@@ -320,7 +324,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     {loading && <p role="status">Loading workspace…</p>}
     {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
     {!loading && user && workspace && policyLoading && <p role="status">Checking processing connections…</p>}
-    {!loading && user && workspace && !policyLoading && !policy?.ready && <div className="audio-storage-notice">Connect and test ElevenLabs and OpenAI in Settings. The default speech engine must be connected before recording or upload starts.</div>}
+    {!loading && user && workspace && source === 'upload' && !policyLoading && !policy?.ready && <div className="audio-storage-notice">Connect and test ElevenLabs and OpenAI in Settings before uploading audio or processing a recording.</div>}
     {localMode && <div className="audio-storage-notice"><ShieldCheck size={15} />Audio and enquiries save on this computer. Add ElevenLabs and OpenAI keys in Settings when you want transcription and English translation.</div>}
     {error && <div className="recorder-error" role="alert">{error}</div>}
     {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}

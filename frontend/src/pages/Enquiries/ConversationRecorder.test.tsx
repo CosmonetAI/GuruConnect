@@ -21,6 +21,7 @@ vi.mock('../../recording/session', () => ({
   listRecoveries: mocks.recoveries, recoverRecording: mocks.recover,
   RecorderSession: class {
     constructor(options: RecordingOptions) { mocks.options = options }
+    subscribe = vi.fn(() => () => {})
     start = mocks.start; pause = mocks.pause; resume = mocks.resume; stop = mocks.stop; dispose = mocks.dispose
   },
 }))
@@ -72,6 +73,21 @@ describe('authenticated conversation audio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
     await screen.findByRole('button', { name: 'Stop & save' })
     expect(mocks.start).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop & save' }))
+    await screen.findByText('Audio saved in your workspace')
+  })
+  it('starts microphone capture when processing connections are unavailable', async () => {
+    const normal = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation(async (...args) => {
+      if (args[0] === '/engine-settings' || args[0] === '/connections') throw new Error('processing unavailable')
+      return normal(...args)
+    })
+    setup(); consent(); await ready()
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
+    await screen.findByRole('button', { name: 'Stop & save' })
+    expect(mocks.start).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop & save' }))
+    await screen.findByText('Audio saved in your workspace')
   })
   it('guards an unsent selected file until upload or explicit removal', async () => {
     const callbacks = setup(); consent(); await ready(); file()
@@ -96,7 +112,7 @@ describe('authenticated conversation audio', () => {
     const createCalls = mocks.request.mock.calls.filter(([path]) => path === '/conversations')
     expect(createCalls).toHaveLength(1)
     expect(createCalls[0][1]).toBe('workspace-a')
-    expect(JSON.parse(createCalls[0][2].body)).toMatchObject({ customer_name: 'Synthetic Customer', consent_confirmed: true, audio_only: false })
+    expect(JSON.parse(createCalls[0][2].body)).toMatchObject({ customer_name: 'Synthetic Customer', consent_confirmed: true, audio_only: true })
     expect(callbacks.onSaved).not.toHaveBeenCalled()
     expect(callbacks.onBusyChange).toHaveBeenLastCalledWith(true)
     fireEvent.click(screen.getByRole('button', { name: 'Stop & save' }))
