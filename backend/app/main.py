@@ -167,7 +167,7 @@ async def zoho_organizations():
     except Exception as e: raise HTTPException(502,f'Unable to load Zoho Books organizations: {e}')
 @app.post('/api/zoho/organization')
 async def zoho_organization(payload:OrganizationIn):
-    try: return zoho.select_organization(payload.organization_id)
+    try: return await zoho.select_organization(payload.organization_id)
     except Exception as e: raise HTTPException(400,f'Unable to select Zoho Books organization: {e}')
 @app.post('/api/zoho/smoke-test')
 async def zoho_smoke():
@@ -519,13 +519,103 @@ async def document_contacts(search: str = '', role: str = 'customer'):
     except Exception as e:
         raise HTTPException(502, f'Unable to search Zoho contact sources: {e}')
 
+@app.get('/api/purchase-orders/options')
+@app.get('/api/documents/options')
+async def purchase_order_options():
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        currencies, locations, accounts, projects, tags, taxes = await asyncio.gather(
+            zoho.list_books_currencies(org),
+            zoho.list_books_locations(org),
+            zoho.list_books_chart_of_accounts(org),
+            zoho.list_books_projects(org),
+            zoho.list_books_reporting_tags(org),
+            zoho.list_books_taxes(org),
+        )
+        return {
+            'currencies': currencies.get('currencies', []),
+            'locations': locations.get('locations', []),
+            'accounts': accounts.get('chartofaccounts', accounts.get('accounts', accounts.get('data', []))),
+            'projects': projects.get('projects', projects.get('data', [])),
+            'reporting_tags': tags.get('reporting_tags', tags.get('tags', tags.get('data', []))),
+            'taxes': taxes.get('taxes', taxes.get('data', [])),
+            'organization_id': org,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to load purchase order options: {e}')
+
+@app.get('/api/purchase-orders/vendors/{vendor_id}')
+async def purchase_order_vendor(vendor_id: str):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        detail, persons = await asyncio.gather(
+            zoho.get_books_contact(org, vendor_id),
+            zoho.get_books_contact_persons(org, vendor_id),
+        )
+        contact = detail.get('contact', detail.get('data', detail))
+        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('data') or contact.get('contact_persons', [])
+        return {
+            'vendor': contact,
+            'contact_persons': contact_persons,
+            'organization_id': org,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to load Zoho Books vendor details: {e}')
+
+@app.get('/api/documents/contacts/{contact_id}')
+async def document_contact(contact_id: str):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        detail, persons = await asyncio.gather(
+            zoho.get_books_contact(org, contact_id),
+            zoho.get_books_contact_persons(org, contact_id),
+        )
+        contact = detail.get('contact', detail.get('data', detail))
+        contact_persons = persons.get('contacts') or persons.get('contact_persons') or persons.get('data') or contact.get('contact_persons', [])
+        return {'contact': contact, 'contact_persons': contact_persons, 'organization_id': org}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to load Zoho Books contact details: {e}')
+
+@app.get('/api/purchase-orders/options/tag-options')
+async def purchase_order_tag_options(tag_id: str):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        payload = await zoho.list_books_reporting_tag_options(org, tag_id)
+        return {'options': payload.get('options', payload.get('tag_options', payload.get('data', []))), 'tag_id': tag_id, 'organization_id': org}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f'Unable to load reporting tag options: {e}')
+
 async def _resolve_books_document_contact(payload: dict, role: str, org: str):
     id_key = f'{role}_id'; source_key = f'{role}_source'; record_key = f'{role}_record'
     raw_id = str(payload.get(id_key) or '')
-    is_bigin = payload.get(source_key) == 'bigin' or raw_id.startswith('bigin:')
+    # Older voice-session clients used customer_source/customer_record even for
+    # purchase orders. Keep accepting those aliases while the UI sends the
+    # role-specific vendor_source/vendor_record fields.
+    source = payload.get(source_key)
+    record = payload.get(record_key)
+    if role == 'vendor':
+        source = source or payload.get('customer_source')
+        record = record or payload.get('customer_record')
+    is_bigin = source == 'bigin' or raw_id.startswith('bigin:')
     if not is_bigin:
         return payload.get(id_key)
-    record = payload.get(record_key) or {}
+    record = record or {}
     if not record and raw_id.startswith('bigin:'):
         result = await zoho.get_bigin_contact(raw_id.removeprefix('bigin:'))
         record = (result.get('data') or [result.get('contact')])[0] if isinstance(result.get('data'), list) else (result.get('data') or result.get('contact') or result)
@@ -537,6 +627,12 @@ async def _resolve_books_document_contact(payload: dict, role: str, org: str):
     if not books_id:
         raise HTTPException(502, f'Unable to create the Bigin {role} in Zoho Books')
     return books_id
+
+def _clean_document_contact_metadata(payload: dict):
+    return {
+        key: value for key, value in payload.items()
+        if key not in {'customer_source', 'customer_record', 'vendor_source', 'vendor_record'}
+    }
 @app.get('/api/quotes')
 async def quotes(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -558,7 +654,7 @@ async def create_quote(payload: dict):
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
-        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
+        payload = _clean_document_contact_metadata({**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)})
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_estimate(org, payload)
@@ -566,11 +662,11 @@ async def create_quote(payload: dict):
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books quote: {e}')
 @app.post('/api/quotes/{estimate_id}/email')
-async def email_quote(estimate_id: str):
+async def email_quote(estimate_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_estimate(org, estimate_id)
+        return await zoho.email_estimate(org, estimate_id, payload)
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books quote: {e}')
 @app.get('/api/orders')
@@ -591,7 +687,7 @@ async def create_order(payload: dict):
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
-        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
+        payload = _clean_document_contact_metadata({**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)})
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'): raise HTTPException(422, 'At least one item and quantity are required')
         result = await zoho.create_sales_order(org, payload)
@@ -599,11 +695,11 @@ async def create_order(payload: dict):
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books sales order: {e}')
 @app.post('/api/orders/{salesorder_id}/email')
-async def email_order(salesorder_id: str):
+async def email_order(salesorder_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_sales_order(org, salesorder_id)
+        return await zoho.email_sales_order(org, salesorder_id, payload)
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books sales order: {e}')
 @app.get('/api/purchase-orders')
@@ -626,7 +722,7 @@ async def create_purchase_order(payload: dict):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('vendor_id'):
             raise HTTPException(422, 'Vendor is required')
-        payload = {**payload, 'vendor_id': await _resolve_books_document_contact(payload, 'vendor', org)}
+        payload = _clean_document_contact_metadata({**payload, 'vendor_id': await _resolve_books_document_contact(payload, 'vendor', org)})
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')
@@ -635,11 +731,11 @@ async def create_purchase_order(payload: dict):
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books purchase order: {e}')
 @app.post('/api/purchase-orders/{purchaseorder_id}/email')
-async def email_purchase_order(purchaseorder_id: str):
+async def email_purchase_order(purchaseorder_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_purchase_order(org, purchaseorder_id)
+        return await zoho.email_purchase_order(org, purchaseorder_id, payload)
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books purchase order: {e}')
 @app.get('/api/invoices')
@@ -662,7 +758,7 @@ async def create_invoice(payload: dict):
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'):
             raise HTTPException(422, 'Customer is required')
-        payload = {**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)}
+        payload = _clean_document_contact_metadata({**payload, 'customer_id': await _resolve_books_document_contact(payload, 'customer', org)})
         lines = payload.get('line_items') or []
         if not lines or not lines[0].get('item_id') or not lines[0].get('quantity'):
             raise HTTPException(422, 'At least one item and quantity are required')
@@ -671,11 +767,11 @@ async def create_invoice(payload: dict):
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books invoice: {e}')
 @app.post('/api/invoices/{invoice_id}/email')
-async def email_invoice(invoice_id: str):
+async def email_invoice(invoice_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_invoice(org, invoice_id)
+        return await zoho.email_invoice(org, invoice_id, payload)
     except HTTPException: raise
     except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books invoice: {e}')
 @app.get('/api/contacts')
