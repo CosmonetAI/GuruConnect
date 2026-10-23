@@ -3,7 +3,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { configured, localMode, request, supabase, message, json, type Workspace } from '../services/officeApi'
 
 const localUser = { id: '00000000-0000-0000-0000-000000000001', email: 'local@localhost', app_metadata: {}, user_metadata: { display_name: 'Local user' }, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' } as User
-const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner' }
+const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner', member_id: localUser.id }
 
 interface OfficeState {
   configured: boolean; localMode: boolean; session: Session | null; user: User | null; loading: boolean
@@ -32,7 +32,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
       const result = await request<{ items: Workspace[] }>('/workspaces')
       if (identity.current !== userId || sequence.current !== ticket) return
       setWorkspaces(result.items)
-      setActive(old => result.items.some(item => item.id === old) ? old : result.items[0]?.id ?? null)
+      setActive(old => result.items.some(item => (item.member_id ?? item.id) === old) ? old : result.items[0] ? (result.items[0].member_id ?? result.items[0].id) : null)
       setError('')
     } catch (failure) {
       if (identity.current !== userId || sequence.current !== ticket) return
@@ -71,8 +71,8 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(timer)
   }, [session, localMode])
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
-    workspaces: localMode ? [localWorkspace] : workspaces, workspace: localMode ? localWorkspace : workspaces.find(item => item.id === active) ?? null, error, captureBusy, setCaptureBusy,
-    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => item.id === id)) setActive(id) } }}>{children}</OfficeContext.Provider>
+    workspaces: localMode ? [localWorkspace] : workspaces, workspace: localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null, error, captureBusy, setCaptureBusy,
+    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) } }}>{children}</OfficeContext.Provider>
 }
 export function useOffice() {
   const state = useContext(OfficeContext)

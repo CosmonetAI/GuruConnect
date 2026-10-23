@@ -428,7 +428,7 @@ export default function VoiceSessions() {
     setBusy(true);
     setError("");
     try {
-      await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: "DELETE" });
+      await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: "DELETE" }, workspace.member_id);
       setRecorderSessions((current) => current.filter((item) => item.id !== id));
       if (conversationId === id) {
         setConversationId(null);
@@ -628,6 +628,7 @@ export default function VoiceSessions() {
           method: "PATCH",
           body: JSON.stringify({ stage }),
         },
+        workspace.member_id,
       );
       setSelectedContact((current) =>
         current ? { ...current, enquiry_stage: stage } : current,

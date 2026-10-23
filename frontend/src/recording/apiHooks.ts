@@ -1,9 +1,9 @@
 import { json, request } from '../services/officeApi'
 import type { RecordingHooks } from './session'
 
-export function recordingHooks(conversationId: string, workspaceId: string, partId: string, leaseToken: string, tabId: string, signal?: AbortSignal): RecordingHooks {
+export function recordingHooks(conversationId: string, workspaceId: string, partId: string, leaseToken: string, tabId: string, signal?: AbortSignal, memberId?: string): RecordingHooks {
   const root = `/conversations/${encodeURIComponent(conversationId)}`
-  const post = <T>(path: string, body: unknown) => request<T>(`${root}${path}`, workspaceId, { ...json('POST', body), signal })
+  const post = <T>(path: string, body: unknown) => request<T>(`${root}${path}`, workspaceId, { ...json('POST', body), signal }, memberId)
   return {
     authorize: chunk => post('/chunks/authorize', chunk),
     confirm: chunk => post('/chunks/confirm', chunk),

@@ -201,7 +201,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
         chunkSeconds,
-        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal, workspace!.member_id),
         onState: state => {
           if (!isCurrent(epoch, controller)) return
           setCapture(state)
@@ -251,7 +251,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       await uploadAudioFile({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
         chunkSeconds,
-        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal, workspace!.member_id), signal: controller.signal,
         onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
       })
       if (isCurrent(epoch, controller)) showSaved(id)

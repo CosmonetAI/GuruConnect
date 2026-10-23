@@ -161,21 +161,30 @@ class Workspace:
     id: UUID
     user: User
     role: str
+    member_id: UUID
+    actor_role: str
 
     @property
     def admin(self) -> bool:
-        return self.role == "owner"
+        return self.actor_role == "owner"
+
+    @property
+    def personal(self) -> bool:
+        return self.member_id == self.user.id
 
 
 async def workspace(request: Request, user: User = Depends(current_user),
-                    x_workspace_id: UUID | None = Header(default=None)) -> Workspace:
+                    x_workspace_id: UUID | None = Header(default=None),
+                    x_workspace_member_id: UUID | None = Header(default=None)) -> Workspace:
     if not x_workspace_id:
         fail("workspace_required", 400)
     async with request.app.state.db.connection() as connection:
-        member = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
-    if not member:
+        actor = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
+        selected_id = x_workspace_member_id or user.id
+        selected = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, selected_id))
+    if not actor or not selected or (selected_id != user.id and actor["role"] != "owner"):
         fail("workspace_access_denied", 403)
-    return Workspace(x_workspace_id, user, member["role"])
+    return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])
 
 
 async def administrator(request: Request, context: Workspace = Depends(workspace)) -> Workspace:

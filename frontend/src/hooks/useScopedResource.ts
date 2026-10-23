@@ -13,7 +13,7 @@ export function useScopedResource<T>(path: string | null) {
     operation.loading = true
     setState(old => ({ scope, data: old.scope === scope ? old.data : undefined, error: '', loading: true }))
     try {
-      const data = await request<T>(path, workspace.id, { signal: operation.abort.signal })
+      const data = await request<T>(path, workspace.id, { signal: operation.abort.signal }, workspace.member_id ?? workspace.id)
       if (current.current === operation && !operation.abort.signal.aborted) setState({ scope, data, error: '', loading: false })
     } catch (failure) {
       const lostAccess = failure instanceof ApiError && [401, 403, 404].includes(failure.status)

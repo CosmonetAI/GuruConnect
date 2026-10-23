@@ -51,10 +51,41 @@ async def presence(request: Request, user: User = Depends(current_user)):
     return row or {"id": user.id, "availability_status": "active"}
 
 
+@router.get("/analytics")
+async def analytics(request: Request, context: Workspace = Depends(workspace)):
+    """Return organization totals for the owner's personal view and member
+    totals for a switched workspace. Authorization is always checked against
+    the authenticated owner, never a client-supplied member identity.
+    """
+    scoped_all = context.admin and context.personal
+    scope_user = None if scoped_all else context.member_id
+    async with request.app.state.db.connection() as connection:
+        total = await one(connection, """
+            select count(*) as total
+            from guruconnect_enquiries
+            where organisation_id=%s and (%s is null or owner_id=%s or assigned_to=%s)
+        """, (context.id, scope_user, scope_user, scope_user))
+        channels = await many(connection, """
+            select channel, count(*) as count
+            from guruconnect_enquiries
+            where organisation_id=%s and (%s is null or owner_id=%s or assigned_to=%s)
+            group by channel order by count desc, channel
+        """, (context.id, scope_user, scope_user, scope_user))
+    return {"total": total["total"], "channels": channels, "organizationWide": scoped_all}
+
+
 @router.get("/workspaces")
 async def list_workspaces(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select o.*,m.role from organisations o join members m on m.organisation_id=o.id where m.user_id=%s and m.status='active' order by o.created_at", (user.id,))
+        rows = await many(connection, """
+            select o.id, o.name, m.user_id as member_id, m.role, p.display_name
+            from organisations o
+            join members actor on actor.organisation_id=o.id and actor.user_id=%s and actor.status='active'
+            join members m on m.organisation_id=o.id and m.status='active'
+            left join profiles p on p.id=m.user_id
+            where actor.role='owner' or m.user_id=%s
+            order by o.created_at, case when m.user_id=%s then 0 else 1 end, p.display_name
+        """, (user.id, user.id, user.id))
     return {"items": rows, "next_cursor": None}
 
 

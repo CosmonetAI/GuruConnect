@@ -61,6 +61,14 @@ describe('local and authenticated request boundaries', () => {
     expect(headers.get('Idempotency-Key')).toBe('stable-key-123')
     expect(headers.get('Content-Type')).toBe('application/json')
   })
+  it('keeps the organization scope while sending the selected member view separately', async () => {
+    cloud(); const api = await load()
+    await api.request('/analytics', 'organization-a', {}, 'salesperson-a')
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    const headers = new Headers(init?.headers)
+    expect(headers.get('X-Workspace-ID')).toBe('organization-a')
+    expect(headers.get('X-Workspace-Member-ID')).toBe('salesperson-a')
+  })
   it('rejects a missing cloud session before fetching private records', async () => {
     cloud(); mocks.getSession.mockResolvedValue({ data: { session: null } }); const api = await load()
     await expect(api.request('/enquiries', 'workspace-a')).rejects.toMatchObject({ status: 401, code: 'session_expired' })

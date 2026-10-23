@@ -111,7 +111,7 @@ def create_local_app(settings) -> FastAPI:
     local_origins = [origin for origin in settings.cors_origins if urlsplit(origin).hostname in {"127.0.0.1", "localhost", "::1"} and urlsplit(origin).scheme == "http"]
     app.add_middleware(CORSMiddleware, allow_origins=local_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
-                       allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "Idempotency-Key"],
+                       allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Member-ID", "Idempotency-Key"],
                        expose_headers=["Content-Disposition", "X-GuruConnect-Mode"], max_age=600)
     app.add_middleware(LocalBoundary, origins=local_origins)
 

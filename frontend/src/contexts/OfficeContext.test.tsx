@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../services/officeApi', () => ({
   get configured() { return mocks.configured }, get localMode() { return mocks.localMode },
   get supabase() { return mocks.cloud ? { auth: { getSession: mocks.getSession, onAuthStateChange: (callback: (event: string, session: unknown) => void) => { mocks.handler = callback; return { data: { subscription: { unsubscribe: mocks.unsubscribe } } } } } } : null },
-  request: mocks.request, message: (error: unknown) => error instanceof Error ? error.message : 'Workspace error',
+  request: mocks.request, json: () => ({}), message: (error: unknown) => error instanceof Error ? error.message : 'Workspace error',
 }))
 import { OfficeProvider, useOffice } from './OfficeContext'
 
@@ -51,9 +51,16 @@ describe('workspace identity and explicit local mode', () => {
   })
   it('clears the previous private workspace immediately and ignores its delayed list on account switch', async () => {
     let resolveAlice: (value: object) => void = () => undefined
-    mocks.request.mockImplementationOnce(() => new Promise(resolve => { resolveAlice = resolve })).mockResolvedValueOnce({ items: [{ id: 'workspace-b', name: 'Private Bob workspace', role: 'owner' }] })
+    let workspaceCalls = 0
+    mocks.request.mockImplementation((path: string) => {
+      if (path === '/presence') return Promise.resolve({})
+      workspaceCalls += 1
+      return workspaceCalls === 1
+        ? new Promise(resolve => { resolveAlice = resolve })
+        : Promise.resolve({ items: [{ id: 'workspace-b', name: 'Private Bob workspace', role: 'owner' }] })
+    })
     setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledOnce())
+    await waitFor(() => expect(workspaceCalls).toBe(1))
     act(() => { mocks.handler?.('SIGNED_IN', session('bob')) })
     expect(screen.getByTestId('identity')).toHaveTextContent('bob'); expect(screen.getByTestId('workspace')).toHaveTextContent('none')
     await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private Bob workspace'))

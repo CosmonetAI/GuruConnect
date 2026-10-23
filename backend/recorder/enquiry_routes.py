@@ -161,11 +161,15 @@ async def list_enquiries(request: Request, context: Workspace = Depends(workspac
                          branch: str = Query(default="", max_length=160)):
     # Treat '%' and '_' as text; search values are never concatenated into SQL.
     search = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    # The owner's personal view is organization-wide; a switched member view
+    # is restricted to that member while the owner remains the authenticated actor.
+    scoped_all = context.admin and context.personal
+    scope_user = context.member_id if not scoped_all else context.user.id
     where = """where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
       and (e.customer_name ilike %s or e.phone ilike %s or e.id::text ilike %s
            or ('ENQ-'||extract(year from e.created_at)::text||'-'||lpad(e.enquiry_number::text,greatest(6,length(e.enquiry_number::text)),'0')) ilike %s)
       and (%s='' or e.channel=%s) and (%s='' or e.branch=%s)"""
-    params = (context.id, context.admin, context.user.id, context.user.id, search, search, search, search, channel, channel, branch, branch)
+    params = (context.id, scoped_all, scope_user, scope_user, search, search, search, search, channel, channel, branch, branch)
     async with request.app.state.db.connection() as connection:
         # One SQL statement gives count and rows the same snapshot, including an
         # empty page, without extending the transaction across another roundtrip.

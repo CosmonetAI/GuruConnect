@@ -59,7 +59,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) aborted();
   });
 }
-export async function request<T>(path: string, workspace?: string | null, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<T> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
   const abort = new AbortController();
@@ -80,6 +80,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
         if (session.user?.id) headers.set('X-User-ID', session.user.id);
       }
       if (workspace) headers.set('X-Workspace-ID', workspace);
+      if (memberId) headers.set('X-Workspace-Member-ID', memberId);
       if (init.body) headers.set('Content-Type', 'application/json');
       const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
       if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
@@ -103,7 +104,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
 }
 
 /** Authenticated binary response for progressive audio and other streamed media. */
-export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}): Promise<Response> {
+export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<Response> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
   const abort = new AbortController();
@@ -120,6 +121,7 @@ export async function requestStream(path: string, workspace?: string | null, ini
       if (session.user?.id) headers.set('X-User-ID', session.user.id);
     }
     if (workspace) headers.set('X-Workspace-ID', workspace);
+    if (memberId) headers.set('X-Workspace-Member-ID', memberId);
     const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
     if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
     if (!response.ok) {
@@ -163,7 +165,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
 }
 export const json = (method: string, value?: unknown, key?: string): RequestInit => ({ method, body: value === undefined ? undefined : JSON.stringify(value), headers: key ? { 'Idempotency-Key': key } : undefined });
 export type Role = 'owner' | 'salesperson' | 'receptionist';
-export interface Workspace { id: string; name: string; role: Role; }
+export interface Workspace { id: string; name: string; role: Role; member_id?: string; display_name?: string; }
 export interface Customer { id: string; name: string; created_at: string; notes?: string; }
 export interface Conversation {
   id: string; customer_name_snapshot: string; salesperson_name_snapshot?: string; title?: string; location?: string;
