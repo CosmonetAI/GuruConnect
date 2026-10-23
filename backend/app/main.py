@@ -304,7 +304,7 @@ async def open_voice_session(payload: VoiceSessionIn, request: Request):
             session = row_dict(session)
             messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session['id']}).all()]
             chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session['id']}).all()]
-            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer and deleted_at is null order by created_at desc limit 100"), {'customer': customer['id']}).all()]
+            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer and deleted_at is null and upload_state='saved' and total_samples>0 order by created_at desc limit 100"), {'customer': customer['id']}).all()]
             return {'session': session, 'customer': customer, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
     except Exception as e: raise HTTPException(500, f'Unable to open voice session: {e}')
 
@@ -317,7 +317,7 @@ async def voice_session_history(session_id: str, request: Request):
             messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session_id}).all()]
             chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session_id}).all()]
             session = row_dict(session)
-            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer_id and deleted_at is null order by created_at desc limit 100"), {'customer_id': session['customer_id']}).all()]
+            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer_id and deleted_at is null and upload_state='saved' and total_samples>0 order by created_at desc limit 100"), {'customer_id': session['customer_id']}).all()]
             return {'session': session, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
     except HTTPException: raise
     except Exception as e: raise HTTPException(500, f'Unable to load voice session history: {e}')

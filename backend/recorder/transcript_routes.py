@@ -1,3 +1,4 @@
+import asyncio
 import json
 import hashlib
 import logging
@@ -169,6 +170,56 @@ async def playback_stream(conversation_id: UUID, request: Request, start_sample:
         "X-Playback-Mode": "progressive-bucket",
         "X-Playback-Start-Sample": str(start_sample),
         "X-Playback-Sample-Rate": "16000",
+    })
+
+
+@router.get("/{conversation_id}/playback/download")
+async def playback_download(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
+    """Encode the validated chunk sequence as one downloadable MP3."""
+    async with request.app.state.db.connection() as connection:
+        conv = await conversation(connection, context, conversation_id)
+        chunks = await many(connection, "select object_path,sample_start,sample_count,bytes,sha256,state from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
+    total_samples = int(conv.get("total_samples") or 0)
+    if not chunks or total_samples <= 0 or total_samples > MAX_SESSION_SAMPLES:
+        fail("playback_unavailable", 409, "Saved audio is not ready for download")
+    expected = 0
+    for chunk in chunks:
+        if chunk["state"] != "validated" or int(chunk["sample_start"]) != expected:
+            fail("playback_chunks_incomplete", 409, "Some saved audio is still being verified")
+        expected += int(chunk["sample_count"])
+    if expected != total_samples:
+        fail("playback_chunks_incomplete", 409, "Saved audio is incomplete")
+
+    async def body():
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+            "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            assert process.stdin is not None and process.stdout is not None
+            process.stdin.write(_wav_header(total_samples))
+            await process.stdin.drain()
+            for chunk in chunks:
+                data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+                info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+                if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+                    fail("playback_chunk_checksum_mismatch", 409, "A saved audio chunk failed verification")
+                process.stdin.write(info.pcm)
+                await process.stdin.drain()
+            process.stdin.close()
+            async for encoded in process.stdout:
+                yield encoded
+            if await process.wait() != 0:
+                fail("playback_encoding_failed", 503, "The recording could not be encoded")
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+
+    return StreamingResponse(body(), media_type="audio/mpeg", headers={
+        "Content-Disposition": f'attachment; filename="recording-{conversation_id}.mp3"',
+        "X-Playback-Mode": "mp3-encoded-chunks",
     })
 
 

@@ -64,6 +64,7 @@
 .session-panel-toggle > div { min-width: 0; flex: 1; }
 .session-panel-toggle > svg { flex: 0 0 auto; color: #71839b; }
 .session-panel-toggle:focus-visible { outline-offset: 2px; }
+.session-panel-toggle:hover { background: transparent; color: inherit; }
 .session-panel-content { min-width: 0; min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .session-panel-content[hidden] { display: none; }
 .session-notes .session-panel-content { flex: 0 0 auto; }

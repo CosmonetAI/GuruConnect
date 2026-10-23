@@ -1,5 +1,8 @@
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid 10001 guruconnect && useradd --uid 10001 --gid 10001 --no-create-home guruconnect
 WORKDIR /app/backend
 COPY backend/requirements.txt ./requirements.txt

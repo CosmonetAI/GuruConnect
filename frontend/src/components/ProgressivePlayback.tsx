@@ -12,13 +12,7 @@ type Props = {
 
 type Status = 'idle' | 'loading' | 'playing' | 'ended'
 
-function append(left: Uint8Array, right: Uint8Array) {
-  const value = new Uint8Array(left.length + right.length)
-  value.set(left); value.set(right, left.length)
-  return value
-}
-
-/** Plays the continuous PCM stream without waiting for the full recording. */
+/** Plays the server's complete, chunk-joined WAV as one AudioBuffer. */
 export default function ProgressivePlayback({ conversationId, workspaceId, startSeconds = 0, onTimeChange, compact = false }: Props) {
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState('')
@@ -30,8 +24,6 @@ export default function ProgressivePlayback({ conversationId, workspaceId, start
   const sources = useRef(new Set<AudioBufferSourceNode>())
   const clockStart = useRef(0)
   const playbackStart = useRef(startSeconds)
-  const nextStart = useRef(0)
-  const streamDone = useRef(false)
 
   function stop() {
     run.current += 1
@@ -67,57 +59,27 @@ export default function ProgressivePlayback({ conversationId, workspaceId, start
       const sample = Math.max(0, Math.floor(startSeconds * 16000))
       const response = await requestStream(`/conversations/${conversationId}/playback/stream?start_sample=${sample}`, workspaceId, { signal: controller.signal })
       if (!response.body) throw new Error('The recording stream is unavailable.')
-      const contentLength = Number(response.headers.get('Content-Length') || 0)
-      const total = contentLength > 44 ? (contentLength - 44) / 2 / 16000 : 0
-      setDurationSeconds(startSeconds + total)
       const audioContext = new AudioContext()
       context.current = audioContext
       await audioContext.resume()
       playbackStart.current = startSeconds
-      nextStart.current = 0
-      streamDone.current = false
-      let received = new Uint8Array()
-      let headerRead = false
-      let firstScheduled = false
-      const reader = response.body.getReader()
-      const schedule = (pcm: Uint8Array) => {
-        const samples = Math.floor(pcm.byteLength / 2)
-        if (!samples || currentRun !== run.current) return
-        const buffer = audioContext.createBuffer(1, samples, 16000)
-        const channel = buffer.getChannelData(0)
-        const view = new DataView(pcm.buffer, pcm.byteOffset, samples * 2)
-        for (let index = 0; index < samples; index += 1) channel[index] = view.getInt16(index * 2, true) / 32768
-        const source = audioContext.createBufferSource()
-        source.buffer = buffer; source.connect(audioContext.destination)
-        const startAt = Math.max(nextStart.current, audioContext.currentTime + (firstScheduled ? 0 : 0.08))
-        source.onended = () => {
-          sources.current.delete(source)
-          if (streamDone.current && sources.current.size === 0 && currentRun === run.current) {
-            setStatus('ended'); onTimeChange?.(startSeconds + total)
-          }
-        }
-        sources.current.add(source); source.start(startAt)
-        if (!firstScheduled) {
-          firstScheduled = true; clockStart.current = startAt - startSeconds; setStatus('playing')
-        }
-        nextStart.current = startAt + buffer.duration
+      const wav = await response.arrayBuffer()
+      if (currentRun !== run.current) return
+      const buffer = await audioContext.decodeAudioData(wav)
+      if (!buffer.length) throw new Error('The recording contains no playable audio.')
+      const source = audioContext.createBufferSource()
+      source.buffer = buffer; source.connect(audioContext.destination)
+      const startAt = audioContext.currentTime + 0.08
+      const total = buffer.duration
+      setDurationSeconds(startSeconds + total)
+      clockStart.current = startAt - startSeconds
+      source.onended = () => {
+        sources.current.delete(source)
+        if (currentRun === run.current) { setStatus('ended'); onTimeChange?.(startSeconds + total) }
       }
-      while (true) {
-        const result = await reader.read()
-        if (result.done) break
-        if (currentRun !== run.current) return
-        received = append(received, result.value)
-        if (!headerRead) {
-          if (received.length < 44) continue
-          if (String.fromCharCode(...received.slice(0, 4)) !== 'RIFF' || String.fromCharCode(...received.slice(8, 12)) !== 'WAVE') throw new Error('The recording format is invalid.')
-          received = received.slice(44); headerRead = true
-        }
-        const aligned = received.length - (received.length % 2)
-        if (aligned) { schedule(received.slice(0, aligned)); received = received.slice(aligned) }
-      }
-      if (received.length) schedule(received)
-      streamDone.current = true
-      if (!firstScheduled) throw new Error('The recording contains no playable audio.')
+      sources.current.add(source)
+      source.start(startAt)
+      setStatus('playing')
     } catch (cause) {
       if (controller.signal.aborted || currentRun !== run.current) return
       setStatus('idle'); setError(cause instanceof Error ? cause.message : 'Playback is unavailable.')

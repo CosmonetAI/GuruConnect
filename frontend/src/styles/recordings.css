@@ -1,4 +1,6 @@
 .recording-history { display: grid; gap: 18px; }
+.recording-search { display: flex; align-items: center; gap: 10px; max-width: 560px; padding: 11px 14px; border: 1px solid #dce7f5; border-radius: 12px; background: #fff; color: #6680a1; }
+.recording-search input { width: 100%; border: 0; outline: 0; color: #12345b; font: inherit; background: transparent; }
 .recording-customer { border: 1px solid #dce7f5; border-radius: 18px; overflow: hidden; background: #fff; }
 .recording-customer > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; background: #f5f8fd; border-bottom: 1px solid #e3ebf5; }
 .recording-customer h2 { margin: 0; color: #12345b; font-size: 1.05rem; }

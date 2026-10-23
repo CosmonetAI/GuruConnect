@@ -741,6 +741,24 @@ export default function VoiceSessions() {
                 </div>
               </div>
             )}
+            {session && (
+              <section className="conversation-notes-feed" aria-label="Executive notes">
+                <div className="conversation-notes-feed-heading">
+                  <strong>Executive notes</strong>
+                  <span>{notes.length}</span>
+                </div>
+                {notes.length > 0 && (
+                  <div className="conversation-notes-feed-list">
+                    {notes.map((note) => (
+                      <article key={note.id}>
+                        <p>{note.content}</p>
+                        <time>{new Date(note.created_at).toLocaleString()}</time>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
             {session &&
               messages.map((message, index) => (
                 <div className={`bubble ${message.role}`} key={index}>
@@ -927,10 +945,7 @@ export default function VoiceSessions() {
                         setNotesCollapsed((collapsed) => !collapsed)
                       }
                     >
-                      <div>
-                        <small>EXECUTIVE NOTES</small>
-                        <h3>Notes for this customer</h3>
-                      </div>
+                      <h3>Executive notes</h3>
                       <span>{notes.length}</span>
                       {notesCollapsed ? (
                         <ChevronRight size={18} aria-hidden="true" />
@@ -944,23 +959,6 @@ export default function VoiceSessions() {
                     className="session-panel-content"
                     hidden={notesCollapsed}
                   >
-                    <div className="notes-list">
-                      {notes.length ? (
-                        notes.map((note) => (
-                          <article key={note.id}>
-                            <p>{note.content}</p>
-                            <time>
-                              {new Date(note.created_at).toLocaleString()}
-                            </time>
-                          </article>
-                        ))
-                      ) : (
-                        <p className="notes-empty">
-                          Add a note while speaking. Notes stay with this
-                          customer in this workspace.
-                        </p>
-                      )}
-                    </div>
                     <div className="note-editor">
                       <textarea
                         value={noteText}
