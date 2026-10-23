@@ -1280,8 +1280,14 @@ async def session_contacts(search: str = ''):
             org = get_organisation_id()
             rows = db.execute(text("select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id from chat_sessions s join customers c on c.id=s.customer_id where s.organisation_id=cast(:org as uuid) order by s.updated_at desc limit 50"), {'org': org}).all()
             for row in rows: add(row_dict(row), 'session', session_id=row['session_id'])
-            rows = db.execute(text("select customer_name as name,phone, payload->>'email' as email, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) order by created_at desc limit 50"), {'org': org}).all()
-            for row in rows: add(row_dict(row), 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])
+            rows = db.execute(text("select id as enquiry_id, customer_name as name,phone, payload->>'email' as email, stage as enquiry_stage, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) order by created_at desc limit 50"), {'org': org}).all()
+            for row in rows:
+                item = row_dict(row)
+                add(item, 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])
+                key = f"phone:{''.join(ch for ch in str(row['phone'] or '') if ch.isdigit())[-10:]}" if row['phone'] else f"email:{str(row['email'] or '').lower()}"
+                if key in contacts:
+                    contacts[key]['enquiry_id'] = str(row['enquiry_id'])
+                    contacts[key]['enquiry_stage'] = row['enquiry_stage'] or 'new'
     except Exception as e:
         errors.append(f'Local contacts unavailable: {e}')
     try:

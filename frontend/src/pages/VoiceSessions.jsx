@@ -232,11 +232,22 @@ function ProductRequirement({
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
   const { workspace } = useOffice();
+  const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
     name: searchParams.get("name") || "",
     phone: searchParams.get("phone") || "",
     email: searchParams.get("email") || "",
   };
+  const initialContact = initialEnquiryId
+    ? {
+        ...initialIdentity,
+        id: `enquiry:${initialEnquiryId}`,
+        enquiry_id: initialEnquiryId,
+        enquiry_stage: searchParams.get("stage") || "new",
+        sources: ["Enquiry"],
+        records: {},
+      }
+    : initialIdentity;
   const [chats, setChats] = useState([]),
     [contacts, setContacts] = useState([]),
     [contactSearch, setContactSearch] = useState("");
@@ -248,7 +259,8 @@ export default function VoiceSessions() {
     [selectedContact, setSelectedContact] = useState(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [contactBusy, setContactBusy] = useState(false);
+    [contactBusy, setContactBusy] = useState(false),
+    [stageBusy, setStageBusy] = useState(false);
   const [needsCollapsed, setNeedsCollapsed] = useState(false),
     [notesCollapsed, setNotesCollapsed] = useState(false);
   const [notes, setNotes] = useState([]),
@@ -378,7 +390,7 @@ export default function VoiceSessions() {
       !startedFromEnquiry.current
     ) {
       startedFromEnquiry.current = true;
-      void prepareSession(initialIdentity);
+      void prepareSession(initialContact);
     }
   }, []);
   const chooseContact = (contact) => {
@@ -604,6 +616,35 @@ export default function VoiceSessions() {
     }
   };
   const openCustomer = () => setCustomerOpen(true);
+  const changeEnquiryStage = async (stage) => {
+    if (!workspace || !selectedContact?.enquiry_id) return;
+    setStageBusy(true);
+    setError("");
+    try {
+      await recorderRequest(
+        `/enquiries/${encodeURIComponent(selectedContact.enquiry_id)}/state`,
+        workspace.id,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ stage }),
+        },
+      );
+      setSelectedContact((current) =>
+        current ? { ...current, enquiry_stage: stage } : current,
+      );
+      setContacts((current) =>
+        current.map((contact) =>
+          contact.id === selectedContact.id
+            ? { ...contact, enquiry_stage: stage }
+            : contact,
+        ),
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setStageBusy(false);
+    }
+  };
   return (
     <section className="voice-sessions-page">
       {error && (
@@ -666,29 +707,34 @@ export default function VoiceSessions() {
         </section>
         <section className="conversation">
           {selectedContact && (
-            <div
-              className="contact-record"
-              role="button"
-              tabIndex="0"
-              onClick={openCustomer}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") openCustomer();
-              }}
-            >
+            <div className="contact-record">
               <div>
                 <strong>{selectedContact.name}</strong>
-                <button
-                  type="button"
-                  className="contact-phone-link"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openCustomer();
-                  }}
-                >
-                  <UserRound size={13} />{" "}
-                  {selectedContact.phone || "View customer"}
-                </button>
+                {selectedContact.phone && (
+                  <button
+                    type="button"
+                    className="contact-phone-link"
+                    onClick={openCustomer}
+                  >
+                    <UserRound size={13} /> {selectedContact.phone}
+                  </button>
+                )}
               </div>
+              {selectedContact.enquiry_id && (
+                <label className="session-stage-control">
+                  <span>Enquiry stage</span>
+                  <select
+                    value={selectedContact.enquiry_stage || "new"}
+                    onChange={(event) => void changeEnquiryStage(event.target.value)}
+                    disabled={stageBusy}
+                  >
+                    <option value="new">New enquiry</option>
+                    <option value="in_process">In process</option>
+                    <option value="closed">Closed</option>
+                    <option value="customer_did_not_show">Customer didn’t show up</option>
+                  </select>
+                </label>
+              )}
             </div>
           )}
           <div className="messages">

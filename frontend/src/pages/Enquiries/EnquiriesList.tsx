@@ -15,7 +15,7 @@ type MissedVisitor = {
   id: string; visitId: string; visitNumber: string; customerName: string; mobileNumber: string; email: string; purpose: string; assignedAgentName: string; checkInAt: string; missedAt: string; expiresAt: string; payload: Record<string, unknown>
 }
 
-function startSessionUrl(enquiry: Enquiry) { const params = new URLSearchParams({ start: '1', name: enquiry.customerName }); if (enquiry.phone) params.set('phone', enquiry.phone); if (enquiry.email) params.set('email', enquiry.email); return `/ai-chats?${params}` }
+function startSessionUrl(enquiry: Enquiry) { const params = new URLSearchParams({ start: '1', name: enquiry.customerName, enquiryId: enquiry.id, stage: enquiry.stage ?? 'new' }); if (enquiry.phone) params.set('phone', enquiry.phone); if (enquiry.email) params.set('email', enquiry.email); return `/ai-chats?${params}` }
 function formatDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function fieldLabel(key: string) { return key.replace(/[A-Z]/g, character => ` ${character}`).replace(/_/g, ' ').replace(/^./, character => character.toUpperCase()) }
 function fieldValue(value: unknown) { if (value === null || value === undefined || value === '') return 'Not provided'; if (typeof value === 'boolean') return value ? 'Yes' : 'No'; if (typeof value === 'object') return JSON.stringify(value); return String(value) }
