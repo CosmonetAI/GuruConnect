@@ -741,24 +741,6 @@ export default function VoiceSessions() {
                 </div>
               </div>
             )}
-            {session && (
-              <section className="conversation-notes-feed" aria-label="Executive notes">
-                <div className="conversation-notes-feed-heading">
-                  <strong>Executive notes</strong>
-                  <span>{notes.length}</span>
-                </div>
-                {notes.length > 0 && (
-                  <div className="conversation-notes-feed-list">
-                    {notes.map((note) => (
-                      <article key={note.id}>
-                        <p>{note.content}</p>
-                        <time>{new Date(note.created_at).toLocaleString()}</time>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )}
             {session &&
               messages.map((message, index) => (
                 <div className={`bubble ${message.role}`} key={index}>
@@ -959,6 +941,14 @@ export default function VoiceSessions() {
                     className="session-panel-content"
                     hidden={notesCollapsed}
                   >
+                    <div className="notes-list" aria-label="Timestamped executive notes">
+                      {notes.length ? notes.map((note) => (
+                        <article key={note.id}>
+                          <p>{note.content}</p>
+                          <time>{new Date(note.created_at).toLocaleString()}</time>
+                        </article>
+                      )) : <p className="notes-empty">No executive notes yet.</p>}
+                    </div>
                     <div className="note-editor">
                       <textarea
                         value={noteText}

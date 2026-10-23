@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Trash2, Upload } from 'lucide-react'
+import { Check, FileAudio2, Mic2, ShieldCheck, Square, Upload } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
-import { duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
+import { ApiError, duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
-import { discardRecovery, listRecoveries, RecorderSession, recoverRecording, type CaptureState } from '../../recording/session'
+import { listRecoveries, RecorderSession, type CaptureState } from '../../recording/session'
 import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
 import '../../styles/recording.css'
@@ -91,6 +91,11 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     return () => {
       mounted.current = false; generation.current++
       persistentSubscription.current?.(); persistentSubscription.current = null
+      const session = active.current ?? persistentRecorder
+      if (session && ['recording', 'paused'].includes(session.snapshot().capture)) {
+        persistentRecorder = null; persistentConversationId = null; active.current = null
+        void session.stop().catch(() => undefined)
+      }
       callbacks.current.onBusyChange?.(false)
     }
   }, [])
@@ -180,8 +185,17 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     try { validateStart(consentGranted) } catch (err) { setError(message(err)); return }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
-      const id = await createConversation(controller.signal)
-      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: false }), signal: controller.signal })
+      let id = await createConversation(controller.signal)
+      let lease: Lease
+      try {
+        lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: true }), signal: controller.signal })
+      } catch (cause) {
+        // A stale row from an older session must never block a new recording.
+        if (!(cause instanceof ApiError) || !['conflicting_state', 'recording_already_stopped'].includes(cause.code)) throw cause
+        const freshId = await createConversation(controller.signal, false)
+        lease = await request<Lease>(`/conversations/${freshId}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: true }), signal: controller.signal })
+        id = freshId
+      }
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
@@ -217,19 +231,6 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       if (mounted.current) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
     }
   }
-  async function discardRecording() {
-    if (operationRef.current || !workspace || !user) return
-    if (!window.confirm('Discard this recording and permanently delete its saved audio?')) return
-    const id = idRef.current
-    operationRef.current = true; setOperation(true); setError('')
-    try {
-      await active.current?.discard()
-      if (id) await request(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: 'DELETE' })
-      persistentRecorder = null; persistentConversationId = null; active.current = null; idRef.current = null
-      setConversationId(null); setCapture(emptyCapture); setSaved(false); setFile(null); setProgress(null); setRetryFile(false); setPhase('idle')
-      callbacks.current.onConversationChange(null)
-    } catch (err) { setError(message(err)) } finally { operationRef.current = false; setOperation(false); void refreshRecoveries().catch(() => undefined) }
-  }
   function chooseFile(next: File | null) {
     if (operation || captureActive || capture.saving || saved || recoveries.some(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)) return
     setError('')
@@ -257,43 +258,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error'); setRetryFile(!(err instanceof AudioUploadError) || !err.preserved) }
     } finally { finish(epoch, controller) }
   }
-  async function recover(recovery: Recovery) {
-    if (operationRef.current || captureActive || !workspace || !user) return
-    const { controller, epoch } = begin(); setPhase('saving')
-    try {
-      const current = await request<Conversation>(`/conversations/${recovery.conversationId}`, workspace.id, { signal: controller.signal })
-      if (current.customer_name_snapshot && current.customer_name_snapshot !== customerName.trim() && !window.confirm(`This saved recording belongs to ${current.customer_name_snapshot}. Attach it to this enquiry?`)) {
-        setPhase('idle'); return
-      }
-      let token = recovery.leaseToken
-      if (current.upload_state !== 'saved') {
-        const lease = await request<Lease>(`/conversations/${recovery.conversationId}/lease`, workspace.id, { ...json('POST', { tab_id: tabId.current, takeover: true, purpose: 'recover' }), signal: controller.signal })
-        token = lease.lease_token
-      }
-      controller.signal.throwIfAborted()
-      await recoverRecording({ userId: user.id, workspaceId: workspace.id }, recovery.conversationId, recordingHooks(recovery.conversationId, workspace.id, recovery.partId, token, tabId.current, controller.signal), token, controller.signal)
-      if (isCurrent(epoch, controller)) showSaved(recovery.conversationId)
-    } catch (err) { if (isCurrent(epoch, controller)) { setPhase('error'); setError(message(err)) } }
-    finally { finish(epoch, controller) }
-  }
-  async function removeAttachment() {
-    if (operation || captureActive || capture.saving) return
-    if (conversationId && !window.confirm(saved ? 'Detach this audio from the enquiry? Saved audio stays in the workspace.' : 'Delete this unfinished recording and its pending recovery data?')) return
-    const id = conversationId
-    generation.current++; abort.current?.abort(); disposeCapture()
-    if (id && !saved && user && workspace) {
-      try {
-        await request(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: 'DELETE' })
-        await discardRecovery({ userId: user.id, workspaceId: workspace.id }, id)
-      } catch (err) {
-        setError(message(err)); return
-      }
-    }
-    setConversationId(null); idRef.current = null; creation.current = null; notifiedSaved.current = null
-    callbacks.current.onConversationChange(null); setSaved(false); setPhase('idle'); setCapture(emptyCapture); setFile(null); setSource('microphone'); setProgress(null); setError(''); setRetryFile(false)
-  }
-  const applicableRecoveries = recoveries.filter(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)
-  const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : unfinished ? 'AUDIO NEEDS ATTENTION' : 'READY TO ADD AUDIO'
+  const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : 'READY TO ADD AUDIO'
 
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}`}>
     <div className={grouped ? 'session-recording-container' : undefined}>
@@ -308,23 +273,20 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       <div className="recorder-controls">
         {compact ? (
           // Minimal compact controls: single Start
-          !captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked} onClick={() => void startMicrophoneCompactFlow()}><Mic2 size={16} />{unfinished ? 'Retry recording' : 'Start recording'}</button>
+          !captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked} onClick={() => void startMicrophoneCompactFlow()}><Mic2 size={16} />Start recording</button>
         ) : (
           // Full controls preserved for non-compact usage
           <>
-            {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
-            { !operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
-            {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
-            {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
+            {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />Start recording</button>}
+            {!grouped && !operation && !captureActive && !capture.saving && !saved && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
+            {!grouped && source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
           </>
         )}
 
         {compact && captureActive && <div className="voice-level-wave compact-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
 
         {captureActive && <>
-          <button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>
           {compact ? <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop</button> : <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button> }
-          <button type="button" className="button button-danger recorder-trash-button" disabled={operation} onClick={() => void discardRecording()} aria-label="Discard recording"><Trash2 size={14} />Discard</button>
         </>}
 
         {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
@@ -340,7 +302,6 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span></div>}
     {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
     {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
-    {!compact && !operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="connected-audio-recovery" key={row.key}><button type="button" className="button button-secondary" onClick={() => void recover(row)}><RotateCcw size={14} />Recover audio</button></div>)}
     </div>
   </div>
 }
