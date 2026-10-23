@@ -857,6 +857,8 @@ export default function VoiceSessions() {
                   </section>{" "}
                   <ConversationRecorder
                     customerName={identity.name}
+                    customerPhone={identity.phone}
+                    customerEmail={identity.email}
                     title="Voice session"
                     initialConversationId={conversationId}
                     onConversationChange={linkConversation}
