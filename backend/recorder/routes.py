@@ -277,7 +277,9 @@ async def customer_history(customer_id: UUID, request: Request, context: Workspa
 @router.get("/conversations")
 async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: datetime | None = None):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and (%s or c.owner_id=%s) and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s) order by c.created_at desc,c.id desc limit %s", (context.id, context.admin, context.user.id, "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
+        audio_bucket = "walkin-audio" if context.role == "receptionist" else "session-audio"
+        workspace_reader = context.admin or context.role == "salesperson"
+        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and c.audio_bucket=%s and (%s or c.owner_id=%s) and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s) order by c.created_at desc,c.id desc limit %s", (context.id, audio_bucket, workspace_reader, context.user.id, "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
     return {"items": rows[:limit], "next_cursor": rows[limit-1]["created_at"].isoformat() if len(rows)>limit else None}
 
 
@@ -306,6 +308,10 @@ async def create_run(connection, context: Workspace, conv: dict, engine_id: str,
 async def new_conversation(body: s.ConversationCreate, request: Request, response: Response,
                            context: Workspace = Depends(workspace),
                            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    if body.audio_bucket == "walkin-audio" and context.role != "receptionist":
+        fail("walkin_recording_role_required", 403, "Only receptionists can create walk-in recordings")
+    if body.audio_bucket == "session-audio" and context.role == "receptionist":
+        fail("session_recording_role_required", 403, "Receptionists must use walk-in recording")
     if idempotency_key is not None and not re.fullmatch(r"[A-Za-z0-9_.:-]{8,128}", idempotency_key):
         fail("invalid_idempotency_key", 400, "Use a stable save key of 8–128 letters, digits, dots, underscores, colons or hyphens")
     request_hash = hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -347,7 +353,7 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
             if not customer:
                 customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, "Name not provided" if body.is_unnamed else body.customer_name, email, phone, email, normalized_phone, body.is_unnamed))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))
-        row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed) values(%s,%s,%s,%s,%s,%s,%s,%s,true) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint))
+        row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed,audio_bucket) values(%s,%s,%s,%s,%s,%s,%s,%s,true,%s) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint, body.audio_bucket))
         run = None if body.audio_only else await create_run(connection, context, row, engine_id, "production", "initial")
         if run is None:
             await connection.execute("update conversations set transcription_state='blocked' where id=%s", (row["id"],))

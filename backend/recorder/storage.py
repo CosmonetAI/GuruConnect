@@ -83,8 +83,8 @@ class Storage:
 
     def bucket(self, object_path: str) -> str:
         parts = object_path.split("/")
-        if len(parts) >= 4 and parts[3] == "playback":
-            return "recorder-playback"
+        if len(parts) >= 4 and parts[3] in {"session-audio", "walkin-audio"}:
+            return parts[3]
         if len(parts) >= 4 and parts[3] in {"artifacts", "results"}:
             return "recorder-artifacts"
         return self.settings.storage_bucket
@@ -202,7 +202,7 @@ class Storage:
             fail("invalid_cleanup_prefix")
         output = []
         scans = 0
-        for bucket in (self.settings.storage_bucket, "recorder-playback", "recorder-artifacts"):
+        for bucket in ("session-audio", "walkin-audio", "recorder-artifacts"):
             pending = ["/".join(parts)]
             while pending:
                 folder = pending.pop()

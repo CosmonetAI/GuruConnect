@@ -307,9 +307,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 230px;
+  width: 74px;
   height: 74px;
 }
+
+.recorder-panel.is-recording .recorder-visual { width: 230px; }
 
 .recorder-visual .voice-level-wave {
   flex: 1;

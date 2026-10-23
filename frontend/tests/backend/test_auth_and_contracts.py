@@ -121,7 +121,7 @@ async def test_immutable_storage_conflict_checks_hash(settings, respx_mock):
         await storage.put(path, b"new")
     assert error.value.status_code == 409
     assert storage.bucket(path) == "recorder-artifacts"
-    assert storage.bucket(path.split("/results/")[0]+"/playback/file.wav") == "recorder-playback"
+    assert storage.bucket(path.split("/results/")[0]+"/session-audio/playback/file.wav") == "session-audio"
 
 
 def test_openapi_contains_all_authenticated_workflows():

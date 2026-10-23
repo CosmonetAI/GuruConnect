@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     max_concurrent_requests: int = Field(default=20, ge=1, le=1000)
     preauth_rate_limit_per_minute: int = Field(default=300, ge=1, le=10000)
     preauth_rate_limit_max_peers: int = Field(default=4096, ge=1, le=100000)
-    storage_bucket: str = "recorder-audio"
+    storage_bucket: str = "session-audio"
     pool_min_size: int = Field(default=1, ge=1, le=10)
     pool_max_size: int = Field(default=10, ge=1, le=50)
     upload_max_bytes: int = Field(default=6_000_000, ge=32044, le=10_000_000)

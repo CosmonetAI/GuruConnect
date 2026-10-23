@@ -41,6 +41,7 @@ class ConversationCreate(Input):
     consent_confirmed: bool
     engine_id: Literal["elevenlabs", "faster-whisper"] | None = None
     audio_only: bool = False
+    audio_bucket: Literal["session-audio", "walkin-audio"] = "session-audio"
 
     @model_validator(mode="after")
     def customer_and_consent(self):

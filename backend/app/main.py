@@ -304,7 +304,8 @@ async def open_voice_session(payload: VoiceSessionIn, request: Request):
             session = row_dict(session)
             messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session['id']}).all()]
             chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session['id']}).all()]
-            return {'session': session, 'customer': customer, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
+            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer and deleted_at is null order by created_at desc limit 100"), {'customer': customer['id']}).all()]
+            return {'session': session, 'customer': customer, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
     except Exception as e: raise HTTPException(500, f'Unable to open voice session: {e}')
 
 @app.get('/api/voice-sessions/{session_id}/history')
@@ -316,7 +317,8 @@ async def voice_session_history(session_id: str, request: Request):
             messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session_id}).all()]
             chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session_id}).all()]
             session = row_dict(session)
-            return {'session': session, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks}
+            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer_id and deleted_at is null order by created_at desc limit 100"), {'customer_id': session['customer_id']}).all()]
+            return {'session': session, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
     except HTTPException: raise
     except Exception as e: raise HTTPException(500, f'Unable to load voice session history: {e}')
 
@@ -385,29 +387,6 @@ async def update_voice_session_context(session_id: str, payload: VoiceSessionCon
             return {'product_requirements': payload.product_requirements}
     except HTTPException: raise
     except Exception as e: raise HTTPException(500, f'Unable to save voice session context: {e}')
-
-@app.post('/api/voice-sessions/{session_id}/chunks')
-async def save_voice_chunk(session_id: str, request: Request, chunk_index: int = 0, duration_seconds: float = 0, mime_type: str = 'audio/webm'):
-    try:
-        audio = await request.body()
-        if not audio: raise HTTPException(422, 'Audio chunk is empty')
-        with require_db() as db:
-            exists = db.execute(text("select id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not exists: raise HTTPException(404, 'Voice session not found')
-            extension = {'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/webm': 'webm'}.get(mime_type.split(';', 1)[0].strip(), 'webm')
-            path = f"{session_id}/{chunk_index}.{extension}"
-        if not settings.supabase_url or not settings.supabase_service_role_key: raise HTTPException(503, 'Supabase Storage is not configured')
-        storage_mime = mime_type.split(';', 1)[0].strip() or 'audio/webm'
-        headers = {'Authorization': f'Bearer {settings.supabase_service_role_key}', 'apikey': settings.supabase_service_role_key, 'Content-Type': storage_mime, 'x-upsert': 'true'}
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f'{settings.supabase_url.rstrip("/")}/storage/v1/object/chat-recordings/{path}', headers=headers, content=audio)
-        response.raise_for_status()
-        with require_db() as db:
-            db.execute(text("insert into chat_recording_chunks(session_id,chunk_index,duration_seconds,mime_type,size_bytes,object_path) values(:session,:chunk,:duration,:mime,:size,:path) on conflict(session_id,chunk_index) do update set duration_seconds=:duration,mime_type=:mime,size_bytes=:size,object_path=:path"), {'session': session_id, 'chunk': chunk_index, 'duration': duration_seconds, 'mime': storage_mime, 'size': len(audio), 'path': path})
-            db.execute(text("update chat_sessions set updated_at=now() where id=:session"), {'session': session_id}); db.commit()
-        return {'saved': True, 'session_id': session_id, 'chunk_index': chunk_index, 'object_path': path, 'bytes': len(audio)}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to save voice chunk: {e}')
 
 def _pipeline_layouts(payload):
     rows = payload.get('layouts', payload.get('data', [])) if isinstance(payload, dict) else []

@@ -7,10 +7,12 @@
 .session-workspace-left .needs-panel { order: 1; }
 .session-workspace-left > .connected-recorder { grid-column: 1 / -1; order: 2; position: sticky; bottom: 0; z-index: 4; display: block; padding-top: 10px; background: #fff; }
 .session-recording-container { display: grid; gap: 8px; padding: 12px; border: 1px solid #dce8f2; border-radius: 12px; background: #fff; box-shadow: 0 3px 12px rgba(19, 55, 93, .04); }
-.voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .recorder-panel.is-recording { grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) auto; }
 .voice-sessions-layout .connected-recorder .recorder-panel.is-recording,
 .voice-sessions-layout .connected-recorder .recorder-panel.has-clip { background: transparent; }
-.voice-sessions-layout .connected-recorder .recorder-visual { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; }
+.voice-sessions-layout .connected-recorder .recorder-visual { display: flex; align-items: center; gap: 8px; width: 34px; height: 34px; }
+.voice-sessions-layout .connected-recorder .recorder-panel.is-recording .recorder-visual { width: 100%; }
 .voice-sessions-layout .connected-recorder .microphone-orbit { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #c9e4df; border-radius: 50%; background: #eaf1ff; }
 .voice-sessions-layout .connected-recorder .microphone-button { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; background: #2563eb; color: #fff; }
 .voice-sessions-layout .connected-recorder .microphone-button svg { width: 16px; height: 16px; }

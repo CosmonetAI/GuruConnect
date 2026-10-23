@@ -22,12 +22,13 @@ export interface ConversationRecorderProps {
   onSaved?: (id: string) => void
   onCaptureChange?: (state: CaptureState) => void
   chunkSeconds?: number
+  audioBucket?: 'session-audio' | 'walkin-audio'
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false, chunkSeconds = 180 }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
+export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false, chunkSeconds = 180, audioBucket = 'session-audio' }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -151,11 +152,12 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     setConsent(true)
     await startMicrophone(true)
   }
-  async function createConversation(signal: AbortSignal) {
-    if (idRef.current) return idRef.current
+  async function createConversation(signal: AbortSignal, reuseExisting = false) {
+    if (reuseExisting && idRef.current) return idRef.current
+    if (!reuseExisting) { idRef.current = null; creation.current = null; setConversationId(null); callbacks.current.onConversationChange(null) }
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: true },
+      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: true, audio_bucket: audioBucket },
     }
     const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal })
     signal.throwIfAborted()
@@ -178,9 +180,8 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     try { validateStart(consentGranted) } catch (err) { setError(message(err)); return }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
-      const hadId = !!idRef.current
       const id = await createConversation(controller.signal)
-      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: hadId }), signal: controller.signal })
+      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: false }), signal: controller.signal })
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
@@ -242,7 +243,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     try {
       const audio = await prepareAudioFile(file)
       controller.signal.throwIfAborted()
-      const id = await createConversation(controller.signal)
+      const id = await createConversation(controller.signal, retry)
       const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: retry }), signal: controller.signal })
       controller.signal.throwIfAborted(); setPhase('uploading')
       await uploadAudioFile({
@@ -311,7 +312,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
         ) : (
           // Full controls preserved for non-compact usage
           <>
-            {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !consent || !!applicableRecoveries.length} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
+            {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={micBlocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
             { !operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
             {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
             {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}

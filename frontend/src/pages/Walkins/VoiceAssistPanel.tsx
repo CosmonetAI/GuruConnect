@@ -32,7 +32,8 @@ export default function VoiceAssistPanel({ customerName, customerPhone, customer
           title="Walk-in registration"
           onConversationChange={onConversationChange}
           onBusyChange={onBusyChange}
-          chunkSeconds={30}
+          chunkSeconds={10}
+          audioBucket="walkin-audio"
           compact
         />
       </div>

@@ -215,7 +215,8 @@ class MainWorker:
         log.info("assembly_started job_id=%s conversation_id=%s", job["id"], job["conversation_id"])
         audio, conv = await self.audio_file(job)
         target_job = job["payload"].get("inference_job_id")
-        path = f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/artifacts/{target_job}/input.wav" if target_job else f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/playback/{conv['manifest_hash']}.wav"
+        audio_bucket = conv.get("audio_bucket") or "session-audio"
+        path = f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/artifacts/{target_job}/input.wav" if target_job else f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}/{audio_bucket}/playback/{conv['manifest_hash']}.wav"
         digest=hashlib.sha256();count=0
         while data:=audio.read(1024*1024):digest.update(data);count+=len(data)
         audio.seek(0)

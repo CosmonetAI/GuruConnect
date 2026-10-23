@@ -71,7 +71,7 @@ export async function uploadPending(scope: Scope, conversationId: string, hooks:
       const supabaseOrigin = import.meta.env.VITE_SUPABASE_URL ? new URL(import.meta.env.VITE_SUPABASE_URL).origin : undefined;
       const localOrigin = new URL(apiBase).origin;
       const localDestination = localMode && target.origin === localOrigin && ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) && target.pathname.startsWith('/api/v1/local-audio/');
-      const hostedDestination = target.origin === supabaseOrigin && target.pathname.startsWith('/storage/v1/object/recorder-audio/');
+      const hostedDestination = target.origin === supabaseOrigin && ['/storage/v1/object/session-audio/', '/storage/v1/object/walkin-audio/'].some(prefix => target.pathname.startsWith(prefix));
       if (target.username || target.password || (!localDestination && !hostedDestination)) throw new Error('Upload authorization has an invalid storage destination.');
       const timeout = AbortSignal.timeout(30000);
       const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;

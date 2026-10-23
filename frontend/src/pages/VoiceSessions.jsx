@@ -8,6 +8,7 @@ import {
   Mic2,
   Plus,
   Search,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
@@ -15,6 +16,8 @@ import { call } from "../zoho/shared/api.js";
 import ConversationRecorder from "./Enquiries/ConversationRecorder";
 import ConversationTranscript from "../components/ConversationTranscript";
 import PageLoader from "../components/PageLoader";
+import { request as recorderRequest } from "../services/officeApi";
+import { useOffice } from "../contexts/OfficeContext";
 import "../zoho/styles.css";
 import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
@@ -227,6 +230,7 @@ function ProductRequirement({
 
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
+  const { workspace } = useOffice();
   const initialIdentity = {
     name: searchParams.get("name") || "",
     phone: searchParams.get("phone") || "",
@@ -237,6 +241,7 @@ export default function VoiceSessions() {
     [contactSearch, setContactSearch] = useState("");
   const [session, setSession] = useState(null),
     [messages, setMessages] = useState([]),
+    [recorderSessions, setRecorderSessions] = useState([]),
     [identity, setIdentity] = useState(initialIdentity),
     [conversationId, setConversationId] = useState(null),
     [selectedContact, setSelectedContact] = useState(null);
@@ -293,6 +298,7 @@ export default function VoiceSessions() {
     call(`/voice-sessions/${id}/history`)
       .then((data) => {
         setMessages(data.messages || []);
+        setRecorderSessions(data.recorder_sessions || []);
         setConversationId(data.conversation_id || null);
         setIdentity({
           name: data.session?.name || "",
@@ -353,6 +359,7 @@ export default function VoiceSessions() {
       );
       setSession(data.session.id);
       setMessages(data.messages || []);
+      setRecorderSessions(data.recorder_sessions || []);
       setConversationId(data.conversation_id || null);
       await load();
       await loadContacts(contactSearch);
@@ -386,6 +393,7 @@ export default function VoiceSessions() {
   const reset = () => {
     setSession(null);
     setMessages([]);
+    setRecorderSessions([]);
     setConversationId(null);
     setSelectedContact(null);
     setDocumentContact(null);
@@ -401,6 +409,23 @@ export default function VoiceSessions() {
         method: "POST",
         body: JSON.stringify({ conversation_id: id }),
       });
+  };
+  const deleteRecorderSession = async (id) => {
+    if (!workspace || !window.confirm("Delete this recording and its transcript?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: "DELETE" });
+      setRecorderSessions((current) => current.filter((item) => item.id !== id));
+      if (conversationId === id) {
+        setConversationId(null);
+        if (session) await call(`/voice-sessions/${session}/conversation`, { method: "POST", body: JSON.stringify({ conversation_id: null }) });
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
   const updateProduct = (index, key, value) => {
     const next = productRequirements.map((line, lineIndex) =>
@@ -734,6 +759,26 @@ export default function VoiceSessions() {
                   OpenAI Luna path.
                 </span>
               </div>
+            )}
+            {session && recorderSessions.length > 0 && (
+              <section className="session-recording-history" aria-label="Past recordings for this customer">
+                <div className="session-recording-history-heading">
+                  <strong>Past recordings for this customer</strong>
+                  <span>{recorderSessions.length}</span>
+                </div>
+                {recorderSessions.map((recording) => (
+                  <article className="session-recording-history-row" key={recording.id}>
+                    <div>
+                      <strong>{new Date(recording.created_at).toLocaleString()}</strong>
+                      <small>{recording.duration_seconds ? `${Math.round(recording.duration_seconds)} sec` : "Not saved yet"} · {String(recording.final_state || recording.capture_state || "pending").replaceAll("_", " ")}</small>
+                    </div>
+                    <div className="session-recording-history-actions">
+                      <button type="button" className="button button-quiet" onClick={() => setConversationId(recording.id)} disabled={busy}>Open transcript</button>
+                      <button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} />Delete</button>
+                    </div>
+                  </article>
+                ))}
+              </section>
             )}
           </div>
           {session && (

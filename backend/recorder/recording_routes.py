@@ -107,7 +107,8 @@ async def authorize(conversation_id: UUID, body: s.Chunk, request: Request, cont
             fail("chunk_timeline_conflict", 409)
         customer = await one(connection, "select phone from customers where id=%s and organisation_id=%s", (conv["customer_id"], context.id))
         phone = ''.join(character for character in str(customer.get("phone") if customer else "") if character.isdigit())[-15:] or "no-phone"
-        path = f"{context.id}/{context.user.id}/{conversation_id}/{phone}/{body.part_id}/{body.sequence}.wav"
+        bucket = conv.get("audio_bucket") or "session-audio"
+        path = f"{context.id}/{context.user.id}/{conversation_id}/{bucket}/{phone}/{body.part_id}/{body.sequence}.wav"
         if not row:
             await connection.execute("insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
         else:
