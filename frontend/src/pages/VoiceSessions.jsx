@@ -15,6 +15,7 @@ import {
 import { call } from "../zoho/shared/api.js";
 import ConversationRecorder from "./Enquiries/ConversationRecorder";
 import ConversationTranscript from "../components/ConversationTranscript";
+import ProgressivePlayback from "../components/ProgressivePlayback";
 import PageLoader from "../components/PageLoader";
 import { request as recorderRequest } from "../services/officeApi";
 import { useOffice } from "../contexts/OfficeContext";
@@ -773,6 +774,13 @@ export default function VoiceSessions() {
                       <small>{recording.duration_seconds ? `${Math.round(recording.duration_seconds)} sec` : "Not saved yet"} · {String(recording.final_state || recording.capture_state || "pending").replaceAll("_", " ")}</small>
                     </div>
                     <div className="session-recording-history-actions">
+                      {workspace && recording.upload_state === "saved" && (
+                        <ProgressivePlayback
+                          conversationId={recording.id}
+                          workspaceId={workspace.id}
+                          compact
+                        />
+                      )}
                       <button type="button" className="button button-quiet" onClick={() => setConversationId(recording.id)} disabled={busy}>Open transcript</button>
                       <button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} />Delete</button>
                     </div>
@@ -792,6 +800,7 @@ export default function VoiceSessions() {
                       <button
                         type="button"
                         className="session-panel-toggle"
+                        title={needsCollapsed ? "Expand product requirements" : "Collapse product requirements to show more history"}
                         aria-expanded={!needsCollapsed}
                         aria-controls="session-needs-content"
                         onClick={() =>
@@ -921,6 +930,7 @@ export default function VoiceSessions() {
                     <button
                       type="button"
                       className="session-panel-toggle"
+                      title={notesCollapsed ? "Expand executive notes" : "Collapse executive notes to show more history"}
                       aria-expanded={!notesCollapsed}
                       aria-controls="session-notes-content"
                       onClick={() =>
