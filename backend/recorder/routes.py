@@ -53,25 +53,52 @@ async def presence(request: Request, user: User = Depends(current_user)):
 
 @router.get("/analytics")
 async def analytics(request: Request, context: Workspace = Depends(workspace)):
-    """Return organization totals for the owner's personal view and member
-    totals for a switched workspace. Authorization is always checked against
-    the authenticated owner, never a client-supplied member identity.
+    """Return workspace totals for owners and member totals for salespeople.
+
+    Authorization is always checked against the authenticated actor, never a
+    client-supplied member identity.
     """
-    scoped_all = context.admin and context.personal
-    scope_user = None if scoped_all else context.member_id
+    scoped_all = context.admin
+    scope_user = context.member_id
     async with request.app.state.db.connection() as connection:
         total = await one(connection, """
             select count(*) as total
             from guruconnect_enquiries
-            where organisation_id=%s and (%s is null or owner_id=%s or assigned_to=%s)
-        """, (context.id, scope_user, scope_user, scope_user))
+            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
+        """, (context.id, scoped_all, scope_user, scope_user))
         channels = await many(connection, """
             select channel, count(*) as count
             from guruconnect_enquiries
-            where organisation_id=%s and (%s is null or owner_id=%s or assigned_to=%s)
+            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
             group by channel order by count desc, channel
-        """, (context.id, scope_user, scope_user, scope_user))
-    return {"total": total["total"], "channels": channels, "organizationWide": scoped_all}
+        """, (context.id, scoped_all, scope_user, scope_user))
+        stages = await many(connection, """
+            select stage, count(*) as count
+            from guruconnect_enquiries
+            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
+            group by stage
+            order by case stage when 'new' then 0 when 'in_process' then 1 when 'closed' then 2 else 3 end
+        """, (context.id, scoped_all, scope_user, scope_user))
+        latest = await many(connection, """
+            select e.id, e.customer_name as "customerName", e.created_at as "createdAt",
+                   e.stage, e.channel, e.branch, e.assigned_to as "assignedTo",
+                   coalesce(p.display_name, e.payload->>'assignedExecutive', 'Awaiting assignment') as "assignedName"
+            from guruconnect_enquiries e
+            left join public.profiles p on p.id=e.assigned_to
+            where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
+            order by e.created_at desc, e.id desc
+            limit 8
+        """, (context.id, scoped_all, scope_user, scope_user))
+    return {
+        "total": total["total"],
+        "channels": channels,
+        "stages": stages,
+        "latestVisitors": [
+            {**item, "id": str(item["id"]), "createdAt": item["createdAt"].isoformat()}
+            for item in latest
+        ],
+        "organizationWide": scoped_all,
+    }
 
 
 @router.get("/workspaces")

@@ -129,6 +129,18 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .list-pagination > div { display: flex; gap: 8px; }
 .list-pagination button { display: flex; align-items: center; }
 .analytics-count { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #e0e8f4; }
+.analytics-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.analytics-stat-grid .stat-card { min-height: 112px; padding: 18px; }
+.analytics-stat-grid .stat-value { color: #193b6a; font-size: 30px; letter-spacing: -.04em; }
+.analytics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.analytics-visitors { display: grid; }
+.analytics-visitor { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-top: 1px solid #e0e8f4; }
+.analytics-visitor > div:first-child, .analytics-visitor-meta { display: grid; gap: 3px; min-width: 0; }
+.analytics-visitor small { color: #62738c; overflow-wrap: anywhere; }
+.analytics-visitor-meta { justify-items: end; text-align: right; }
+.analytics-stage { padding: 4px 9px; border-radius: 999px; background: #eff4fc; color: #315580; font-size: 12px; font-weight: 700; }
+.analytics-stage-in_process { background: #fff4d8; color: #8a5b00; }
+.analytics-stage-closed { background: #e4f7ed; color: #17663e; }
 .welcome-page { display: flex; gap: 64px; justify-content: center; align-items: center; min-height: 100vh; padding: 48px 24px; background: radial-gradient(at 10% 0%, #e5edff, transparent 55%), #f6f9ff; }
 .welcome-story { max-width: 540px; }
 .welcome-brand { display: flex; align-items: center; gap: 12px; font-size: 25px; font-weight: 750; color: #132f54; margin-bottom: 56px; }
@@ -175,7 +187,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 @media (max-width: 768px) {
   .sidebar { display: none; }.mobile-menu-button { display: inline-flex; }.mobile-navigation { display: grid; gap: 8px; padding: 16px; border-bottom: 1px solid #dbe3ef; background: white; }.mobile-navigation a { display: flex; gap: 12px; padding: 10px; border-radius: 8px; text-decoration: none; }.mobile-navigation a.active { background: #eff5ff; font-weight: 650; }
   .topbar { padding: 12px 16px; min-height: 66px; gap: 10px; }.topbar-right { gap: 8px; }.workspace-select select { max-width: 140px; }.topbar .topbar-create { display: none; }.topbar .breadcrumbs { display: none; }.app-content { padding: 16px; }
-  .flow-page-header { align-items: flex-start; flex-direction: column; gap: 16px; }.flow-page-header .button { align-self: flex-start; }.flow-panel { padding: 20px; }.flow-overview { padding: 22px; }.flow-steps { grid-template-columns: 1fr; }.flow-steps li { grid-template-columns: 26px 1fr; }.flow-summary-grid { grid-template-columns: 1fr; gap: 0; }.filter-compact { grid-template-columns: 1fr; gap: 12px; }
+  .flow-page-header { align-items: flex-start; flex-direction: column; gap: 16px; }.flow-page-header .button { align-self: flex-start; }.flow-panel { padding: 20px; }.flow-overview { padding: 22px; }.flow-steps { grid-template-columns: 1fr; }.flow-steps li { grid-template-columns: 26px 1fr; }.flow-summary-grid { grid-template-columns: 1fr; gap: 0; }.filter-compact { grid-template-columns: 1fr; gap: 12px; }.analytics-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.analytics-grid { grid-template-columns: 1fr; gap: 0; }.analytics-visitor { align-items: flex-start; flex-direction: column; gap: 8px; }.analytics-visitor-meta { justify-items: start; text-align: left; }
   .list-pagination { align-items: flex-start; flex-direction: column; }.recent-enquiry-row { flex-wrap: wrap; }.recent-enquiry-row span:last-child { max-width: 100%; overflow-wrap: anywhere; }.welcome-page { gap: 28px; flex-direction: column; padding: 32px 16px; }.welcome-story { width: 100%; max-width: 430px; }.welcome-brand { margin-bottom: 24px; }.welcome-story h1 { font-size: 32px; }.welcome-story > p { font-size: 14px; }.welcome-steps { display: none; }.welcome-card { padding: 24px; }.local-mode-badge { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
