@@ -7,10 +7,10 @@
 .session-workspace-left .needs-panel { order: 1; }
 .session-workspace-left > .connected-recorder { grid-column: 1 / -1; order: 2; position: sticky; bottom: 0; z-index: 4; display: block; padding-top: 10px; background: #fff; }
 .session-recording-container { display: grid; gap: 8px; padding: 12px; border: 1px solid #dce8f2; border-radius: 12px; background: #fff; box-shadow: 0 3px 12px rgba(19, 55, 93, .04); }
-.voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
+.voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
 .voice-sessions-layout .connected-recorder .recorder-panel.is-recording,
 .voice-sessions-layout .connected-recorder .recorder-panel.has-clip { background: transparent; }
-.voice-sessions-layout .connected-recorder .recorder-visual { display: grid; width: 34px; height: 34px; place-items: center; }
+.voice-sessions-layout .connected-recorder .recorder-visual { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; }
 .voice-sessions-layout .connected-recorder .microphone-orbit { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #c9e4df; border-radius: 50%; background: #eaf1ff; }
 .voice-sessions-layout .connected-recorder .microphone-button { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; background: #2563eb; color: #fff; }
 .voice-sessions-layout .connected-recorder .microphone-button svg { width: 16px; height: 16px; }
@@ -53,6 +53,7 @@
 .voice-sessions-layout .contact-record .contact-phone-link { font-size: 12px; }
 .voice-sessions-layout .connected-recorder .recorder-panel.is-recording { min-height: 82px; }
 .voice-level-wave { display: flex; align-items: center; gap: 2px; height: 30px; margin-top: 6px; overflow: hidden; }
+.voice-sessions-layout .connected-recorder .recorder-visual .voice-level-wave { flex: 1; min-width: 80px; margin-top: 0; }
 .voice-level-wave i { flex: 1 0 2px; min-width: 2px; max-width: 4px; border-radius: 3px; background: #d8685f; transition: height .08s ease; animation: voice-wave-drift 1.2s linear infinite; }
 @keyframes voice-wave-drift { from { transform: translateX(0); opacity: .55; } 50% { opacity: 1; } to { transform: translateX(-3px); opacity: .7; } }
 .session-notes { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid #dce8f2; border-radius: 12px; background: #fbfdff; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
@@ -127,7 +128,7 @@ body[data-document-party="customer"] .document-actions button:nth-child(4) { dis
 .customer-fields strong { margin-top: 5px; color: #284c70; font-size: 12px; overflow-wrap: anywhere; }
 .bubble time { margin-top: 6px; }
 @media (max-width: 900px) { .session-workspace-left { display: contents; } .session-workspace { grid-template-columns: minmax(0, 1fr); height: auto; } .session-notes { grid-column: 1; grid-row: 1; min-height: 260px; } .needs-panel { grid-column: 1; grid-row: 2; } .voice-sessions-layout .voice-composer { overflow-y: auto; } .voice-sessions-layout .connected-recorder { grid-column: 1; grid-row: 3; } }
-@media (max-width: 760px) { .voice-sessions-page { height: calc(100vh - 120px); min-height: 0; } .voice-sessions-layout .voice-composer { max-height: 78%; padding: 8px; } .session-workspace { gap: 8px; } .session-workspace-left > .connected-recorder { position: sticky; bottom: 0; } .voice-sessions-layout .recorder-panel { grid-template-columns: 44px minmax(0, 1fr); } .voice-sessions-layout .recorder-controls { grid-column: 1 / -1; justify-content: flex-start; } .voice-sessions-layout .contact-record { padding: 10px 14px; } }
+@media (max-width: 760px) { .voice-sessions-page { height: calc(100vh - 120px); min-height: 0; } .voice-sessions-layout .voice-composer { max-height: 78%; padding: 8px; } .session-workspace { gap: 8px; } .session-workspace-left > .connected-recorder { position: sticky; bottom: 0; } .voice-sessions-layout .recorder-panel { grid-template-columns: minmax(150px, 1fr); } .voice-sessions-layout .recorder-controls { grid-column: 1 / -1; justify-content: flex-start; } .voice-sessions-layout .contact-record { padding: 10px 14px; } }
 @media (max-width: 600px) { .customer-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .product-inline-fields { grid-template-columns: 1fr; } }
 .customer-type-select { display: none !important; }
 .document-actions { align-items: center; gap: 10px; padding: 14px; border-top: 1px solid #e5edf5; background: #fbfdff; }

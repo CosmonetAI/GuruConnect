@@ -297,12 +297,11 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}`}>
     <div className={grouped ? 'session-recording-container' : undefined}>
     <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
-      {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>}
+      {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div>{captureActive && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}</div>}
       {!compact && <div className="recorder-copy">
         <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
         <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
         <p>{saved ? 'Transcription and English translation run in the background. Open the saved enquiry to follow progress.' : 'Audio saves privately. ElevenLabs transcribes the original speech, then OpenAI translates it into English.'}</p>
-        {captureActive && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
         {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
       </div>}
       <div className="recorder-controls">
@@ -337,7 +336,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     {!loading && user && workspace && source === 'upload' && !policyLoading && !policy?.ready && <div className="audio-storage-notice">Connect and test ElevenLabs and OpenAI in Settings before uploading audio or processing a recording.</div>}
     {localMode && <div className="audio-storage-notice"><ShieldCheck size={15} />Audio and enquiries save on this computer. Add ElevenLabs and OpenAI keys in Settings when you want transcription and English translation.</div>}
     {error && <div className="recorder-error" role="alert">{error}</div>}
-    {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}
+    {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span></div>}
     {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
     {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
     {!compact && !operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="connected-audio-recovery" key={row.key}><button type="button" className="button button-secondary" onClick={() => void recover(row)}><RotateCcw size={14} />Recover audio</button></div>)}

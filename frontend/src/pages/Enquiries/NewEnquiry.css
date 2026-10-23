@@ -304,10 +304,17 @@
 
 .recorder-visual {
   position: relative;
-  display: grid;
-  width: 74px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 230px;
   height: 74px;
-  place-items: center;
+}
+
+.recorder-visual .voice-level-wave {
+  flex: 1;
+  min-width: 90px;
+  margin-top: 0;
 }
 
 .microphone-orbit {
