@@ -273,7 +273,7 @@ def test_conversation_create_concurrent_retries_are_scoped_by_user_and_workspace
 @pytest.mark.parametrize("key", ["short", "fixture secret", "x" * 129])
 def test_conversation_create_rejects_malformed_opaque_key_without_echoing_it(api, key):
     client, headers, _, _, _ = api
-    response = client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json={"customer_name": "Synthetic customer", "consent_confirmed": True})
+    response = client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json={"customer_name": "Synthetic customer", "phone": "9876543210", "consent_confirmed": True})
     assert response.status_code == 400 and response.json()["detail"]["code"] == "invalid_idempotency_key"
     assert key not in response.text
 

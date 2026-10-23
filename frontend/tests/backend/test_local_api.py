@@ -22,7 +22,7 @@ def api(tmp_path):
 
 
 def create_recording(client):
-    response = client.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "consent_confirmed": True, "language_hint": "auto", "audio_only": False})
+    response = client.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "phone": "9876543210", "consent_confirmed": True, "language_hint": "auto", "audio_only": False})
     assert response.status_code == 201, response.text
     cid = response.json()["id"]
     response = client.post(f"/api/v1/conversations/{cid}/lease", json={"tab_id": "synthetic-tab-id-00001"})

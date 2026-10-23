@@ -83,7 +83,7 @@ def api(database_url):
 
 
 def new(client, headers, **fields):
-    response = client.post("/api/v1/conversations", headers=headers, json={"customer_name": "Sam", "consent_confirmed": True, **fields})
+    response = client.post("/api/v1/conversations", headers=headers, json={"customer_name": "Sam", "phone": "9876543210", "consent_confirmed": True, **fields})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -187,7 +187,7 @@ def test_disconnect_never_reroutes_default_and_audio_only_is_explicit(api):
     conn = next(item for item in client.get("/api/v1/connections", headers=admin).json()["items"] if item["engine_id"] == "elevenlabs")
     old = new(client, headers)
     assert client.post(f"/api/v1/connections/{conn['id']}/disconnect", headers=admin, json={"finish_in_flight": False}).status_code == 200
-    response = client.post("/api/v1/conversations", headers=headers, json={"customer_name": "Sam", "consent_confirmed": True})
+    response = client.post("/api/v1/conversations", headers=headers, json={"customer_name": "Sam", "phone": "9876543210", "consent_confirmed": True})
     assert response.status_code == 409
     audio = new(client, headers, audio_only=True)
     assert audio["runs"] == [] and audio["transcription_state"] == "blocked"

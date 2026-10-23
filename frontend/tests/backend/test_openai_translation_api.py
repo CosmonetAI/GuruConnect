@@ -48,7 +48,7 @@ def test_openai_configuration_rejects_model_fallbacks_endpoints_and_foreign_fiel
 
 
 @pytest.mark.parametrize("schema,data", [
-    (ConversationCreate, {"customer_name": "Sam", "consent_confirmed": True, "engine_id": "openai-translator"}),
+    (ConversationCreate, {"customer_name": "Sam", "phone": "9876543210", "consent_confirmed": True, "engine_id": "openai-translator"}),
     (RunCreate, {"engine_id": "openai-translator", "kind": "comparison", "idempotency_key": "safe-key-123"}),
     (EngineSettings, {"default_engine": "openai-translator"}),
 ])

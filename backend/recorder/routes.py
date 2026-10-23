@@ -340,7 +340,10 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
             phone = (body.phone or '').strip() or None
             email = (body.email or '').strip().lower() or None
             normalized_phone = re.sub(r'\D', '', phone or '')[-15:] or None
-            customer = await one(connection, "select * from customers where organisation_id=%s and owner_id=%s and deleted_at is null and ((%s is not null and right(regexp_replace(coalesce(normalized_phone,''),'\\D','','g'),10)=right(regexp_replace(%s,'\\D','','g'),10)) or (%s is not null and normalized_email=%s)) limit 1", (context.id, context.user.id, normalized_phone, normalized_phone, email, email))
+            # Explicitly type nullable parameters. PostgreSQL cannot infer the
+            # type of a bare NULL used in ``%s is not null`` and raises 42P18
+            # when both phone and email are omitted (the audio-only flow).
+            customer = await one(connection, "select * from customers where organisation_id=%s and owner_id=%s and deleted_at is null and ((%s::text is not null and right(regexp_replace(coalesce(normalized_phone,''),'\\D','','g'),10)=right(regexp_replace(%s::text,'\\D','','g'),10)) or (%s::text is not null and normalized_email=%s::text)) limit 1", (context.id, context.user.id, normalized_phone, normalized_phone, email, email))
             if not customer:
                 customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, "Name not provided" if body.is_unnamed else body.customer_name, email, phone, email, normalized_phone, body.is_unnamed))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))

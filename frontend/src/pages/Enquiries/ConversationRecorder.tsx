@@ -142,6 +142,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     if (!consent && !consentGranted) throw new Error('Confirm participant consent before recording or uploading audio.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
+    if (!customerPhone?.trim() && !customerEmail?.trim()) throw new Error('Enter a phone number or email before adding audio.')
   }
 
   // When compact mode is used, offer a small consent confirmation when the user presses Start.
