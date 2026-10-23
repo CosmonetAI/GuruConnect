@@ -77,6 +77,8 @@ services:
         sync: false
       - key: POOL_MAX_SIZE
         value: "5"
+      - key: UPLOAD_MAX_BYTES
+        value: "6000000"
       - key: PREAUTH_RATE_LIMIT_PER_MINUTE
         value: "5000"
       - key: MAX_CONCURRENT_REQUESTS

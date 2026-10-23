@@ -333,6 +333,9 @@ export default function VoiceSessions() {
     setBusy(true);
     setError("");
     setIdentity(next);
+    // Do not let the previous contact's failed/pending recording block this
+    // contact while the phone-based session lookup is in flight.
+    setConversationId(null);
     try {
       const data = await call("/voice-sessions", {
         method: "POST",

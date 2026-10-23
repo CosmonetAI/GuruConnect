@@ -1,7 +1,7 @@
 import workletUrl from './capture.worklet.ts?worker&url';
 import { apiBase, localMode } from '../services/officeApi';
 import { discardRecovery, finishRecovery, listRecoveries, pending, putChunk, removeChunk, saveRecovery, scopeKey, type ChunkMeta, type Recovery, type Scope } from './outbox';
-export { listRecoveries } from './outbox';
+export { discardRecovery, listRecoveries } from './outbox';
 export type { Scope, ChunkMeta } from './outbox';
 export interface Manifest { part_id: string; expected_chunks: number; total_samples: number; lease_token: string }
 export interface CaptureState { capture: 'idle' | 'recording' | 'paused' | 'stopped' | 'interrupted'; samples: number; elapsedSeconds: number; level: number; pendingChunks: number; pendingBytes: number; confirmedSamples: number; saving: boolean; error?: string }

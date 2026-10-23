@@ -136,7 +136,7 @@ class VoiceSessionIn(BaseModel):
     phone: str | None = None
     email: str | None = None
 class VoiceSessionLinkIn(BaseModel):
-    conversation_id: str = Field(min_length=8)
+    conversation_id: str | None = Field(default=None, min_length=8)
 class VoiceSessionNoteIn(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 class VoiceSessionContextIn(BaseModel):

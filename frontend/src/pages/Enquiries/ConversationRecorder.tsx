@@ -3,7 +3,7 @@ import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, T
 import { useOffice } from '../../contexts/OfficeContext'
 import { duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
-import { listRecoveries, RecorderSession, recoverRecording, type CaptureState } from '../../recording/session'
+import { discardRecovery, listRecoveries, RecorderSession, recoverRecording, type CaptureState } from '../../recording/session'
 import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
 import '../../styles/recording.css'
@@ -27,7 +27,7 @@ const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
+export default function ConversationRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact, grouped = false, chunkSeconds = 180 }: ConversationRecorderProps & { compact?: boolean; grouped?: boolean }) {
   const { user, workspace, loading, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   // compact mode: the checkbox is not shown; start uses a quick confirmation to record consent
@@ -184,7 +184,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
-        chunkSeconds: 180,
+        chunkSeconds,
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
         onState: state => {
           if (!isCurrent(epoch, controller)) return
@@ -247,7 +247,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
       controller.signal.throwIfAborted(); setPhase('uploading')
       await uploadAudioFile({
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
-        chunkSeconds: 180,
+        chunkSeconds,
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
         onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
       })
@@ -275,10 +275,19 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
     } catch (err) { if (isCurrent(epoch, controller)) { setPhase('error'); setError(message(err)) } }
     finally { finish(epoch, controller) }
   }
-  function removeAttachment() {
+  async function removeAttachment() {
     if (operation || captureActive || capture.saving) return
-    if (conversationId && !window.confirm('Detach this audio from the enquiry? Saved audio stays in the workspace, and pending audio stays on this device for recovery.')) return
+    if (conversationId && !window.confirm(saved ? 'Detach this audio from the enquiry? Saved audio stays in the workspace.' : 'Delete this unfinished recording and its pending recovery data?')) return
+    const id = conversationId
     generation.current++; abort.current?.abort(); disposeCapture()
+    if (id && !saved && user && workspace) {
+      try {
+        await request(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: 'DELETE' })
+        await discardRecovery({ userId: user.id, workspaceId: workspace.id }, id)
+      } catch (err) {
+        setError(message(err)); return
+      }
+    }
     setConversationId(null); idRef.current = null; creation.current = null; notifiedSaved.current = null
     callbacks.current.onConversationChange(null); setSaved(false); setPhase('idle'); setCapture(emptyCapture); setFile(null); setSource('microphone'); setProgress(null); setError(''); setRetryFile(false)
   }
