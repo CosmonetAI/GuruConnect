@@ -110,7 +110,9 @@ async def authorize(conversation_id: UUID, body: s.Chunk, request: Request, cont
         bucket = conv.get("audio_bucket") or "session-audio"
         path = f"{context.id}/{context.user.id}/{conversation_id}/{bucket}/{phone}/{body.part_id}/{body.sequence}.wav"
         if not row:
-            await connection.execute("insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
+            row = await one(connection, "insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict(conversation_id,part_id,sequence) do update set upload_expires_at=now()+interval '15 minutes' returning *", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
+            if not chunk_matches(row, body):
+                fail("chunk_content_conflict", 409)
         else:
             await connection.execute("update audio_chunks set upload_expires_at=now()+interval '15 minutes' where id=%s", (row["id"],))
         await connection.execute("update conversations set upload_state='uploading',updated_at=now() where id=%s", (conversation_id,))

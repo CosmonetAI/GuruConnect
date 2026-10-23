@@ -66,6 +66,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
   // Microphone capture does not require the default speech engine to be connected; allow starting the mic
   // once the user is authenticated and a workspace is selected. The engine is only needed for transcription/processing.
   const micBlocked = loading || !user || !workspace
+  const meterLevel = Math.min(1, Math.max(0, capture.level * 8))
 
   function disposeCapture() {
     const session = active.current; active.current = null
@@ -263,7 +264,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}`}>
     <div className={grouped ? 'session-recording-container' : undefined}>
     <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
-      {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div>{captureActive && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}</div>}
+      {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div>{captureActive && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div>}</div>}
       {!compact && <div className="recorder-copy">
         <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
         <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
@@ -283,7 +284,7 @@ export default function ConversationRecorder({ customerName, customerPhone, cust
           </>
         )}
 
-        {compact && captureActive && <div className="voice-level-wave compact-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + capture.level * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
+        {compact && captureActive && <div className="voice-level-wave compact-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div>}
 
         {captureActive && <>
           {compact ? <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop</button> : <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button> }
