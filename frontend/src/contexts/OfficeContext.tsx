@@ -63,7 +63,16 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     return () => { alive = false; ++sequence.current; subscription.unsubscribe() }
   }, [])
   useEffect(() => { if (session?.user.id) void reloadWorkspaces() }, [session?.user.id, reloadWorkspaces])
-  useEffect(() => { if (active) localStorage.setItem('guruconnect-active-workspace', active) }, [active])
+  useEffect(() => {
+    if (!active) {
+      localStorage.removeItem('guruconnect-active-workspace')
+      localStorage.removeItem('guruconnect-active-organisation')
+      return
+    }
+    localStorage.setItem('guruconnect-active-workspace', active)
+    const selected = (localMode ? [localWorkspace] : workspaces).find(item => (item.member_id ?? item.id) === active)
+    if (selected) localStorage.setItem('guruconnect-active-organisation', selected.id)
+  }, [active, workspaces, localMode])
   useEffect(() => {
     if (!session || localMode) return
     const ping = () => { void request('/presence', null, json('POST')).catch(() => undefined) }
