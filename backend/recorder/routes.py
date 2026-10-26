@@ -29,6 +29,11 @@ async def audit(connection, context: Workspace, action: str, metadata: dict | No
 @router.get("/profile")
 async def get_profile(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
+        await connection.execute("""
+            update profiles
+            set availability_status='active', leave_end_date=null, updated_at=now()
+            where id=%s and availability_status='on_leave' and leave_end_date < current_date
+        """, (user.id,))
         row = await one(connection, "select * from profiles where id=%s", (user.id,))
     return row or {"id": user.id, "display_name": user.name, "preferences": {}}
 
@@ -42,12 +47,19 @@ async def update_profile(body: s.ProfilePatch, request: Request, user: User = De
             fail("invalid_phone", 422)
         if body.avatar_path is not None and body.avatar_path and not body.avatar_path.startswith(f"{user.id}/"):
             fail("invalid_avatar", 422)
-        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,last_seen_at) values(%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, body.availability_status))
+        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,leave_end_date,last_seen_at) values(%s,%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,leave_end_date=excluded.leave_end_date,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, body.availability_status, body.leave_end_date))
 
 @router.post("/presence")
 async def presence(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s and availability_status='active' returning id,last_seen_at,availability_status", (user.id,))
+        row = await one(connection, """
+            update profiles
+            set availability_status='active', leave_end_date=null, last_seen_at=now(), updated_at=now()
+            where id=%s and availability_status='on_leave' and leave_end_date < current_date
+            returning id,last_seen_at,availability_status
+        """, (user.id,))
+        if not row:
+            row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s returning id,last_seen_at,availability_status", (user.id,))
     return row or {"id": user.id, "availability_status": "active"}
 
 
@@ -131,6 +143,12 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
 @router.get("/team")
 async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
+        await connection.execute("""
+            update profiles p
+            set availability_status='active', leave_end_date=null, updated_at=now()
+            where p.availability_status='on_leave' and p.leave_end_date < current_date
+              and exists (select 1 from members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
+        """, (context.id,))
         rows = await many(connection, "select m.*,p.display_name,p.availability_status,p.last_seen_at,u.email,case when m.status <> 'active' then m.status when u.confirmed_at is null then 'invited' else 'active' end as status from members m left join profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}

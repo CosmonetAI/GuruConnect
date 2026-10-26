@@ -1,6 +1,7 @@
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 Hash = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
@@ -21,7 +22,37 @@ class ProfilePatch(Input):
     preferences: dict = Field(default_factory=dict)
     phone: str | None = Field(default=None, max_length=24)
     avatar_path: str | None = Field(default=None, max_length=500)
-    availability_status: Literal["active", "not_active", "on_leave", "be_right_back"] = "active"
+    availability_status: Literal["active", "on_leave", "be_right_back"] = "active"
+    leave_end_date: str | None = None
+
+    @field_validator("availability_status", mode="before")
+    @classmethod
+    def normalize_legacy_status(cls, value):
+        return "active" if value == "not_active" else value
+
+    @field_validator("leave_end_date", mode="before")
+    @classmethod
+    def normalize_empty_leave_date(cls, value):
+        if value in ("", None):
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Leave end date must be an ISO calendar date")
+        try:
+            date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError("Leave end date must be an ISO calendar date") from error
+        return value
+
+    @model_validator(mode="after")
+    def validate_availability(self):
+        if self.availability_status == "on_leave":
+            if self.leave_end_date is None:
+                raise ValueError("A leave end date is required when status is On Leave")
+            if date.fromisoformat(self.leave_end_date) < date.today():
+                raise ValueError("Leave end date cannot be in the past")
+        elif self.leave_end_date is not None:
+            raise ValueError("Leave end date is only valid when status is On Leave")
+        return self
 
 
 class CustomerCreate(Input):
