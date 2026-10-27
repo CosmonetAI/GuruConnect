@@ -192,7 +192,10 @@ class RequestBoundary:
                 if not response_started:
                     await JSONResponse({"detail": {"code": "internal_error", "request_id": request_id}}, 500)(scope, bounded_receive, secure_send)
                 elif not response_ended:
-                    await secure_send({"type": "http.response.body", "body": b"", "more_body": False})
+                    # Completing a partial response violates Content-Length and
+                    # also makes chunked downloads appear successful. Let the
+                    # server close the connection without fabricating success.
+                    raise RuntimeError("stream_response_incomplete") from None
             log.info("request_complete request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
                      request_id, scope.get("method", ""), scope.get("path", ""), status_code,
                      (time.perf_counter() - started_at) * 1000)

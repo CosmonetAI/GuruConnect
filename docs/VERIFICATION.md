@@ -1,6 +1,8 @@
 # Recording implementation and rollout — 27 October 2026
 
-These changes are source changes on `dev`; they have not been deployed to Render or applied to a hosted Supabase project. Tests use synthetic customers, disposable databases and mocked providers. They do not establish live speech accuracy, latency or account quota capacity.
+This document records implementation on `dev` and local verification. Deployment and hosted migrations were not performed by this agent. Tests use synthetic customers, disposable databases and mocked providers. They do not establish live speech accuracy, latency or account quota capacity.
+
+Subsequently supplied Render logs show the embedded processing runtime deployed and running. See [Storage incident diagnosis and local follow-up fixes](STORAGE_TROUBLESHOOTING.md) for the live failure evidence and remaining validation. Those follow-up fixes have not been deployed by this agent.
 
 ## Runtime and storage
 

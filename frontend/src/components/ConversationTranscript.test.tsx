@@ -67,6 +67,30 @@ describe('actual source and English processing results', () => {
     expect(screen.queryByText(/eligible processing job\(s\) resumed/)).not.toBeInTheDocument()
   })
 
+  it('shows each speech failure explanation once while retaining distinct causes and every job', () => {
+    calls.jobs = [
+      { id: 'window-a', run_id: 'run-a', job_type: 'transcribe', status: 'blocked', error_code: 'storage_unavailable' },
+      { id: 'window-b', run_id: 'run-a', job_type: 'transcribe', status: 'failed', error_code: 'storage_unavailable' },
+      { id: 'final-pass', run_id: 'run-a', job_type: 'finalise', status: 'uncertain', error_code: 'storage_unavailable' },
+      { id: 'other-failure', run_id: 'run-a', job_type: 'transcribe', status: 'blocked', error_code: 'provider_quota_exceeded' },
+    ]
+    render(page())
+    const banner = within(screen.getByText('Speech transcription needs attention').parentElement!)
+    expect(banner.getAllByText(/Recording storage is unavailable/)).toHaveLength(1)
+    expect(banner.getByText(/check storage access and connectivity/)).toBeVisible()
+    expect(banner.getByText(/reached its credit limit/)).toBeVisible()
+    const recovery = within(screen.getByRole('heading', { name: 'Processing recovery' }).parentElement!)
+    expect(recovery.getAllByRole('listitem')).toHaveLength(4)
+    expect(calls.request).not.toHaveBeenCalled()
+  })
+
+  it('uses processing guidance for an unrecognized stage error', () => {
+    calls.jobs = [{ id: 'unknown-failure', run_id: 'run-a', job_type: 'transcribe', status: 'failed', error_code: 'unknown_stage_failure' }]
+    render(page())
+    expect(screen.getByText(/Check processing, provider connection and usage limits/)).toBeVisible()
+    expect(screen.queryByText(/Check the worker/)).not.toBeInTheDocument()
+  })
+
   it('starts the actual source player only after intent and seeks source turns', async () => {
     const user = userEvent.setup(); render(page())
     expect(calls.playAt).not.toHaveBeenCalled()

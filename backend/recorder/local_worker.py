@@ -136,7 +136,9 @@ class LocalWorker:
             if position != expected_samples:
                 raise ProviderError("invalid_audio")
             digest = hashlib.sha256()
-            with open(scratch, "rb") as file:
+            # Windows fsync uses a handle that requires write access. Keep
+            # the completed WAV intact while granting that access for sync.
+            with open(scratch, "r+b") as file:
                 while data := file.read(1024 * 1024):
                     digest.update(data)
                 os.fsync(file.fileno())

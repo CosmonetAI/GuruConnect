@@ -1,11 +1,12 @@
 """Isolated localhost worker regressions: no external requests or paid calls."""
 
+import errno
+import hashlib
 from pathlib import Path
 from uuid import uuid4
-import hashlib
 
 import pytest
-
+from recorder import local_worker
 from recorder.audio import pcm_to_wav
 from recorder.config import Settings
 from recorder.local_store import LocalStore
@@ -114,6 +115,56 @@ async def test_assembly_saves_playback_without_provider_credentials(tmp_path):
     assert store.get_turns(cid) == []
     assert store.get("conversations", cid)["upload_state"] == "saved"
     assert not await worker.run_once()
+
+
+@pytest.mark.asyncio
+async def test_assembly_sync_uses_a_writable_handle_before_atomic_publication(tmp_path, monkeypatch):
+    store, worker, cid, _ = recording(tmp_path)
+    real_open, real_fsync = open, local_worker.os.fsync
+    scratch_files, synced = {}, []
+
+    def track_scratch_open(path, mode="r", *args, **kwargs):
+        file = real_open(path, mode, *args, **kwargs)
+        if Path(path).name.startswith("assembly-"):
+            scratch_files[file.fileno()] = file
+        return file
+
+    def windows_fsync(descriptor):
+        # Windows FlushFileBuffers requires write access. Reproduce that
+        # contract on every CI OS instead of letting POSIX accept an rb handle.
+        file = scratch_files.get(descriptor)
+        if file is not None:
+            if not file.writable():
+                raise OSError(errno.EBADF, "File handle does not allow synchronization")
+            assert not store.audio_path(cid).exists()
+            synced.append(descriptor)
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(local_worker, "open", track_scratch_open, raising=False)
+    monkeypatch.setattr(local_worker.os, "fsync", windows_fsync)
+    assert await worker.run_once()
+    assert len(synced) == 1
+    assert store.audio_path(cid).read_bytes() == store.chunk_path(cid, store.chunks(cid)[0]["part_id"], 0).read_bytes()
+    assert not list(store.audio_path(cid).parent.glob("assembly-*.wav"))
+    jobs = store.list("jobs")
+    assert next(job for job in jobs if job["kind"] == "assemble")["state"] == "succeeded"
+    assert next(job for job in jobs if job["kind"] == "transcribe")["submission_state"] == "not_submitted"
+
+
+@pytest.mark.asyncio
+async def test_failed_assembly_sync_does_not_publish_audio_or_enqueue_speech(tmp_path, monkeypatch):
+    store, worker, cid, _ = recording(tmp_path)
+
+    def fail_sync(_descriptor):
+        raise OSError(errno.EIO, "Synthetic disk synchronization failure")
+
+    monkeypatch.setattr(local_worker.os, "fsync", fail_sync)
+    assert await worker.run_once()
+    assert not store.audio_path(cid).exists()
+    assert not list(store.audio_path(cid).parent.glob("assembly-*.wav"))
+    jobs = store.list("jobs")
+    assert len(jobs) == 1 and jobs[0]["state"] == "failed"
+    assert jobs[0]["submission_state"] == "not_submitted"
 
 
 @pytest.mark.asyncio

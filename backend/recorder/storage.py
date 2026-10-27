@@ -1,11 +1,19 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
+import json
 import re
 from urllib.parse import quote, urlsplit, unquote
 from uuid import UUID
 import httpx
+from fastapi import HTTPException
 from .config import Settings
 from .errors import fail
+
+log = logging.getLogger("recorder.storage")
+STORAGE_ERROR_CODES = {"NoSuchBucket", "NoSuchKey", "InvalidJWT", "AccessDenied", "InternalError",
+                       "DatabaseTimeout", "DatabaseError", "EntityTooLarge", "InvalidMimeType",
+                       "ResourceAlreadyExists", "SlowDown", "TooManyRequests", "InvalidRequest"}
 
 
 class Storage:
@@ -15,23 +23,48 @@ class Storage:
         self.base = f"{settings.supabase_url}/storage/v1"
 
     @asynccontextmanager
-    async def client(self, timeout):
+    async def client(self, timeout, *, operation="request", bucket=None):
         try:
             async with asyncio.timeout(timeout):
                 async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
                     yield client
-        except (httpx.HTTPError, TimeoutError, ValueError):
+        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+            # Do not log exception text, URLs, object names or credentials.
+            log.warning("storage_transport_failed operation=%s bucket=%s exception_type=%s",
+                        operation, bucket, type(exc).__name__)
             fail("storage_unavailable", 503)
 
     async def request(self, client, method, url, **kwargs):
         # Write/list/sign responses must never buffer unbounded upstream data.
         async with client.stream(method, url, **kwargs) as response:
             content = bytearray()
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                 if len(content) + len(chunk) > 262144:
                     fail("invalid_storage_response", 503)
                 content.extend(chunk)
-            return httpx.Response(response.status_code, headers=response.headers, content=bytes(content))
+            # aiter_bytes has already decompressed the body. Keeping the wire
+            # encoding makes HTTPX decompress it again when constructing this
+            # response, turning a successful Storage write into DecodingError.
+            headers = {key: value for key, value in response.headers.items()
+                       if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}}
+            return httpx.Response(response.status_code, headers=headers, content=bytes(content))
+
+    @staticmethod
+    def error_code(body):
+        try:
+            payload = json.loads(body)
+        except (ValueError, RecursionError):
+            return "unknown"
+        if isinstance(payload, dict):
+            for field in ("code", "error"):
+                value = payload.get(field)
+                if isinstance(value, str) and value in STORAGE_ERROR_CODES:
+                    return value
+        return "unknown"
+
+    def status_failure(self, operation, object_path, status, code="unknown"):
+        log.warning("storage_request_failed operation=%s bucket=%s http_status=%s storage_code=%s",
+                    operation, self.bucket(object_path), status, code)
 
     @staticmethod
     def json_body(response):
@@ -106,21 +139,44 @@ class Storage:
     async def read(self, object_path: str, max_bytes: int) -> bytes:
         if max_bytes <= 0:
             fail("invalid_object_size", 400)
-        async with self.client(60) as client:
+        # A GET is safe to retry. Never retry a paid provider submission here.
+        for attempt in range(3):
+            try:
+                return await self._read_once(object_path, max_bytes)
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                status = detail.get("upstream_status")
+                if (detail.get("code") != "storage_unavailable" or attempt == 2
+                        or status is not None and status not in {408, 429, 500, 502, 503, 504}):
+                    raise
+                await asyncio.sleep(0.25 * (attempt + 1))
+
+    async def _read_once(self, object_path: str, max_bytes: int) -> bytes:
+        async with self.client(60, operation="read", bucket=self.bucket(object_path)) as client:
             async with client.stream("GET", f"{self.base}/object/authenticated/{self.path(object_path)}", headers=self.headers) as response:
+                if response.status_code != 200:
+                    # Only allowlisted machine codes reach logs; messages may
+                    # contain object names or other private data.
+                    error_body = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=16 * 1024):
+                        if len(error_body) + len(chunk) > 16 * 1024:
+                            break
+                        error_body.extend(chunk)
+                    code = self.error_code(error_body)
+                    self.status_failure("read", object_path, response.status_code, code)
                 if response.status_code == 404:
                     fail("audio_object_missing", 409)
                 if response.status_code != 200:
-                    fail("storage_unavailable", 503)
+                    fail("storage_unavailable", 503, upstream_status=response.status_code, upstream_code=code)
                 buffer = bytearray()
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
                     if len(buffer) + len(chunk) > max_bytes:
                         fail("audio_size_exceeded", 413)
                     buffer.extend(chunk)
                 return bytes(buffer)
 
     async def put(self, object_path: str, data: bytes, mime: str = "application/json") -> None:
-        async with self.client(120) as client:
+        async with self.client(120, operation="write", bucket=self.bucket(object_path)) as client:
             response = await self.request(client, "POST", f"{self.base}/object/{self.path(object_path)}", headers={**self.headers, "Content-Type": mime, "x-upsert": "false"}, content=data)
         if response.status_code == 409:
             import hashlib
@@ -128,6 +184,7 @@ class Storage:
             if hashlib.sha256(existing).digest() != hashlib.sha256(data).digest():
                 fail("immutable_object_conflict", 409)
         elif response.status_code not in (200, 201):
+            self.status_failure("write", object_path, response.status_code, self.error_code(response.content))
             fail("storage_write_failed", 503)
 
     async def signed_read(self, object_path: str) -> str:
@@ -154,7 +211,7 @@ class Storage:
         async def body():
             while chunk := file_obj.read(1024 * 1024):
                 yield chunk
-        async with self.client(180) as client:
+        async with self.client(180, operation="write-file", bucket=self.bucket(object_path)) as client:
             response = await self.request(client, "POST", f"{self.base}/object/{self.path(object_path)}", headers={**self.headers, "Content-Type": mime, "Content-Length": str(length), "x-upsert": "false"}, content=body())
             if response.status_code == 409:
                 current, received = hashlib.sha256(), 0
@@ -169,6 +226,7 @@ class Storage:
                 if received != length or current.digest() != digest.digest():
                     fail("immutable_object_conflict", 409)
             elif response.status_code not in (200, 201):
+                self.status_failure("write-file", object_path, response.status_code, self.error_code(response.content))
                 fail("storage_write_failed", 503)
 
     async def delete(self, object_paths: list[str]) -> None:

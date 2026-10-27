@@ -80,6 +80,15 @@ describe('local and authenticated request boundaries', () => {
     await expect(api.request('/connections')).rejects.toThrow('The managed service rejected its credentials')
     await expect(api.request('/connections')).rejects.not.toThrow('fixture-private-provider-key')
   })
+  it.each([
+    ['storage_unavailable', 'check storage access and connectivity'],
+    ['storage_write_failed', 'check storage access and configuration'],
+  ])('explains %s without exposing internal storage diagnostics', async (code, guidance) => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: { code, message: 'internal-storage-diagnostic' } }), { status: 503 }))
+    const api = await load()
+    await expect(api.request('/conversations/conversation-a/progress')).rejects.toThrow(guidance)
+    await expect(api.request('/conversations/conversation-a/progress')).rejects.not.toThrow('internal-storage-diagnostic')
+  })
   it('maps backend network failure to an actionable local message', async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
     const api = await load()

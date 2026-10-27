@@ -1,5 +1,6 @@
 # DEPLOYMENT BLOCKED: Torch 2.8.0 has known advisories, including an unfixed
-# advisory in the 2026-10-14 scan. This experimental environment is excluded
+# advisory in the 2026-10-27 scan (8 findings in the direct Torch pin).
+# This experimental environment is excluded
 # from production Docker/Render. Do not install with customer data or secrets.
 # A compatible resolved dependency upgrade and model security/load tests are
 # required before enabling this optional Python 3.11 process.

@@ -20,6 +20,8 @@ const serviceErrorMessages: Record<string, string> = {
   database_unavailable: 'Workspace services cannot reach the database. Ask your administrator to check the database connection, then try again.',
   database_not_configured: 'Workspace services are not configured yet. Ask your administrator to finish the database setup, then try again.',
   database_busy: 'Workspace services are temporarily unavailable. Wait a moment and try again. If this continues, ask your administrator to check the database connection.',
+  storage_unavailable: 'Recording storage is unavailable. Ask your administrator to check storage access and connectivity before retrying processing.',
+  storage_write_failed: 'The processing result could not be saved to recording storage. Ask your administrator to check storage access and configuration before retrying processing.',
   request_timeout: 'The request took too long. Check your connection and try again. If you were saving a change, refresh its status before submitting it again.',
   configuration_missing: 'Workspace services are not configured yet. Ask your administrator to finish the workspace setup, then try again.',
   invalid_credentials: 'The managed service rejected its credentials. Ask your administrator to check the service configuration.',

@@ -59,7 +59,7 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: PYTHON_VERSION
-        value: "3.12.8"
+        value: "3.12.16"
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL

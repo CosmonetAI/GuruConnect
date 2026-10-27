@@ -2,7 +2,7 @@ import json
 import hashlib
 import logging
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 from . import schemas as s
@@ -146,20 +146,34 @@ async def playback_stream(conversation_id: UUID, request: Request, start_sample:
     selected = [chunk for chunk in chunks if int(chunk["sample_start"]) + int(chunk["sample_count"]) > start_sample]
     samples_to_stream = total_samples - start_sample
 
+    async def verified_pcm(chunk):
+        data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+        try:
+            info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+        except ValueError as exc:
+            log.error("playback_chunk_invalid conversation_id=%s sample_start=%s exception_type=%s", conversation_id, chunk["sample_start"], type(exc).__name__)
+            fail("playback_chunk_invalid", 409)
+        if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+            log.error("playback_chunk_checksum_mismatch conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
+            fail("playback_chunk_checksum_mismatch", 409)
+        left = max(0, start_sample - int(chunk["sample_start"]))
+        return info.pcm[left * 2:]
+
+    # Verify the first chunk before committing audio headers. Storage failures
+    # can then return actionable JSON instead of a broken HTTP 200 audio file.
+    first_pcm = await verified_pcm(selected[0])
+
     async def body():
         yield _wav_header(samples_to_stream)
-        for chunk in selected:
-            data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+        yield first_pcm
+        for chunk in selected[1:]:
             try:
-                info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
-            except ValueError as exc:
-                log.error("playback_chunk_invalid conversation_id=%s sample_start=%s exception_type=%s", conversation_id, chunk["sample_start"], type(exc).__name__)
-                raise RuntimeError("playback_chunk_invalid") from None
-            if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
-                log.error("playback_chunk_checksum_mismatch conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
-                raise RuntimeError("playback_chunk_checksum_mismatch")
-            left = max(0, start_sample - int(chunk["sample_start"]))
-            yield info.pcm[left * 2:]
+                yield await verified_pcm(chunk)
+            except HTTPException:
+                # HTTP status cannot change after headers. Abort the stream so
+                # the browser detects incomplete audio and can request it again.
+                log.warning("playback_stream_interrupted conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
+                raise RuntimeError("playback_stream_interrupted") from None
 
     log.info("playback_stream_started conversation_id=%s start_sample=%s samples=%s chunks=%s", conversation_id, start_sample, samples_to_stream, len(selected))
     return StreamingResponse(body(), media_type="audio/wav", headers={

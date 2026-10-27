@@ -113,8 +113,14 @@ def test_pagination_and_literal_search_filters(api):
 
 
 def test_salesperson_workspace_isolation_admin_read_and_revocation(api):
-    client, headers, ids, _, _ = api
+    client, headers, ids, _, database_url = api
+    # Assignment breaks equal queue lengths randomly. Keep the unrelated peer
+    # ineligible so this test always exercises access without ownership or an
+    # assignment; an assigned salesperson is intentionally allowed to read.
+    with psycopg.connect(database_url) as connection:
+        connection.execute("update profiles set availability_status='on_leave',leave_end_date=current_date+7 where id=%s", (ids[2],))
     item = save(client, headers).json()
+    assert item["assignedTo"] != str(ids[2])
     other = {**headers, "X-Test-User": "2"}
     assert client.get(f"/api/v1/enquiries/{item['id']}", headers=other).status_code == 404
     assert client.get("/api/v1/enquiries", headers=other).json()["items"] == []
@@ -127,6 +133,20 @@ def test_salesperson_workspace_isolation_admin_read_and_revocation(api):
     assert client.get(f"/api/v1/enquiries/{item['id']}", headers=headers).status_code == 403
     assert save(client, headers).status_code == 403
     assert client.get(f"/api/v1/enquiries/{item['id']}", headers=admin).status_code == 200
+
+
+def test_assigned_salesperson_can_read_enquiry_created_by_another_member(api):
+    client, headers, ids, _, database_url = api
+    # Leave only the peer eligible for automatic assignment. This separately
+    # verifies why an assigned peer must receive 200 rather than the 404 above.
+    with psycopg.connect(database_url) as connection:
+        connection.execute("update profiles set availability_status='on_leave',leave_end_date=current_date+7 where id=any(%s)", (ids[:2],))
+    item = save(client, headers).json()
+    assert item["assignedTo"] == str(ids[2])
+    assigned = {**headers, "X-Test-User": "2"}
+    assert client.get(f"/api/v1/enquiries/{item['id']}", headers=assigned).status_code == 200
+    assert [row["id"] for row in client.get("/api/v1/enquiries", headers=assigned).json()["items"]] == [item["id"]]
+    assert client.get(f"/api/v1/enquiries/{item['id']}", headers=headers).status_code == 200
 
 
 def finalized_recording(client, headers, blobs):
