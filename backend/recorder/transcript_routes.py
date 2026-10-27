@@ -1,8 +1,6 @@
-import asyncio
 import json
 import hashlib
 import logging
-import struct
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
@@ -14,6 +12,7 @@ from .processing import plan_windows, schedule
 from .audio import MAX_SESSION_SAMPLES, validate_wav
 from .routes import audit, create_run
 from .security import Workspace, workspace, conversation
+from .media import mp3_chunks, wav_header
 
 router = APIRouter(prefix="/api/v1/conversations")
 log = logging.getLogger("recorder.api")
@@ -120,9 +119,7 @@ async def playback(conversation_id: UUID, request: Request, context: Workspace =
 
 def _wav_header(samples: int) -> bytes:
     """Return a PCM WAV header whose data section can be streamed progressively."""
-    data_bytes = samples * 2
-    return b"RIFF" + struct.pack("<I4s4sIHHIIHH4sI", 36 + data_bytes, b"WAVE", b"fmt ", 16,
-        1, 1, 16000, 32000, 2, 16, b"data", data_bytes)
+    return wav_header(samples)
 
 
 @router.get("/{conversation_id}/playback/stream")
@@ -190,34 +187,15 @@ async def playback_download(conversation_id: UUID, request: Request, context: Wo
     if expected != total_samples:
         fail("playback_chunks_incomplete", 409, "Saved audio is incomplete")
 
-    async def body():
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
-            "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1",
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(_wav_header(total_samples))
-            await process.stdin.drain()
-            for chunk in chunks:
-                data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
-                info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
-                if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
-                    fail("playback_chunk_checksum_mismatch", 409, "A saved audio chunk failed verification")
-                process.stdin.write(info.pcm)
-                await process.stdin.drain()
-            process.stdin.close()
-            async for encoded in process.stdout:
-                yield encoded
-            if await process.wait() != 0:
-                fail("playback_encoding_failed", 503, "The recording could not be encoded")
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
+    async def pcm():
+        for chunk in chunks:
+            data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+            info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+            if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+                raise RuntimeError("playback_chunk_checksum_mismatch")
+            yield info.pcm
 
-    return StreamingResponse(body(), media_type="audio/mpeg", headers={
+    return StreamingResponse(mp3_chunks(pcm(), total_samples), media_type="audio/mpeg", headers={
         "Content-Disposition": f'attachment; filename="recording-{conversation_id}.mp3"',
         "X-Playback-Mode": "mp3-encoded-chunks",
     })
@@ -295,7 +273,7 @@ async def replay(conversation_id: UUID, body: s.RunCreate, request: Request, con
             fail("processing_action_not_allowed", 403)
         if conv["upload_state"] != "saved" or not conv["manifest_hash"]:
             fail("recording_must_be_saved", 409)
-        run = await create_run(connection, context, conv, body.engine_id, body.kind, body.idempotency_key)
+        run = await create_run(connection, context, conv, body.engine_id, body.kind, body.idempotency_key, settings=request.app.state.settings)
         await plan_windows(connection, conversation_id, request.app.state.settings, final=True, run_id=run["id"])
         if body.kind == "comparison":
             production = await one(connection, "select id from processing_runs where conversation_id=%s and kind='production' order by created_at limit 1", (conversation_id,))

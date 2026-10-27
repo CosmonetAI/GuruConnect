@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Office Recorder API",
+    "title": "GuruConnect API",
     "version": "1.0.0"
   },
   "paths": {
@@ -97,6 +97,95 @@
         ]
       }
     },
+    "/api/v1/presence": {
+      "post": {
+        "summary": "Presence",
+        "operationId": "presence_api_v1_presence_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/analytics": {
+      "get": {
+        "summary": "Analytics",
+        "description": "Return workspace totals for owners and member totals for salespeople.\n\nAuthorization is always checked against the authenticated actor, never a\nclient-supplied member identity.",
+        "operationId": "analytics_api_v1_analytics_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "List Workspaces",
@@ -183,6 +272,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -232,6 +338,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -344,6 +467,101 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team/{user_id}/delete": {
+      "delete": {
+        "summary": "Delete Member",
+        "description": "Permanently remove a non-owner member and member-scoped data.",
+        "operationId": "delete_member_api_v1_team__user_id__delete_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -434,6 +652,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -482,6 +717,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -496,6 +748,162 @@
         },
         "responses": {
           "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enquiries/unread-count": {
+      "get": {
+        "summary": "Unread Enquiries",
+        "operationId": "unread_enquiries_api_v1_enquiries_unread_count_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enquiries/{enquiry_id}/state": {
+      "patch": {
+        "summary": "Update Enquiry State",
+        "operationId": "update_enquiry_state_api_v1_enquiries__enquiry_id__state_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "enquiry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Enquiry Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -551,6 +959,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -621,6 +1046,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -738,7 +1180,7 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "format": "date-time"
+                  "maxLength": 100
                 },
                 {
                   "type": "null"
@@ -762,6 +1204,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -796,6 +1255,22 @@
         ],
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "name": "x-workspace-id",
             "in": "header",
             "required": false,
@@ -810,6 +1285,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -881,6 +1373,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -938,6 +1447,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1007,6 +1533,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -1067,6 +1610,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -1126,6 +1686,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1197,6 +1774,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -1266,6 +1860,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1337,6 +1948,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -1406,6 +2034,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1477,6 +2122,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -1546,6 +2208,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1624,6 +2303,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -1683,6 +2379,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1754,6 +2467,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -1824,6 +2554,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -1893,6 +2640,190 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/playback/stream": {
+      "get": {
+        "summary": "Playback Stream",
+        "description": "Stream one continuous WAV directly from the validated bucket chunks.\n\nThis is the playback fallback for deployments without the background assembly\nworker. The first validated chunk is sent as soon as it is read; subsequent\nchunks are yielded as contiguous PCM so the browser can keep playing.",
+        "operationId": "playback_stream_api_v1_conversations__conversation_id__playback_stream_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "start_sample",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Start Sample"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/playback/download": {
+      "get": {
+        "summary": "Playback Download",
+        "description": "Encode the validated chunk sequence as one downloadable MP3.",
+        "operationId": "playback_download_api_v1_conversations__conversation_id__playback_download_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -1982,6 +2913,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2042,6 +2990,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2099,6 +3064,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2170,6 +3152,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2239,6 +3238,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2320,6 +3336,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2379,6 +3412,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2450,6 +3500,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2500,6 +3567,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2547,6 +3631,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2618,6 +3719,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -2688,6 +3806,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2747,6 +3882,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2808,6 +3960,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "requestBody": {
@@ -2868,6 +4037,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -2915,6 +4101,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -2986,6 +4189,23 @@
               ],
               "title": "X-Workspace-Id"
             }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
           }
         ],
         "responses": {
@@ -3045,6 +4265,23 @@
                 }
               ],
               "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
             }
           }
         ],
@@ -3416,6 +4653,1705 @@
           }
         }
       }
+    },
+    "/api/v1/enquiries": {
+      "get": {
+        "tags": [
+          "enquiries"
+        ],
+        "summary": "List Enquiries",
+        "operationId": "list_enquiries_api_v1_enquiries_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 10,
+              "title": "Pagesize"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120,
+              "default": "",
+              "title": "Query"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "default": "",
+              "title": "Channel"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 160,
+              "default": "",
+              "title": "Branch"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "enquiries"
+        ],
+        "summary": "Create Enquiry",
+        "operationId": "create_enquiry_api_v1_enquiries_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnquiryCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enquiries/{enquiry_id}": {
+      "patch": {
+        "tags": [
+          "enquiries"
+        ],
+        "summary": "Update Enquiry",
+        "operationId": "update_enquiry_api_v1_enquiries__enquiry_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "enquiry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Enquiry Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnquiryCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "enquiries"
+        ],
+        "summary": "Get Enquiry",
+        "operationId": "get_enquiry_api_v1_enquiries__enquiry_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "enquiry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Enquiry Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/enquiries/public/track": {
+      "get": {
+        "tags": [
+          "enquiries"
+        ],
+        "summary": "Track Public Ticket",
+        "operationId": "track_public_ticket_api_v1_enquiries_public_track_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/agents": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "List Agents",
+        "operationId": "list_agents_api_v1_walkins_agents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/agents/{agent_id}": {
+      "patch": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Update Availability",
+        "operationId": "update_availability_api_v1_walkins_agents__agent_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvailabilityChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/history": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "List History",
+        "operationId": "list_history_api_v1_walkins_history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visitId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Visitid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Pagesize"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "List Visits",
+        "operationId": "list_visits_api_v1_walkins_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Pagesize"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120,
+              "default": "",
+              "title": "Query"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "Product enquiry",
+                    "New business enquiry",
+                    "Product demonstration",
+                    "Pricing or quotation request",
+                    "Existing order enquiry",
+                    "Service or support request",
+                    "Meeting with a specific employee",
+                    "Follow-up meeting",
+                    "Other"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Purpose"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "Registered",
+                    "Waiting for Assignment",
+                    "Assigned",
+                    "Waiting for Sales Agent",
+                    "In Discussion",
+                    "Requirements Captured",
+                    "Follow-up Required",
+                    "Converted to Enquiry",
+                    "Completed",
+                    "Cancelled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "assignedAgentId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignedagentid"
+            }
+          },
+          {
+            "name": "fromDate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fromdate"
+            }
+          },
+          {
+            "name": "toDate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Todate"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Register Visit",
+        "operationId": "register_visit_api_v1_walkins_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalkinCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/missed-visitors": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "List Missed Visitors",
+        "operationId": "list_missed_visitors_api_v1_walkins_missed_visitors_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/{visit_id}": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Get Visit",
+        "operationId": "get_visit_api_v1_walkins__visit_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/{visit_id}/assignment": {
+      "patch": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Assign Visit",
+        "operationId": "assign_visit_api_v1_walkins__visit_id__assignment_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Assignment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/{visit_id}/status": {
+      "patch": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Change Status",
+        "operationId": "change_status_api_v1_walkins__visit_id__status_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/{visit_id}/requirements": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Get Requirements",
+        "operationId": "get_requirements_api_v1_walkins__visit_id__requirements_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Save Requirements",
+        "operationId": "save_requirements_api_v1_walkins__visit_id__requirements_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequirementSave"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/walkins/{visit_id}/recordings": {
+      "get": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "List Recordings",
+        "operationId": "list_recordings_api_v1_walkins__visit_id__recordings_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Pagesize"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "walkins"
+        ],
+        "summary": "Link Recording",
+        "operationId": "link_recording_api_v1_walkins__visit_id__recordings_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "visit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Visit Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingLink"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3469,6 +6405,59 @@
           "bytes"
         ],
         "title": "ArtifactUpload"
+      },
+      "Assignment": {
+        "properties": {
+          "expectedUpdatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expectedupdatedat"
+          },
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedUpdatedAt",
+          "agentId"
+        ],
+        "title": "Assignment"
+      },
+      "AvailabilityChange": {
+        "properties": {
+          "availability": {
+            "type": "string",
+            "enum": [
+              "Available",
+              "Busy",
+              "Unavailable"
+            ],
+            "title": "Availability"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "availability"
+        ],
+        "title": "AvailabilityChange"
       },
       "CaptureEvent": {
         "properties": {
@@ -3543,7 +6532,7 @@
           },
           "sample_count": {
             "type": "integer",
-            "maximum": 160000.0,
+            "maximum": 2880000.0,
             "minimum": 1.0,
             "title": "Sample Count"
           },
@@ -3561,7 +6550,7 @@
           },
           "bytes": {
             "type": "integer",
-            "maximum": 400000.0,
+            "maximum": 6000000.0,
             "minimum": 46.0,
             "title": "Bytes"
           },
@@ -3640,6 +6629,18 @@
             "maxLength": 100,
             "minLength": 8,
             "title": "Idempotency Key"
+          },
+          "expected_generation": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Generation"
           }
         },
         "additionalProperties": false,
@@ -3676,6 +6677,30 @@
               }
             ],
             "title": "Customer Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 24
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 320
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "is_unnamed": {
             "type": "boolean",
@@ -3741,6 +6766,15 @@
             "type": "boolean",
             "title": "Audio Only",
             "default": false
+          },
+          "audio_bucket": {
+            "type": "string",
+            "enum": [
+              "session-audio",
+              "walkin-audio"
+            ],
+            "title": "Audio Bucket",
+            "default": "session-audio"
           }
         },
         "additionalProperties": false,
@@ -3911,6 +6945,176 @@
         "type": "object",
         "title": "EngineSettings"
       },
+      "EnquiryCreate": {
+        "properties": {
+          "customerName": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Customername"
+          },
+          "phone": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 7,
+            "title": "Phone"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Email",
+            "default": ""
+          },
+          "channel": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Channel"
+          },
+          "branch": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Branch"
+          },
+          "assignedExecutive": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Assignedexecutive"
+          },
+          "product": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Product",
+            "default": ""
+          },
+          "quantity": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "default": 1
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Unit",
+            "default": "nos"
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Notes",
+            "default": ""
+          },
+          "sourceEventId": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Sourceeventid",
+            "default": ""
+          },
+          "customerType": {
+            "type": "string",
+            "enum": [
+              "Retail",
+              "Dealer",
+              "Project"
+            ],
+            "title": "Customertype",
+            "default": "Retail"
+          },
+          "company": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Company",
+            "default": ""
+          },
+          "projectName": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Projectname",
+            "default": ""
+          },
+          "preferredContactMethod": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Preferredcontactmethod",
+            "default": ""
+          },
+          "productRequirements": {
+            "items": {
+              "$ref": "#/components/schemas/ProductRequirement"
+            },
+            "type": "array",
+            "maxItems": 25,
+            "title": "Productrequirements"
+          },
+          "customerNotes": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Customernotes",
+            "default": ""
+          },
+          "salespersonNotes": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Salespersonnotes",
+            "default": ""
+          },
+          "requirementsSummary": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Requirementssummary",
+            "default": ""
+          },
+          "followUpDate": {
+            "type": "string",
+            "maxLength": 10,
+            "title": "Followupdate",
+            "default": ""
+          },
+          "followUpOwner": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Followupowner",
+            "default": ""
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "Normal",
+              "High",
+              "Urgent"
+            ],
+            "title": "Priority",
+            "default": "Normal"
+          },
+          "conversationId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversationid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "customerName",
+          "phone",
+          "channel",
+          "branch",
+          "assignedExecutive"
+        ],
+        "title": "EnquiryCreate"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3926,6 +7130,12 @@
       },
       "Invitation": {
         "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 2,
+            "title": "Name"
+          },
           "email": {
             "type": "string",
             "maxLength": 254,
@@ -3936,8 +7146,9 @@
           "role": {
             "type": "string",
             "enum": [
-              "admin",
-              "salesperson"
+              "owner",
+              "salesperson",
+              "receptionist"
             ],
             "title": "Role",
             "default": "salesperson"
@@ -3946,6 +7157,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "name",
           "email"
         ],
         "title": "Invitation"
@@ -4037,6 +7249,74 @@
         ],
         "title": "Manifest"
       },
+      "ProductRequirement": {
+        "properties": {
+          "product": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Product",
+            "default": ""
+          },
+          "sku": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Sku",
+            "default": ""
+          },
+          "quantity": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "default": 1
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Unit",
+            "default": "nos"
+          },
+          "customerSegment": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Customersegment",
+            "default": ""
+          },
+          "budget": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Budget",
+            "default": ""
+          },
+          "paymentPreference": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Paymentpreference",
+            "default": ""
+          },
+          "timeline": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Timeline",
+            "default": ""
+          },
+          "stockCheck": {
+            "type": "boolean",
+            "title": "Stockcheck",
+            "default": false
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProductRequirement"
+      },
       "ProfilePatch": {
         "properties": {
           "display_name": {
@@ -4049,6 +7329,51 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Preferences"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 24
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "avatar_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Path"
+          },
+          "availability_status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "on_leave",
+              "be_right_back"
+            ],
+            "title": "Availability Status",
+            "default": "active"
+          },
+          "leave_end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leave End Date"
           }
         },
         "additionalProperties": false,
@@ -4057,6 +7382,113 @@
           "display_name"
         ],
         "title": "ProfilePatch"
+      },
+      "RecordingLink": {
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Conversationid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "conversationId"
+        ],
+        "title": "RecordingLink"
+      },
+      "Requirement": {
+        "properties": {
+          "detailedRequirement": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Detailedrequirement",
+            "default": ""
+          },
+          "productOrService": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Productorservice",
+            "default": ""
+          },
+          "quantity": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Quantity",
+            "default": ""
+          },
+          "budgetRange": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Budgetrange",
+            "default": ""
+          },
+          "expectedPurchaseTimeline": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Expectedpurchasetimeline",
+            "default": ""
+          },
+          "preferredSolution": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Preferredsolution",
+            "default": ""
+          },
+          "competitorOrAlternative": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Competitororalternative",
+            "default": ""
+          },
+          "specialRequests": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Specialrequests",
+            "default": ""
+          },
+          "followUpAt": {
+            "type": "string",
+            "maxLength": 10,
+            "title": "Followupat",
+            "default": ""
+          },
+          "agentNotes": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Agentnotes",
+            "default": ""
+          },
+          "nextAction": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Nextaction",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Requirement"
+      },
+      "RequirementSave": {
+        "properties": {
+          "expectedUpdatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expectedupdatedat"
+          },
+          "requirement": {
+            "$ref": "#/components/schemas/Requirement"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedUpdatedAt",
+          "requirement"
+        ],
+        "title": "RequirementSave"
       },
       "Retry": {
         "properties": {
@@ -4320,6 +7752,38 @@
         ],
         "title": "SpeakerGroups"
       },
+      "StatusChange": {
+        "properties": {
+          "expectedUpdatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expectedupdatedat"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Registered",
+              "Waiting for Assignment",
+              "Assigned",
+              "Waiting for Sales Agent",
+              "In Discussion",
+              "Requirements Captured",
+              "Follow-up Required",
+              "Converted to Enquiry",
+              "Completed",
+              "Cancelled"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedUpdatedAt",
+          "status"
+        ],
+        "title": "StatusChange"
+      },
       "TestConnection": {
         "properties": {
           "functional": {
@@ -4371,6 +7835,114 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WalkinCreate": {
+        "properties": {
+          "customerName": {
+            "type": "string",
+            "maxLength": 150,
+            "minLength": 2,
+            "title": "Customername"
+          },
+          "mobileNumber": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 7,
+            "title": "Mobilenumber"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Email",
+            "default": ""
+          },
+          "companyName": {
+            "type": "string",
+            "maxLength": 150,
+            "title": "Companyname",
+            "default": ""
+          },
+          "projectName": {
+            "type": "string",
+            "maxLength": 150,
+            "title": "Projectname",
+            "default": ""
+          },
+          "preferredContactMethod": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Preferredcontactmethod",
+            "default": ""
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "Product enquiry",
+              "New business enquiry",
+              "Product demonstration",
+              "Pricing or quotation request",
+              "Existing order enquiry",
+              "Service or support request",
+              "Meeting with a specific employee",
+              "Follow-up meeting",
+              "Other"
+            ],
+            "title": "Purpose",
+            "default": "Other"
+          },
+          "purposeDescription": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Purposedescription",
+            "default": ""
+          },
+          "productOrService": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Productorservice",
+            "default": ""
+          },
+          "department": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Department",
+            "default": ""
+          },
+          "requestedEmployee": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Requestedemployee",
+            "default": ""
+          },
+          "appointmentStatus": {
+            "type": "string",
+            "enum": [
+              "Walk-in",
+              "Scheduled Appointment"
+            ],
+            "title": "Appointmentstatus",
+            "default": "Walk-in"
+          },
+          "appointmentReference": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Appointmentreference",
+            "default": ""
+          },
+          "internalNotes": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Internalnotes",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "customerName",
+          "mobileNumber"
+        ],
+        "title": "WalkinCreate"
       },
       "Word": {
         "properties": {

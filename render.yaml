@@ -1,4 +1,5 @@
-# Three services; Supabase remains the external Auth/database/private Storage.
+# Two services only: frontend and API with supervised durable processing.
+# Supabase remains the external Auth/database/private Storage.
 # Values marked sync:false are configured in Render, never committed.
 services:
   - type: web
@@ -47,7 +48,7 @@ services:
     name: guruconnect-api
     runtime: docker
     region: singapore
-    plan: 0.5c-512mb
+    plan: 1c-2g
     branch: main
     autoDeployTrigger: checksPass
     dockerfilePath: ./backend/Dockerfile
@@ -82,7 +83,17 @@ services:
       - key: PREAUTH_RATE_LIMIT_PER_MINUTE
         value: "5000"
       - key: MAX_CONCURRENT_REQUESTS
-        value: "20"
+        value: "64"
+      - key: EMBEDDED_PROCESSING_ENABLED
+        value: "true"
+      - key: PROCESSING_CONCURRENCY
+        value: "4"
+      - key: MANAGED_PROVIDER_CONCURRENCY
+        value: "4"
+      - key: PROCESSING_SHUTDOWN_SECONDS
+        value: "15"
+      - key: ELEVENLABS_API_KEY
+        sync: false
       - key: REQUIRE_ADMIN_MFA
         value: "true"
       - key: ZOHO_ACCOUNTS_URL
@@ -97,39 +108,3 @@ services:
         value: Asia/Kolkata
       - key: ZOHO_REFRESH_CRON_SECRET
         sync: false
-  - type: worker
-    name: guruconnect-worker
-    runtime: docker
-    region: singapore
-    plan: 1c-2g
-    branch: main
-    autoDeployTrigger: checksPass
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: .
-    dockerCommand: python -m recorder.worker
-    maxShutdownDelaySeconds: 90
-    envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: PYTHON_VERSION
-        value: "3.12.8"
-      - key: DATABASE_URL
-        fromService: {name: guruconnect-api, type: web, envVarKey: DATABASE_URL}
-      - key: SUPABASE_URL
-        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_URL}
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_SERVICE_ROLE_KEY}
-      - key: SUPABASE_ANON_KEY
-        fromService: {name: guruconnect-api, type: web, envVarKey: SUPABASE_ANON_KEY}
-      - key: CREDENTIAL_ENCRYPTION_KEY
-        fromService: {name: guruconnect-api, type: web, envVarKey: CREDENTIAL_ENCRYPTION_KEY}
-      - key: CREDENTIAL_KEY_VERSION
-        fromService: {name: guruconnect-api, type: web, envVarKey: CREDENTIAL_KEY_VERSION}
-      - key: CORS_ORIGINS
-        fromService: {name: guruconnect-api, type: web, envVarKey: CORS_ORIGINS}
-      - key: TRUSTED_HOSTS
-        fromService: {name: guruconnect-api, type: web, envVarKey: TRUSTED_HOSTS}
-      - key: POOL_MAX_SIZE
-        value: "3"
-      - key: REQUIRE_ADMIN_MFA
-        value: "true"

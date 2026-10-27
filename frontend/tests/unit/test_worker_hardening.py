@@ -231,15 +231,15 @@ async def test_shutdown_cancels_in_flight_provider_without_resetting_durable_sub
     monkeypatch.setattr(worker, "transcribe", transcribe)
     monkeypatch.setattr(worker, "renew", renew)
     worker.db = SimpleNamespace(connection=lambda: pytest.fail("Shutdown must preserve durable submission state"))
-    execution = asyncio.create_task(worker.execute({"kind": "transcribe"}))
-    await accepted.wait()
+    execution = asyncio.create_task(worker.execute({"id": "shutdown-job", "kind": "transcribe", "conversation_id": "shutdown-conversation", "attempt": 1}))
+    await asyncio.wait_for(accepted.wait(), timeout=1)
     worker.stopping.set()
     await asyncio.wait_for(execution, timeout=1)
     assert cancelled.is_set()
 
 
 @pytest.mark.asyncio
-async def test_local_assembly_rejects_chunk_symlink_before_reading_other_files(tmp_path):
+async def test_local_assembly_rejects_chunk_symlink_before_reading_other_files(tmp_path, monkeypatch):
     store = LocalStore(tmp_path / "store")
     cid, part = str(uuid4()), str(uuid4())
     store.put("conversations", cid, {"id": cid, "capture_state": "stopped", "total_samples": 16000})
@@ -254,6 +254,7 @@ async def test_local_assembly_rejects_chunk_symlink_before_reading_other_files(t
     path.parent.mkdir(parents=True)
     path.symlink_to(private)
     worker = LocalWorker(Settings(_env_file=None, local_data_dir=store.root), store)
+    monkeypatch.setattr(store, "assert_job", lambda *args: None)
     with pytest.raises(ProviderError, match="invalid_audio"):
-        await worker.assemble({"conversation_id": cid})
+        await worker.assemble({"id": "fixture-job", "lease_token": "fixture-lease", "conversation_id": cid})
     assert not store.audio_path(cid).exists()

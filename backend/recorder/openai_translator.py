@@ -16,13 +16,20 @@ import httpx
 
 from .providers import ProviderError, _TERMS, bounded_request, language_code
 
-MODEL = "gpt-5.6-luna"
+MODEL = "gpt-5.4-mini-2026-03-17"
 OPENAI_TRANSLATION_MODEL = MODEL
+SUPPORTED_TRANSLATION_MODELS = {MODEL, "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4.1-mini-2025-04-14", "gpt-4o-mini", "gpt-4o-mini-2024-07-18"}
 API_ORIGIN = "https://api.openai.com/v1"
 MAX_CHUNK_CHARS = 8000
 MAX_SOURCE_CHARS = 240000
 MAX_TRANSLATED_CHARS = 32768
 MAX_RESPONSE_BYTES = 1024 * 1024
+
+
+def validate_translation_model(value: str) -> str:
+    if value not in SUPPORTED_TRANSLATION_MODELS:
+        raise ValueError("OPENAI_TRANSLATION_MODEL must be a supported text translation model")
+    return value
 
 _DIGITS = re.compile(r"\d+(?:[.,]\d+)*")
 _SENTENCE_END = re.compile(r"[.!?।॥](?:[\"'’”)]*)\s+|\n+")
@@ -150,8 +157,13 @@ def _checked_response(response: httpx.Response, *, paid: bool) -> dict:
     return body
 
 
-def _response_usage(body: dict, response: httpx.Response) -> TranslationResult:
-    if body.get("model") != MODEL:
+def _response_usage(body: dict, response: httpx.Response, model: str = MODEL) -> TranslationResult:
+    actual_model = body.get("model")
+    allowed = {model}
+    if model == "gpt-5.4-mini": allowed.add("gpt-5.4-mini-2026-03-17")
+    if model == "gpt-4.1-mini": allowed.add("gpt-4.1-mini-2025-04-14")
+    if model == "gpt-4o-mini": allowed.add("gpt-4o-mini-2024-07-18")
+    if actual_model not in allowed:
         raise ProviderError("provider_model_mismatch", uncertain=True)
     response_id = body.get("id")
     if not isinstance(response_id, str) or not response_id.startswith("resp_") or not _IDENTIFIER.fullmatch(response_id):
@@ -165,7 +177,7 @@ def _response_usage(body: dict, response: httpx.Response) -> TranslationResult:
     request_id = response.headers.get("x-request-id")
     if not request_id or not _IDENTIFIER.fullmatch(request_id):
         request_id = response_id
-    return TranslationResult("", counts[0], counts[1], MODEL, request_id)
+    return TranslationResult("", counts[0], counts[1], actual_model, request_id)
 
 
 def _translated_text(body: dict, source: str) -> str:
@@ -226,13 +238,15 @@ def _translated_text(body: dict, source: str) -> str:
 class OpenAITranslator:
     model = MODEL
 
-    def __init__(self, key: str, *, usage_callback: UsageCallback | None = None):
+    def __init__(self, key: str, *, usage_callback: UsageCallback | None = None, model: str = MODEL):
         if not isinstance(key, str) or not key.strip():
             raise ProviderError("translator_unconfigured")
         if len(key) > 512 or any(not 33 <= ord(character) <= 126 for character in key):
             raise ProviderError("invalid_credentials")
         self.key = key
         self.usage_callback = usage_callback
+        try: self.model = validate_translation_model(model)
+        except ValueError: raise ProviderError("provider_model_access_denied") from None
 
     async def test(self, functional: bool = False) -> dict:
         if functional:
@@ -242,29 +256,29 @@ class OpenAITranslator:
                 raise ProviderError("translation_smoke_test_failed", uncertain=True)
             return {
                 "connected": True, "functional": True, "accuracy_tested": False,
-                "model": MODEL, "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+                "model": result.model, "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
                 "request_id": result.request_id,
                 "note": "Charged short Hindi-to-English translation check; representative conversation accuracy remains untested.",
             }
         try:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
-                response = await bounded_request(client, "GET", f"{API_ORIGIN}/models/{MODEL}",
+                response = await bounded_request(client, "GET", f"{API_ORIGIN}/models/{self.model}",
                                                  max_bytes=MAX_RESPONSE_BYTES, timeout=20,
                                                  headers={"Authorization": f"Bearer {self.key}"})
         except httpx.RequestError:
             raise ProviderError("provider_connection_failed", retryable=True) from None
         model = _checked_response(response, paid=False)
-        if model.get("id") != MODEL or model.get("object") != "model":
+        if model.get("id") != self.model or model.get("object") != "model":
             raise ProviderError("provider_model_mismatch")
         return {
-            "connected": True, "functional": False, "accuracy_tested": False, "model": MODEL,
+            "connected": True, "functional": False, "accuracy_tested": False, "model": self.model,
             "note": "Authenticated model access checked without generating text. Run the charged functional test before enabling translation.",
         }
 
     async def translate(self, text: str, source_language: str | None = None) -> TranslationResult:
         parts = split_translation_text(text)
         if not text.strip():
-            return TranslationResult(text, 0, 0, MODEL, None)
+            return TranslationResult(text, 0, 0, self.model, None)
         translated: list[str] = []
         input_tokens = output_tokens = 0
         last_request_id = None
@@ -284,7 +298,7 @@ class OpenAITranslator:
             input_tokens += result.input_tokens
             output_tokens += result.output_tokens
             last_request_id = result.request_id
-        return TranslationResult(" ".join(translated), input_tokens, output_tokens, MODEL, last_request_id)
+        return TranslationResult(" ".join(translated), input_tokens, output_tokens, self.model, last_request_id)
 
     async def _translate_chunk(self, text: str, source_language: str | None) -> TranslationResult:
         data = {
@@ -293,10 +307,9 @@ class OpenAITranslator:
             "preserved_terms": list(_TERMS.findall(text)),
         }
         payload = {
-            "model": MODEL,
+            "model": self.model,
             "instructions": _INSTRUCTIONS,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": json.dumps(data, ensure_ascii=False)}]}],
-            "reasoning": {"effort": "none"},
             "store": False,
             "tools": [],
             "max_output_tokens": 8192,
@@ -305,6 +318,8 @@ class OpenAITranslator:
                 "schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False},
             }},
         }
+        if self.model.startswith("gpt-5.4-mini"):
+            payload["reasoning"] = {"effort": "none"}
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15), follow_redirects=False, trust_env=False) as client:
                 response = await bounded_request(client, "POST", f"{API_ORIGIN}/responses",
@@ -315,7 +330,7 @@ class OpenAITranslator:
         except httpx.RequestError:
             raise ProviderError("translator_unavailable", retryable=True) from None
         body = _checked_response(response, paid=True)
-        usage = _response_usage(body, response)
+        usage = _response_usage(body, response, self.model)
         if self.usage_callback is not None:
             try:
                 await self.usage_callback(usage)

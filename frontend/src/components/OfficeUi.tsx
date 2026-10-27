@@ -9,7 +9,7 @@ const MAX_POLL_CHECKS = 180
 /** Private results are bound to both the signed-in account and workspace. */
 export function useOfficeResource<T>(path: string | null, shouldPoll?: (value: T) => boolean) {
   const { user, workspace } = useOffice()
-  const scope = user && workspace && path ? `${user.id}:${workspace.id}:${path}` : ''
+  const scope = user && workspace && path ? `${user.id}:${workspace.id}:${workspace.member_id ?? user.id}:${path}` : ''
   const currentScope = useRef(scope)
   currentScope.current = scope
   const poll = useRef(shouldPoll)
@@ -48,7 +48,7 @@ export function useOfficeResource<T>(path: string | null, shouldPoll?: (value: T
         ? { ...value, refreshing: !!value.data, loading: !value.data, error: '' }
         : { scope, error: '', loading: true, refreshing: false, pollPaused: false })
       try {
-        const data = await request<T>(path, workspace.id, { signal: controller.signal })
+        const data = await request<T>(path, workspace.id, { signal: controller.signal }, workspace.member_id)
         if (stopped || currentScope.current !== scope) return
         latest = data
         fatalReadFailure = false

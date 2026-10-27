@@ -13,8 +13,8 @@ function close(code = 0) {
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => close(signal === 'SIGINT' ? 130 : 143));
 try {
-  const plans = [createLaunchPlan('api'), createLaunchPlan('worker'), { command: process.execPath, args: [resolve(project, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5176', '--strictPort', ...process.argv.slice(2)], cwd: project }];
-  console.log('Starting GuruConnect: frontend http://127.0.0.1:5176 · API http://127.0.0.1:8010 · background worker');
+  const plans = [createLaunchPlan('api'), { command: process.execPath, args: [resolve(project, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5176', '--strictPort', ...process.argv.slice(2)], cwd: project }];
+  console.log('Starting GuruConnect: frontend http://127.0.0.1:5176 · API http://127.0.0.1:8010 · processing inside the API');
   for (const plan of plans) {
     const child = spawn(plan.command, plan.args, { cwd: plan.cwd, stdio: 'inherit', shell: false });
     children.push(child);

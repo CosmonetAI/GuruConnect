@@ -120,7 +120,7 @@ def test_finalization_requires_contiguous_confirmed_audio_and_schedules_once(api
 def test_provider_keys_are_encrypted_private_and_omitted_from_all_responses(api):
     client, store, settings = api
     secret = "dummy-provider-key-for-unit-tests"
-    body = {"engine_id": "openai-translator", "credentials": {"api_key": secret}, "config": {"model": "gpt-5.6-luna"}, "idempotency_key": str(uuid4())}
+    body = {"engine_id": "openai-translator", "credentials": {"api_key": secret}, "config": {"model": "gpt-4o-mini"}, "idempotency_key": str(uuid4())}
     first = client.post("/api/v1/connections", json=body)
     again = client.post("/api/v1/connections", json=body)
     assert first.status_code == again.status_code == 201
@@ -148,7 +148,7 @@ def test_translation_readiness_requires_the_explicit_functional_test(api, monkey
     client, _, _ = api
     async def fake_test(_self, functional=False): return {"connected": True, "functional": functional}
     monkeypatch.setattr("recorder.local_api.OpenAITranslator.test", fake_test)
-    row = client.post("/api/v1/connections", json={"engine_id": "openai-translator", "credentials": {"api_key": "dummy-key-for-tests"}, "config": {"model": "gpt-5.6-luna"}, "idempotency_key": str(uuid4())}).json()
+    row = client.post("/api/v1/connections", json={"engine_id": "openai-translator", "credentials": {"api_key": "dummy-key-for-tests"}, "config": {"model": "gpt-4o-mini"}, "idempotency_key": str(uuid4())}).json()
     base = f"/api/v1/connections/{row['id']}/test"
     metadata = client.post(base, json={"functional": False}).json()
     assert metadata["passed"] is True and metadata["state"] == "configured"

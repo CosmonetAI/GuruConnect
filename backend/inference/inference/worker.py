@@ -117,7 +117,7 @@ class Worker:
                         segment.pop("words",None) if segment.get("words") is None else None
                 artifact_id=await self.artifact(job,payload)
                 await self.call(f"/jobs/{job['job_id']}/result",{**lease,**payload,"artifact_id":artifact_id})
-        except Exception as exc:
+        except Exception:
             log.warning("inference_failed job_id=%s code=%s",job.get("job_id"),"inference_unavailable")
             try: await self.call(f"/jobs/{job['job_id']}/failure",{**lease,"error_code":"inference_unavailable","uncertain":False})
             except Exception: pass

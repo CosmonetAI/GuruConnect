@@ -1,11 +1,15 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, type Job } from '../services/officeApi'
+import { type Job } from '../services/officeApi'
 import ConversationTranscript from './ConversationTranscript'
 
-const calls = vi.hoisted(() => ({ request: vi.fn(), reload: vi.fn(), workspace: 'workspace-a', role: 'owner', jobs: [] as Job[], complete: false }))
+const calls = vi.hoisted(() => ({ request: vi.fn(), reload: vi.fn(), workspace: 'workspace-a', role: 'owner', jobs: [] as Job[], complete: false, playAt: vi.fn(), playerClosed: vi.fn() }))
+vi.mock('./ProgressivePlayback', async () => {
+  const { forwardRef, useImperativeHandle, useEffect } = await import('react')
+  return { default: forwardRef(function Player(_props, ref) { useImperativeHandle(ref, () => ({ playAt: calls.playAt })); useEffect(() => () => calls.playerClosed(), []); return <div>source player</div> }) }
+})
 vi.mock('../services/officeApi', async original => ({ ...await original<typeof import('../services/officeApi')>(), request: calls.request }))
 vi.mock('../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'user-a' }, workspace: { id: calls.workspace, role: calls.role } }) }))
 vi.mock('./OfficeUi', async original => ({ ...await original<typeof import('./OfficeUi')>(), useOfficeResource: (path: string) => ({
@@ -15,7 +19,7 @@ vi.mock('./OfficeUi', async original => ({ ...await original<typeof import('./Of
 }) }))
 function page() { return <MemoryRouter><ConversationTranscript conversationId="conversation-a" /></MemoryRouter> }
 beforeEach(() => {
-  calls.request.mockReset(); calls.reload.mockClear(); calls.workspace = 'workspace-a'; calls.role = 'owner'; calls.jobs = []; calls.complete = false
+  calls.playAt.mockReset(); calls.playerClosed.mockReset(); calls.request.mockReset(); calls.reload.mockClear(); calls.workspace = 'workspace-a'; calls.role = 'owner'; calls.jobs = []; calls.complete = false
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
 })
@@ -63,28 +67,18 @@ describe('actual source and English processing results', () => {
     expect(screen.queryByText(/eligible processing job\(s\) resumed/)).not.toBeInTheDocument()
   })
 
-  it('requests playback only after intent and treats pending assembly honestly', async () => {
-    const user = userEvent.setup()
-    calls.request.mockRejectedValueOnce(new ApiError(409, 'playback_assembly_pending', 'Playback pending'))
-    render(page())
+  it('starts the actual source player only after intent and seeks source turns', async () => {
+    const user = userEvent.setup(); render(page())
+    expect(calls.playAt).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Load playback' }))
+    expect(calls.playAt).toHaveBeenLastCalledWith(0)
+    await user.click(screen.getByRole('button', { name: /Play source audio at/ }))
+    expect(calls.playAt).toHaveBeenLastCalledWith(1)
     expect(calls.request).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Load playback' }))
-    expect(await screen.findByText(/Playback assembly is pending/)).toBeVisible()
-    expect(screen.queryByLabelText('Conversation source audio')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
-
-  it('aborts and discards a late signed playback response after workspace change', async () => {
-    const user = userEvent.setup()
-    let finish: (value: unknown) => void = () => {}
-    calls.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-    const view = render(page())
-    await user.click(screen.getByRole('button', { name: 'Load playback' }))
-    const signal = calls.request.mock.calls[0][2].signal as AbortSignal
-    calls.workspace = 'workspace-b'; view.rerender(page())
-    expect(signal.aborted).toBe(true)
-    await act(async () => finish({ url: 'https://storage.example.test/workspace-a.wav', expires_in: 60 }))
-    expect(screen.queryByLabelText('Conversation source audio')).not.toBeInTheDocument()
+  it('disposes the previous source player after workspace change', () => {
+    const view = render(page()); calls.workspace = 'workspace-b'; view.rerender(page())
+    expect(calls.playerClosed).toHaveBeenCalledOnce()
   })
 
   it('keeps old comparison failures out of a completed active transcript banner', () => {

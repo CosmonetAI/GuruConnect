@@ -12,6 +12,7 @@ from recorder import connection_routes, routes, transcript_routes
 from recorder.connection_routes import validate_connection_config, safe_connection
 from recorder.schemas import ConnectionCreate, ConversationCreate, EngineSettings, RunCreate, Retry, TestConnection as ConnectionTest
 from recorder.providers import ProviderError
+from recorder.openai_translator import MODEL
 
 
 def configuration(**overrides):
@@ -23,10 +24,10 @@ def configuration(**overrides):
 def test_openai_configuration_snapshots_only_exact_requested_model():
     body = configuration()
     validate_connection_config(body)
-    assert body.config == {"model": "gpt-5.6-luna"}
-    body = configuration(config={"model": "gpt-5.6-luna", "max_concurrency": 1})
+    assert body.config == {"model": MODEL}
+    body = configuration(config={"model": MODEL, "max_concurrency": 1})
     validate_connection_config(body)
-    assert body.config["model"] == "gpt-5.6-luna"
+    assert body.config["model"] == MODEL
 
 
 @pytest.mark.parametrize("changes,code", [
@@ -58,10 +59,10 @@ def test_openai_translation_cannot_be_selected_as_speech_engine(schema, data):
 
 
 def test_openai_safe_connection_never_exposes_credentials_or_fingerprints():
-    result = safe_connection({"engine_id": "openai-translator", "config": {"model": "gpt-5.6-luna"},
+    result = safe_connection({"engine_id": "openai-translator", "config": {"model": MODEL},
         "encrypted_value": "must-not-escape", "credential_scope": "secret-fingerprint", "api_key": "secret-key",
-        "safe_metadata": {"idempotency_key": "hidden", "request_hash": "hidden", "model": "gpt-5.6-luna"}})
-    assert result == {"engine_id": "openai-translator", "config": {"model": "gpt-5.6-luna"}, "safe_metadata": {"model": "gpt-5.6-luna"}}
+        "safe_metadata": {"idempotency_key": "hidden", "request_hash": "hidden", "model": MODEL}})
+    assert result == {"engine_id": "openai-translator", "config": {"model": MODEL}, "safe_metadata": {"model": MODEL}}
 
 
 @pytest.mark.asyncio
@@ -69,7 +70,7 @@ def test_openai_safe_connection_never_exposes_credentials_or_fingerprints():
 async def test_run_uses_selected_workspace_translator_and_snapshots_safe_config(monkeypatch, selected, strategy):
     workspace_id, connection_id, translator_id, conversation_id = [uuid4() for _ in range(4)]
     speech = {"id": connection_id, "generation": 3, "state": "connected", "tested_at": datetime.now(timezone.utc), "config": {}}
-    translator = {"id": translator_id, "generation": 4, "engine_id": selected, "config": {"model": "gpt-5.6-luna"} if strategy == "openai" else {"region": "global"}}
+    translator = {"id": translator_id, "generation": 4, "engine_id": selected, "config": {"model": MODEL} if strategy == "openai" else {"region": "global"}}
     captured = {}
     async def one(connection, sql, values):
         if "select * from processing_runs" in sql:
@@ -125,7 +126,7 @@ async def test_translation_retry_uses_explicit_rebind_rpc_and_skips_uncertain(mo
 async def test_connection_test_requires_functional_readiness_and_preserves_same_generation_result(monkeypatch, functional, previously_ready, expected_state, rejected):
     connection_id, organisation_id = uuid4(), uuid4()
     row = {"id": connection_id, "organisation_id": organisation_id, "engine_id": "openai-translator", "generation": 2,
-           "state": "configured", "config": {"model": "gpt-5.6-luna"}, "safe_metadata": {"functional_translation_ready": previously_ready},
+           "state": "configured", "config": {"model": MODEL}, "safe_metadata": {"functional_translation_ready": previously_ready},
            "tested_at": datetime.now(timezone.utc) if previously_ready else None}
     observed = []
     class Database:
@@ -135,15 +136,15 @@ async def test_connection_test_requires_functional_readiness_and_preserves_same_
         async def execute(self, *args):
             return None
     class Adapter:
-        def __init__(self, key):
+        def __init__(self, key, model=MODEL):
             assert key == "test-key-ephemeral"
         async def test(self, *, functional):
             observed.append(functional)
             if rejected:
                 raise ProviderError("invalid_credentials")
-            return {"connected": True, "functional": functional, "model": "gpt-5.6-luna"}
+            return {"connected": True, "functional": functional, "model": MODEL}
     async def get_connection(*args):
-        return row if not observed else {**row, "state": "checking"}
+        return row if not observed else dict(row)
     async def one(connection, sql, values):
         if "encrypted_value" in sql:
             return {"encrypted_value": "ciphertext"}
@@ -182,7 +183,7 @@ async def test_openai_enable_cannot_bypass_functional_readiness(monkeypatch):
         async def connection(self):
             yield self
     async def get_connection(*args):
-        return {"state": "disabled", "tested_at": datetime.now(timezone.utc), "engine_id": "openai-translator", "safe_metadata": {"functional_translation_ready": False}}
+        return {"state": "disabled", "tested_at": datetime.now(timezone.utc), "engine_id": "openai-translator", "config": {}, "safe_metadata": {"functional_translation_ready": False}}
     monkeypatch.setattr(connection_routes, "get_connection", get_connection)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=Database())))
     with pytest.raises(HTTPException) as error:

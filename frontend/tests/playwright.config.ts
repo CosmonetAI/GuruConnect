@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 const data = mkdtempSync(join(tmpdir(), 'guruconnect-browser-'))
 const environment = {
   ENVIRONMENT: 'development', DATABASE_URL: '', SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '',
+  EMBEDDED_PROCESSING_ENABLED: 'true', ELEVENLABS_API_KEY: '', OPENAI_API_KEY: '',
   SUPABASE_ANON_KEY: '', CREDENTIAL_ENCRYPTION_KEY: '', LOCAL_DATA_DIR: data,
   CORS_ORIGINS: '["http://127.0.0.1:5177","http://localhost:5177"]',
   VITE_SUPABASE_URL: '', VITE_SUPABASE_PUBLISHABLE_KEY: '', VITE_SUPABASE_ANON_KEY: '',
@@ -22,7 +23,6 @@ export default defineConfig({
   },
   webServer: [
     { command: 'npm run dev:api -- --port 8011', url: 'http://127.0.0.1:8011/ready', reuseExistingServer: false, timeout: 60000, env: environment },
-    { command: 'npm run dev:worker', wait: { stdout: /Local processing worker started/ }, reuseExistingServer: false, timeout: 60000, env: environment },
     { command: 'npm run dev:web -- --port 5177', url: 'http://127.0.0.1:5177', reuseExistingServer: false, timeout: 60000, env: environment },
   ],
   projects: [{ name: 'local-chromium', use: { ...devices['Desktop Chrome'] } }],

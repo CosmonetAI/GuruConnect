@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useBlocker } from "react-router-dom";
 import {
   BookUser,
   ChevronDown,
@@ -231,7 +231,7 @@ function ProductRequirement({
 
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
-  const { workspace } = useOffice();
+  const { user, workspace, setCaptureBusy } = useOffice();
   const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
     name: searchParams.get("name") || "",
@@ -257,7 +257,7 @@ export default function VoiceSessions() {
     [identity, setIdentity] = useState(initialIdentity),
     [conversationId, setConversationId] = useState(null),
     [selectedContact, setSelectedContact] = useState(null);
-  const [busy, setBusy] = useState(false),
+  const [sessionBusy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [contactBusy, setContactBusy] = useState(false),
     [stageBusy, setStageBusy] = useState(false);
@@ -271,73 +271,65 @@ export default function VoiceSessions() {
     [documentContact, setDocumentContact] = useState(null),
     [customerOpen, setCustomerOpen] = useState(false),
     [documentBusy, setDocumentBusy] = useState("");
+  const [recorderGeneration, setRecorderGeneration] = useState(0);
+  const [captureBusy, setRecorderBusy] = useState(false);
+  const busy = sessionBusy || captureBusy;
+  const busyRef = useRef(false); busyRef.current = busy;
+  const alive = useRef(true);
+  const selection = useRef(0);
+  const contactRequest = useRef(0);
+  const controllers = useRef(new Set());
+  const sessionRef = useRef(session); sessionRef.current = session;
+  const blocker = useBlocker(busy);
+  useEffect(() => { if (blocker.state === 'blocked') { setError('Finish saving or detach the audio before leaving this session.'); blocker.reset(); } }, [blocker]);
+  useEffect(() => { setCaptureBusy(busy); return () => setCaptureBusy(false); }, [busy, setCaptureBusy]);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; ++selection.current; controllers.current.forEach(controller => controller.abort()); }; }, []);
+  const sessionCall = async (path, options = {}) => {
+    const controller = new AbortController(); controllers.current.add(controller);
+    try { return await call(path, { ...options, signal: controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || workspace?.id } }, workspace?.id); }
+    finally { controllers.current.delete(controller); }
+  };
   const startedFromEnquiry = useRef(false);
   const load = () =>
-    call("/chats")
-      .then(setChats)
-      .catch((e) => setError(e.message));
-  const loadContacts = (value) => {
-    setContactBusy(true);
-    call(
-      `/session-contacts${value ? `?search=${encodeURIComponent(value)}` : ""}`,
-    )
-      .then((data) => setContacts(data.contacts || []))
-      .catch((e) => setError(e.message))
-      .finally(() => setContactBusy(false));
-  };
-  const loadSessionExtras = async (id) => {
+    sessionCall("/chats")
+      .then(data => { if (alive.current) setChats(data); })
+      .catch((e) => { if (alive.current && e.name !== 'AbortError') setError(e.message); });
+  const loadContacts = async (value) => {
+    const ticket = ++contactRequest.current; setContactBusy(true);
     try {
-      const [noteData, contextData] = await Promise.all([
-        call(`/voice-sessions/${id}/notes`),
-        call(`/voice-sessions/${id}/context`),
-      ]);
-      setNotes(noteData.notes || []);
-      setProductRequirements(
-        contextData.product_requirements?.length
-          ? contextData.product_requirements
-          : [newProduct()],
-      );
-    } catch (e) {
-      setError(e.message);
-    }
+      const data = await sessionCall(`/session-contacts${value ? `?search=${encodeURIComponent(value)}` : ''}`);
+      if (alive.current && ticket === contactRequest.current) setContacts(data.contacts || []);
+    } catch (e) { if (alive.current && ticket === contactRequest.current && e.name !== 'AbortError') setError(e.message); }
+    finally { if (alive.current && ticket === contactRequest.current) setContactBusy(false); }
+  };
+  const loadSessionExtras = async (id, ticket = selection.current) => {
+    const [noteData, contextData] = await Promise.all([sessionCall(`/voice-sessions/${id}/notes`), sessionCall(`/voice-sessions/${id}/context`)]);
+    if (!alive.current || ticket !== selection.current) return;
+    setNotes(noteData.notes || []);
+    setProductRequirements(contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()]);
   };
   useEffect(() => {
     load();
     loadContacts("");
   }, []);
-  const open = (id) => {
-    setSession(id);
-    setError("");
-    call(`/voice-sessions/${id}/history`)
-      .then((data) => {
-        setMessages(data.messages || []);
-        setRecorderSessions(data.recorder_sessions || []);
-        setConversationId(data.conversation_id || null);
-        setIdentity({
-          name: data.session?.name || "",
-          phone: data.session?.phone || "",
-          email: data.session?.email || "",
-        });
-        setSelectedContact({
-          id: `session:${id}`,
-          name: data.session?.name || "",
-          phone: data.session?.phone || "",
-          email: data.session?.email || "",
-          sources: ["Session"],
-          records: {
-            ...(data.session?.books_contact_id
-              ? { books: data.session.books_contact_id }
-              : {}),
-            ...(data.session?.bigin_contact_id
-              ? { bigin: data.session.bigin_contact_id }
-              : {}),
-          },
-        });
-        void loadSessionExtras(id);
-      })
-      .catch((e) => setError(e.message));
+  const open = async (id) => {
+    if (busyRef.current) return;
+    const ticket = ++selection.current; busyRef.current = true; setBusy(true); setError('');
+    try {
+      const data = await sessionCall(`/voice-sessions/${id}/history`);
+      if (!alive.current || ticket !== selection.current) return;
+      setSession(id); sessionRef.current = id;
+      setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
+      setConversationId(data.conversation_id || null);
+      setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
+      setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', sources: ['Session'], enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
+      await loadSessionExtras(id, ticket);
+    } catch (e) { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); }
+    finally { if (alive.current && ticket === selection.current) { setBusy(false); busyRef.current = false; } }
   };
   const prepareSession = async (contact = selectedContact) => {
+    if (busyRef.current) return;
+    const ticket = ++selection.current;
     const next = contact
       ? {
           name: contact.name,
@@ -349,17 +341,18 @@ export default function VoiceSessions() {
       setError("Enter a customer name and phone number or email first.");
       return;
     }
-    setBusy(true);
+    busyRef.current = true; setBusy(true);
     setError("");
     setIdentity(next);
     // Do not let the previous contact's failed/pending recording block this
     // contact while the phone-based session lookup is in flight.
     setConversationId(null);
     try {
-      const data = await call("/voice-sessions", {
+      const data = await sessionCall("/voice-sessions", {
         method: "POST",
         body: JSON.stringify(next),
       });
+      if (!alive.current || ticket !== selection.current) return;
       setSelectedContact(
         contact || {
           id: `session:${data.session.id}`,
@@ -370,17 +363,17 @@ export default function VoiceSessions() {
           records: {},
         },
       );
-      setSession(data.session.id);
+      setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
       setRecorderSessions(data.recorder_sessions || []);
       setConversationId(data.conversation_id || null);
       await load();
       await loadContacts(contactSearch);
-      await loadSessionExtras(data.session.id);
+      await loadSessionExtras(data.session.id, ticket);
     } catch (e) {
-      setError(e.message);
+      if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message);
     } finally {
-      setBusy(false);
+      if (alive.current && ticket === selection.current) { setBusy(false); busyRef.current = false; }
     }
   };
   useEffect(() => {
@@ -394,6 +387,7 @@ export default function VoiceSessions() {
     }
   }, []);
   const chooseContact = (contact) => {
+    if (busyRef.current) return;
     setSelectedContact(contact);
     setIdentity({
       name: contact.name,
@@ -404,6 +398,8 @@ export default function VoiceSessions() {
     else void prepareSession(contact);
   };
   const reset = () => {
+    if (busyRef.current) return;
+    ++selection.current; sessionRef.current = null;
     setSession(null);
     setMessages([]);
     setRecorderSessions([]);
@@ -416,12 +412,17 @@ export default function VoiceSessions() {
     setError("");
   };
   const linkConversation = async (id) => {
-    setConversationId(id);
-    if (session)
-      await call(`/voice-sessions/${session}/conversation`, {
-        method: "POST",
-        body: JSON.stringify({ conversation_id: id }),
-      });
+    const selectedSession = session;
+    if (!alive.current || sessionRef.current !== selectedSession) throw new Error('The selected customer changed. Reopen the saved recording from Conversation history.');
+    if (selectedSession) await sessionCall(`/voice-sessions/${selectedSession}/conversation`, { method: 'POST', body: JSON.stringify({ conversation_id: id }) });
+    if (alive.current && sessionRef.current === selectedSession) setConversationId(id);
+  };
+  const recordingSaved = async () => {
+    const id = sessionRef.current; const ticket = selection.current;
+    try {
+      const data = await sessionCall(`/voice-sessions/${id}/history`);
+      if (alive.current && ticket === selection.current && id === sessionRef.current) setRecorderSessions(data.recorder_sessions || []);
+    } catch (e) { if (alive.current && e.name !== 'AbortError') setError(e.message); }
   };
   const deleteRecorderSession = async (id) => {
     if (!workspace || !window.confirm("Delete this recording and its transcript?")) return;
@@ -431,8 +432,8 @@ export default function VoiceSessions() {
       await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: "DELETE" }, workspace.member_id);
       setRecorderSessions((current) => current.filter((item) => item.id !== id));
       if (conversationId === id) {
-        setConversationId(null);
-        if (session) await call(`/voice-sessions/${session}/conversation`, { method: "POST", body: JSON.stringify({ conversation_id: null }) });
+        setConversationId(null); setRecorderGeneration(value => value + 1);
+        if (session) await sessionCall(`/voice-sessions/${session}/conversation`, { method: "POST", body: JSON.stringify({ conversation_id: null }) });
       }
     } catch (e) {
       setError(e.message);
@@ -446,7 +447,7 @@ export default function VoiceSessions() {
     );
     setProductRequirements(next);
     if (session)
-      void call(`/voice-sessions/${session}/context`, {
+      void sessionCall(`/voice-sessions/${session}/context`, {
         method: "PUT",
         body: JSON.stringify({ product_requirements: next }),
       }).catch((e) => setError(e.message));
@@ -454,7 +455,7 @@ export default function VoiceSessions() {
   const searchProducts = async (value) => {
     if (!value.trim()) return;
     try {
-      const data = await call(
+      const data = await sessionCall(
         `/products?search=${encodeURIComponent(value.trim())}`,
       );
       setProducts(data.items || []);
@@ -463,17 +464,19 @@ export default function VoiceSessions() {
     }
   };
   const resolveDocumentContact = async () => {
+    const ticket = selection.current;
     const query = (identity.phone || identity.email || "").trim();
     if (!query) return;
     try {
       const [customers, vendors] = await Promise.all([
-        call(
+        sessionCall(
           `/document-contacts?role=customer&search=${encodeURIComponent(query)}`,
         ),
-        call(
+        sessionCall(
           `/document-contacts?role=vendor&search=${encodeURIComponent(query)}`,
         ),
       ]);
+      if (!alive.current || ticket !== selection.current) return;
       const same = (row) => {
         const value = String(
           row.phone || row.mobile || row.Email || row.email || "",
@@ -517,7 +520,7 @@ export default function VoiceSessions() {
     if (!session || !noteText.trim()) return;
     setBusy(true);
     try {
-      const data = await call(`/voice-sessions/${session}/notes`, {
+      const data = await sessionCall(`/voice-sessions/${session}/notes`, {
         method: "POST",
         body: JSON.stringify({ content: noteText.trim() }),
       });
@@ -585,7 +588,7 @@ export default function VoiceSessions() {
     setDocumentBusy(type);
     setError("");
     try {
-      await call(path, {
+      await sessionCall(path, {
         method: "POST",
         body: JSON.stringify({
           [key]: contactId,
@@ -657,7 +660,7 @@ export default function VoiceSessions() {
         <section className="chat-list">
           <div className="list-head">
             <span>Contacts & sessions</span>
-            <button type="button" onClick={reset}>
+            <button type="button" onClick={reset} disabled={busy}>
               <Plus size={20} />
             </button>
           </div>
@@ -681,6 +684,7 @@ export default function VoiceSessions() {
               type="button"
               className={`contact-row ${selectedContact?.id === contact.id ? "selected" : ""}`}
               onClick={() => chooseContact(contact)}
+              disabled={busy}
               key={contact.id}
             >
               <b>{contact.name}</b>
@@ -697,7 +701,8 @@ export default function VoiceSessions() {
             <button
               type="button"
               className={`chat-row ${session === chat.id ? "selected" : ""}`}
-              onClick={() => open(chat.id)}
+              onClick={() => void open(chat.id)}
+              disabled={busy}
               key={chat.id}
             >
               <b>{chat.name}</b>
@@ -825,6 +830,7 @@ export default function VoiceSessions() {
                         <ProgressivePlayback
                           conversationId={recording.id}
                           workspaceId={workspace.id}
+                          memberId={workspace.member_id}
                           compact
                         />
                       )}
@@ -960,13 +966,15 @@ export default function VoiceSessions() {
                     </div>
                   </section>{" "}
                   <ConversationRecorder
+                    key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`}
                     customerName={identity.name}
                     customerPhone={identity.phone}
                     customerEmail={identity.email}
                     title="Voice session"
                     initialConversationId={conversationId}
                     onConversationChange={linkConversation}
-                    onBusyChange={setBusy}
+                    onBusyChange={setRecorderBusy}
+                    onSaved={() => void recordingSaved()}
                     grouped
                   />
                 </div>

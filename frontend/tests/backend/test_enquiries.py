@@ -151,7 +151,7 @@ def test_recording_links_require_owner_saved_audio_and_do_not_create_paid_jobs(a
         job_count = connection.execute("select count(*) from processing_jobs where conversation_id=%s", (conv["id"],)).fetchone()[0]
     other = {**headers, "X-Test-User": "2"}
     assert save(client, other, enquiry(conversationId=conv["id"])).status_code == 404
-    assert save(client, {**headers, "X-Test-User": "0"}, enquiry(conversationId=conv["id"])).status_code == 403
+    assert save(client, {**headers, "X-Test-User": "0"}, enquiry(conversationId=conv["id"])).status_code == 404
     key = str(uuid4())
     response = save(client, headers, enquiry(conversationId=conv["id"]), key=key)
     assert response.status_code == 201, response.text
@@ -211,7 +211,7 @@ def test_connection_generation_prevents_stale_credential_overwrite(api):
     admin = {**headers, "X-Test-User": "0"}
     old = next(item for item in client.get("/api/v1/connections", headers=admin).json()["items"] if item["engine_id"] == "openai-translator")
     fields = {"engine_id": "openai-translator", "credentials": {"api_key": "fixture-provider-key"},
-              "config": {"model": "gpt-5.6-luna"}, "expected_generation": old["generation"], "idempotency_key": str(uuid4())}
+              "config": {"model": "gpt-5.4-mini-2026-03-17"}, "expected_generation": old["generation"], "idempotency_key": str(uuid4())}
     first = client.post("/api/v1/connections", headers=admin, json=fields)
     assert first.status_code == 201, first.text
     assert first.json()["generation"] > old["generation"]
@@ -228,7 +228,7 @@ def test_connection_generation_prevents_stale_credential_overwrite(api):
 def test_conversation_create_replay_keeps_same_customer_run_and_does_not_require_live_provider(api):
     client, headers, _, _, database_url = api
     key = str(uuid4())
-    fields = {"customer_name": "Synthetic recording customer", "consent_confirmed": True}
+    fields = {"customer_name": "Synthetic recording customer", "phone": "9876543210", "consent_confirmed": True}
     first = client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json=fields)
     assert first.status_code == 201, first.text
     created = first.json()
@@ -251,7 +251,7 @@ def test_conversation_create_replay_keeps_same_customer_run_and_does_not_require
 def test_conversation_create_concurrent_retries_are_scoped_by_user_and_workspace(api):
     client, headers, _, _, database_url = api
     key = str(uuid4())
-    fields = {"customer_name": "Synthetic recording customer", "consent_confirmed": True}
+    fields = {"customer_name": "Synthetic recording customer", "phone": "9876543210", "consent_confirmed": True}
     def send(_):
         return client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json=fields)
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -281,7 +281,7 @@ def test_conversation_create_rejects_malformed_opaque_key_without_echoing_it(api
 def test_conversation_create_replay_cannot_bypass_membership_revocation(api):
     client, headers, ids, _, _ = api
     key = str(uuid4())
-    fields = {"customer_name": "Synthetic recording customer", "consent_confirmed": True}
+    fields = {"customer_name": "Synthetic recording customer", "phone": "9876543210", "consent_confirmed": True}
     assert client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json=fields).status_code == 201
     assert client.delete(f"/api/v1/team/{ids[1]}", headers={**headers, "X-Test-User": "0"}).status_code == 200
     assert client.post("/api/v1/conversations", headers={**headers, "Idempotency-Key": key}, json=fields).status_code == 403

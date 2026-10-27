@@ -116,7 +116,9 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
         return ownership_segments(prepared, offset, own_start, own_end, scope)
     native = bool((result.get("provenance") or {}).get("native_english")) or run["engine_id"] == "faster-whisper"
     source_owned = owned([dict(item, _source_index=index) for index, item in enumerate(source)])
-    english_owned = owned([{key: value for key, value in dict(item, _source_index=index).items() if key != "words"} for index, item in enumerate(english)])
+    # Known-English source copies carry real source word timings; ownership must
+    # trim their text exactly like the source. Actual translations have no words.
+    english_owned = owned([dict(item, _source_index=index) for index, item in enumerate(english)])
     if native:
         # Native translation and an optional source pass have independent timing.
         # Preserve both without asserting translated-word or cross-pass alignment.

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime
 import ipaddress
 import json
 import os
@@ -13,7 +16,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import schemas as s
 from .audio import MAX_SESSION_SAMPLES, validate_wav
@@ -23,6 +26,9 @@ from .errors import fail
 from .local_store import LOCAL_USER_ID, LOCAL_WORKSPACE_ID, LocalStore, encoded, now
 from .openai_translator import OpenAITranslator
 from .providers import ElevenLabsAdapter, ProviderError
+from .media import mp3_chunks, wav_header
+from .provider_bootstrap import bootstrap_local_managed_providers, server_credentials
+from .runtime import ProcessingRuntime
 
 
 class LocalBoundary:
@@ -49,7 +55,7 @@ class LocalBoundary:
         if workspace and workspace != LOCAL_WORKSPACE_ID:
             await JSONResponse({"detail": {"code": "workspace_not_found"}}, 403)(scope, receive, send); return
         if scope["method"] in {"POST", "PUT", "PATCH"}:
-            maximum = 400000 if scope["method"] == "PUT" and scope["path"].startswith("/api/v1/local-audio/") else 100000
+            maximum = 6000000 if scope["method"] == "PUT" and scope["path"].startswith("/api/v1/local-audio/") else 100000
             try:
                 size = int(headers.get("content-length", "0"))
                 if size < 0: raise ValueError()
@@ -104,15 +110,26 @@ def conflict(error: ValueError):
 def create_local_app(settings) -> FastAPI:
     if settings.environment not in {"local", "development"}:
         raise ValueError("Local mode cannot run in production")
-    app = FastAPI(title="GuruConnect local development API")
+    @asynccontextmanager
+    async def lifespan(app):
+        await app.state.processing.start()
+        try:
+            yield
+        finally:
+            await app.state.processing.stop()
+
+    app = FastAPI(title="GuruConnect local development API", lifespan=lifespan)
     app.state.settings = settings
     app.state.local_store = LocalStore(settings.local_data_dir)
     store = app.state.local_store
+    bootstrap_local_managed_providers(settings, store)
+    app.state.processing = ProcessingRuntime(settings, store=store)
     local_origins = [origin for origin in settings.cors_origins if urlsplit(origin).hostname in {"127.0.0.1", "localhost", "::1"} and urlsplit(origin).scheme == "http"]
     app.add_middleware(CORSMiddleware, allow_origins=local_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
                        allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "X-Workspace-Member-ID", "Idempotency-Key"],
-                       expose_headers=["Content-Disposition", "X-GuruConnect-Mode"], max_age=600)
+                       expose_headers=["Content-Disposition", "X-GuruConnect-Mode", "Content-Length",
+                                       "X-Playback-Mode", "X-Playback-Start-Sample", "X-Playback-Sample-Rate"], max_age=600)
     app.add_middleware(LocalBoundary, origins=local_origins)
 
     @app.exception_handler(RequestValidationError)
@@ -175,6 +192,8 @@ def create_local_app(settings) -> FastAPI:
 
     @app.post("/api/v1/connections", status_code=201)
     async def configure(body: s.ConnectionCreate):
+        if server_credentials(settings, body.engine_id) or (store.connection(body.engine_id) or {}).get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409, "This provider is configured in the backend environment")
         if body.engine_id not in {"elevenlabs", "openai-translator"}: fail("local_engine_not_supported", 400)
         validate_connection_config(body)
         try: row = store.configure_connection(body.engine_id, body.credentials, body.config, body.idempotency_key, body.expected_generation)
@@ -184,6 +203,8 @@ def create_local_app(settings) -> FastAPI:
     @app.post("/api/v1/connections/{connection_id}/test")
     async def test_connection(connection_id: UUID, body: s.TestConnection):
         row = get_connection(connection_id)
+        if server_credentials(settings, row["engine_id"]) or row.get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409, "Provider access is reported by session processing")
         if row["state"] in {"disconnected", "disabled"}: fail("connection_requires_configuration", 409)
         engine, generation = row["engine_id"], row["generation"]
         try: store.patch("connections", engine, {"state": "checking"}, {"generation": generation, "state": row["state"]})
@@ -211,17 +232,23 @@ def create_local_app(settings) -> FastAPI:
     @app.post("/api/v1/connections/{connection_id}/disable")
     async def disable(connection_id: UUID):
         row = get_connection(connection_id)
+        if server_credentials(settings, row["engine_id"]) or row.get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         return safe_connection(store.change_connection_state(row["engine_id"], "disabled"))
 
     @app.post("/api/v1/connections/{connection_id}/enable")
     async def enable(connection_id: UUID):
         row = get_connection(connection_id)
+        if server_credentials(settings, row["engine_id"]) or row.get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         if row["state"] != "disabled" or not row.get("tested_at") or (row["engine_id"] == "openai-translator" and not row.get("safe_metadata", {}).get("functional_translation_ready")): fail("connection_test_required", 409)
         return safe_connection(store.patch("connections", row["engine_id"], {"state": "connected"}))
 
     @app.post("/api/v1/connections/{connection_id}/disconnect")
     async def disconnect(connection_id: UUID, body: s.Disconnect):
         row = get_connection(connection_id)
+        if server_credentials(settings, row["engine_id"]) or row.get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         engine = row["engine_id"]
         store.change_connection_state(engine, "disconnected", body.finish_in_flight)
         return {"disconnected": True, "audio_preserved": True}
@@ -275,17 +302,31 @@ def create_local_app(settings) -> FastAPI:
                 current = db.execute("select data from records where table_name='conversations' and id=?", (prior["id"],)).fetchone()
                 return public_conversation(json.loads(current["data"]))
             conversation_id, run_id = str(uuid4()), str(uuid4())
-            row = {"id": conversation_id, "organisation_id": LOCAL_WORKSPACE_ID, "owner_id": LOCAL_USER_ID, "customer_name_snapshot": "Name not provided" if body.is_unnamed else body.customer_name, "salesperson_name_snapshot": "Local user", "title": body.title or "", "location": body.location or "", "created_at": now(), "capture_state": "idle", "upload_state": "pending", "transcription_state": "pending", "english_state": "pending", "speaker_state": "pending", "final_state": "pending", "total_samples": 0, "duration_seconds": 0, "consent_confirmed": True, "engine_id": "elevenlabs", "language_hint": body.language_hint, "audio_only": body.audio_only, "run_id": run_id, "active_version_id": None}
+            row = {"id": conversation_id, "organisation_id": LOCAL_WORKSPACE_ID, "owner_id": LOCAL_USER_ID, "customer_name_snapshot": "Name not provided" if body.is_unnamed else body.customer_name, "phone": body.phone, "email": body.email, "audio_bucket": body.audio_bucket, "salesperson_name_snapshot": "Local user", "title": body.title or "", "location": body.location or "", "created_at": now(), "capture_state": "idle", "upload_state": "pending", "transcription_state": "pending", "english_state": "pending", "speaker_state": "pending", "final_state": "pending", "total_samples": 0, "duration_seconds": 0, "consent_confirmed": True, "engine_id": "elevenlabs", "language_hint": body.language_hint, "audio_only": body.audio_only, "run_id": run_id, "active_version_id": None}
             db.execute("insert into records values('conversations',?,?)", (conversation_id, encoded(row)))
             db.execute("insert into records values('conversation_keys',?,?)", (idempotency_key, encoded({"id": conversation_id, "request_hash": digest})))
             db.execute("insert into records values('runs',?,?)", (run_id, encoded({"id": run_id, "conversation_id": conversation_id, "kind": "production", "engine_id": "elevenlabs", "model_version": "scribe_v2", "state": "pending", "created_at": now(), "coverage_samples": 0})))
         return public_conversation(row)
 
     @app.get("/api/v1/conversations")
-    async def conversations(q: str = Query("", max_length=120), limit: int = Query(30, ge=1, le=100)):
-        rows = [row for row in store.list("conversations") if row.get("capture_state") != "deleted" and (not q or q.casefold() in f"{row['customer_name_snapshot']} {row['title']}".casefold())]
-        rows.sort(key=lambda row: row["created_at"], reverse=True)
-        return {"items": [public_conversation(row) for row in rows[:limit]], "next_cursor": None}
+    async def conversations(q: str = Query("", max_length=120), limit: int = Query(30, ge=1, le=100),
+                            cursor: str | None = Query(None, max_length=100), audio_bucket: str = Query("session-audio", pattern="^(session-audio|walkin-audio)$")):
+        rows = [row for row in store.list("conversations") if row.get("capture_state") != "deleted"
+                and row.get("audio_bucket", "session-audio") == audio_bucket
+                and row.get("upload_state") == "saved" and row.get("total_samples", 0) > 0
+                and (not q or q.casefold() in " ".join(str(row.get(field) or "") for field in ("customer_name_snapshot", "title", "phone", "email")).casefold())]
+        rows.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
+        if cursor:
+            stamp, _, identity = cursor.partition("|")
+            try:
+                datetime.fromisoformat(stamp)
+                if identity:
+                    UUID(identity)
+            except ValueError:
+                fail("invalid_cursor", 400)
+            rows = [row for row in rows if (row["created_at"], row["id"]) < (stamp, identity)] if identity else [row for row in rows if row["created_at"] < stamp]
+        next_cursor = f"{rows[limit-1]['created_at']}|{rows[limit-1]['id']}" if len(rows) > limit else None
+        return {"items": [public_conversation(row) for row in rows[:limit]], "next_cursor": next_cursor}
 
     @app.get("/api/v1/conversations/{conversation_id}")
     async def conversation_detail(conversation_id: UUID): return public_conversation(conversation(conversation_id))
@@ -339,7 +380,7 @@ def create_local_app(settings) -> FastAPI:
         if not store.verify_token(token, "upload", f"{conversation_id}:{part_id}:{sequence}:{metadata['sha256']}"): fail("upload_permission_expired", 403)
         if row["upload_state"] == "saved": fail("recording_already_finalized", 409)
         data = await request.body()
-        try: info = validate_wav(data, metadata["sample_count"], max_samples=160000)
+        try: info = validate_wav(data, metadata["sample_count"], max_samples=180 * 16000)
         except ValueError: fail("invalid_audio", 400)
         if len(data) != metadata["bytes"] or info.sha256 != metadata["sha256"]: fail("input_hash_mismatch", 409)
         path = store.chunk_path(str(conversation_id), str(part_id), sequence)
@@ -412,6 +453,65 @@ def create_local_app(settings) -> FastAPI:
         path = store.audio_path(str(conversation_id))
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(store.root): fail("playback_assembly_pending", 409)
         return FileResponse(path, media_type="audio/wav")
+
+    def playback_chunks(conversation_id):
+        row = conversation(conversation_id)
+        total = int(row.get("total_samples") or 0)
+        rows = store.chunks(str(conversation_id))
+        if row["upload_state"] != "saved" or not 0 < total <= MAX_SESSION_SAMPLES or not rows:
+            fail("playback_unavailable", 409, "Finish saving audio before playback")
+        expected = 0
+        for chunk in rows:
+            if not chunk["confirmed"] or chunk["start_sample"] != expected:
+                fail("playback_chunks_incomplete", 409)
+            expected += chunk["sample_count"]
+        if expected != total:
+            fail("playback_chunks_incomplete", 409)
+        return rows, total
+
+    async def pcm_chunks(conversation_id, rows, start_sample=0):
+        for chunk in rows:
+            if chunk["start_sample"] + chunk["sample_count"] <= start_sample:
+                continue
+            # Recheck the tombstone before every physical read during deletion.
+            conversation(conversation_id)
+            path = store.chunk_path(str(conversation_id), chunk["part_id"], chunk["sequence"])
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(store.root / "audio" / str(conversation_id)):
+                raise RuntimeError("playback_chunk_missing")
+            data = await asyncio.to_thread(path.read_bytes)
+            info = validate_wav(data, chunk["sample_count"], max_samples=180 * 16000)
+            if len(data) != chunk["bytes"] or info.sha256 != chunk["sha256"]:
+                raise RuntimeError("playback_chunk_checksum_mismatch")
+            left = max(0, start_sample - chunk["start_sample"])
+            yield info.pcm[left * 2:]
+
+    @app.get("/api/v1/conversations/{conversation_id}/playback/stream")
+    async def stream_playback(conversation_id: UUID, start_sample: int = Query(0, ge=0)):
+        rows, total = playback_chunks(conversation_id)
+        if start_sample >= total:
+            fail("playback_range_invalid", 416)
+        async def body():
+            yield wav_header(total - start_sample)
+            async for pcm in pcm_chunks(conversation_id, rows, start_sample):
+                yield pcm
+        return StreamingResponse(body(), media_type="audio/wav", headers={
+            "Content-Length": str(44 + (total - start_sample) * 2),
+            "X-Playback-Mode": "local-verified-chunks", "X-Playback-Start-Sample": str(start_sample),
+            "X-Playback-Sample-Rate": "16000",
+        })
+
+    @app.get("/api/v1/conversations/{conversation_id}/playback/download")
+    async def download_playback(conversation_id: UUID):
+        rows, total = playback_chunks(conversation_id)
+        return StreamingResponse(mp3_chunks(pcm_chunks(conversation_id, rows), total), media_type="audio/mpeg",
+                                 headers={"Content-Disposition": f'attachment; filename="recording-{conversation_id}.mp3"'})
+
+    @app.delete("/api/v1/conversations/{conversation_id}")
+    async def delete_conversation(conversation_id: UUID):
+        try:
+            return store.delete_conversation(str(conversation_id))
+        except ValueError as error:
+            conflict(error)
 
     @app.get("/api/v1/conversations/{conversation_id}/runs")
     async def runs(conversation_id: UUID):

@@ -78,7 +78,7 @@ def test_json_and_streamed_request_bodies_are_bounded_before_validation(tmp_path
             yield b"x" * 60000
             yield b"x" * 40001
         assert http.post("/api/v1/enquiries", content=chunks(), headers={"Transfer-Encoding": "chunked"}).status_code == 413
-        assert http.put(f"/api/v1/local-audio/{uuid4()}/{uuid4()}/0", content=b"x" * 400001).status_code == 413
+        assert http.put(f"/api/v1/local-audio/{uuid4()}/{uuid4()}/0", content=b"x" * 6000001).status_code == 413
 
 
 def test_validation_errors_do_not_echo_provider_credentials_or_submitted_values(tmp_path):

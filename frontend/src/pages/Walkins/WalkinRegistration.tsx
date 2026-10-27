@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useBlocker } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, ClipboardPlus } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput } from '../../types/walkin'
@@ -31,7 +31,7 @@ const initialValues: FormValues = {
 }
 
 export default function WalkinRegistration() {
-  const { user, workspace } = useOffice()
+  const { user, workspace, setCaptureBusy } = useOffice()
   const navigate = useNavigate()
   const [form, setForm] = useState(initialValues)
   const [errors, setErrors] = useState<FormErrors>({})
@@ -41,6 +41,10 @@ export default function WalkinRegistration() {
   const [voiceBusy, setVoiceBusy] = useState(false)
   const [aiFields, setAiFields] = useState<VisitorField[]>([])
   const voiceConversation = useRef<string | null>(null)
+  const [voiceId, setVoiceId] = useState<string | null>(null)
+  const blocker = useBlocker(voiceBusy || saving)
+  useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
+  useEffect(() => { if (blocker.state === 'blocked') { setError('Stop and save the voice recording, or detach it, before leaving.'); blocker.reset() } }, [blocker])
 
   const update = <K extends keyof FormValues>(field: K, value: FormValues[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
@@ -111,15 +115,15 @@ export default function WalkinRegistration() {
       </header>
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
-      <VoiceAssistPanel customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} values={form} validate={(field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null} onApply={(field, value) => update(field as keyof FormValues, value as never)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id }} onBusyChange={setVoiceBusy} />
+      <VoiceAssistPanel customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} values={form} validate={(field: VisitorField, value: string) => registrationSchema.shape[field].safeParse(value).error?.issues[0]?.message ?? null} onApply={(field, value) => update(field as keyof FormValues, value as never)} onAiFieldsChange={setAiFields} onConversationChange={id => { voiceConversation.current = id; setVoiceId(id) }} onBusyChange={setVoiceBusy} />
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
           <div className="walkin-section-heading"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div>
           <div className="walkin-form-grid">
-            <Field label="Name (customer full name)" name="customerName" required error={errors.customerName} ai={aiFields.includes('customerName')}><input id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
-            <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber} ai={aiFields.includes('mobileNumber')}><input id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
-            <Field label="Email" name="email" error={errors.email}><input id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="Not provided" /></Field>
+            <Field label="Name (customer full name)" name="customerName" required error={errors.customerName} ai={aiFields.includes('customerName')}><input disabled={!!voiceId || voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
+            <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber} ai={aiFields.includes('mobileNumber')}><input disabled={!!voiceId || voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
+            <Field label="Email" name="email" error={errors.email}><input disabled={!!voiceId || voiceBusy} id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="Not provided" /></Field>
             <Field label="Source" name="source"><input id="source" value="Retail walk-in" readOnly /></Field>
             <Field label="Branch" name="branch"><input id="branch" value="Walk-in" readOnly /></Field>
             <Field label="Assigned executive" name="assignedExecutive"><input id="assignedExecutive" value="Unassigned" readOnly /></Field>
@@ -131,7 +135,7 @@ export default function WalkinRegistration() {
         </section>
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
-        <div className="walkin-form-actions"><Link className="walkin-button secondary" to="/walkins">Cancel</Link><button className="walkin-button primary" type="submit" disabled={saving || !workspace}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
+        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><button className="walkin-button primary" type="submit" disabled={saving || !workspace}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
       </form>
     </div>
   )

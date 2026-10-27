@@ -20,7 +20,8 @@ from .audio import MAX_SESSION_SAMPLES, assemble_wav, validate_wav
 from .config import get_settings
 from .db import Database, many, one
 from .processing import publish_result, schedule
-from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator
+from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator, validate_translation_model
+from .provider_bootstrap import server_credentials
 from .providers import AzureTranslator, ElevenLabsAdapter, ProviderError, protect_terms
 from .security import SecretBox
 from .storage import Storage
@@ -43,11 +44,16 @@ class MainWorker:
         self.settings = settings; self.db = Database(settings); self.storage = Storage(settings)
         self.id = os.environ.get("MAIN_WORKER_ID") or f"main-{uuid4()}"
         self.stopping = asyncio.Event()
+        self.last_cycle = None
 
     async def credentials(self, connection_id) -> dict:
         async with self.db.connection() as connection:
             row = await one(connection, "select s.encrypted_value,e.engine_id,e.config from engine_connections e left join provider_secrets s on s.connection_id=e.id where e.id=%s", (connection_id,))
         if not row: raise ProviderError("connection_unavailable")
+        if row["config"].get("platform_managed") and row["engine_id"] in {"elevenlabs", "openai-translator"}:
+            credentials = server_credentials(self.settings, row["engine_id"])
+            if credentials: return credentials
+            raise ProviderError("invalid_credentials")
         if row["encrypted_value"]: return SecretBox(self.settings).decrypt(row["encrypted_value"])
         # Shared platform-managed secrets remain in service environment, never browser config.
         if row["config"].get("platform_managed"):
@@ -73,7 +79,7 @@ class MainWorker:
         for chunk in selected:
             if chunk["sample_start"] != expected: raise ProviderError("invalid_audio")
             data = await self.storage.read(chunk["object_path"], chunk["bytes"])
-            info = validate_wav(data, chunk["sample_count"])
+            info = validate_wav(data, chunk["sample_count"], max_samples=180 * 16000)
             if info.sha256 != chunk["sha256"] or len(data) != chunk["bytes"]: raise ProviderError("input_hash_mismatch")
             buffers.append(data); expected += chunk["sample_count"]
         return assemble_wav(buffers, start-selected[0]["sample_start"], end-selected[0]["sample_start"]), conv
@@ -96,7 +102,7 @@ class MainWorker:
                 for chunk in selected:
                     if chunk["sample_start"]!=expected: raise ProviderError("invalid_audio")
                     data=await self.storage.read(chunk["object_path"],chunk["bytes"])
-                    info=validate_wav(data,chunk["sample_count"])
+                    info=validate_wav(data,chunk["sample_count"],max_samples=180 * 16000)
                     if info.sha256!=chunk["sha256"] or len(data)!=chunk["bytes"]:raise ProviderError("input_hash_mismatch")
                     left=max(0,start-chunk["sample_start"]);right=min(chunk["sample_count"],end-chunk["sample_start"])
                     wav.writeframesraw(info.pcm[left*2:right*2]);expected+=chunk["sample_count"]
@@ -162,10 +168,13 @@ class MainWorker:
         if job["payload"].get("translation_provider", engine) != engine:
             raise ProviderError("connection_unavailable")
         is_openai = engine == "openai-translator"
-        model = OPENAI_TRANSLATION_MODEL if is_openai else "standard-v3"
-        if is_openai and (provider["config"].get("model") != model or job["payload"].get("translator_model", model) != model):
-            raise ProviderError("provider_model_access_denied")
-        strategy = "openai-gpt-5.6-luna/translate-v1" if is_openai else "standard-v3/protect-v1"
+        model = provider["config"].get("model", OPENAI_TRANSLATION_MODEL) if is_openai else "standard-v3"
+        if is_openai:
+            try: validate_translation_model(model)
+            except ValueError: raise ProviderError("provider_model_access_denied") from None
+            if job["payload"].get("translator_model", model) != model:
+                raise ProviderError("provider_model_access_denied")
+        strategy = f"openai-{model}/translate-v1" if is_openai else "standard-v3/protect-v1"
         credentials = await self.credentials(job["connection_id"])
         await self.begin_submission(job)
         result = dict(source_job["result"]); source, english = [], []
@@ -192,7 +201,7 @@ class MainWorker:
                             paid = True
                             chunk_index += 1
                             await self.usage(job, f"turn-{turn['ordinal']}-chunk-{chunk_index}", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, provider_model=usage.model)
-                        translated = await OpenAITranslator(credentials.get("api_key"), usage_callback=account_call).translate(turn["source_text"])
+                        translated = await OpenAITranslator(credentials.get("api_key"), usage_callback=account_call, model=model).translate(turn["source_text"], turn["source_language"])
                         text = translated.text
                     else:
                         text = await AzureTranslator(credentials.get("api_key") or credentials.get("key"), credentials.get("region", self.settings.azure_translator_region)).translate(turn["source_text"])
@@ -206,7 +215,7 @@ class MainWorker:
                 raise ProviderError(exc.code, uncertain=True) from None
             raise
         result.update(source_segments=source,english_segments=english,english_state="complete" if job["payload"].get("final") else "available")
-        result["provenance"] = {**result.get("provenance",{}),"translation":"openai-gpt-5.6-luna" if is_openai else "azure-standard-v3","translation_model":model,"translation_connection_id":str(job['connection_id']),"translation_generation":job['connection_generation'],"translated_word_alignment":None}
+        result["provenance"] = {**result.get("provenance",{}),"translation":f"openai-{model}" if is_openai else "azure-standard-v3","translation_model":model,"translation_connection_id":str(job['connection_id']),"translation_generation":job['connection_generation'],"translated_word_alignment":None}
         async with self.db.connection() as connection:
             finished = await one(connection,"select finish_job(%s,%s,%s,%s,%s) as ok",(job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
             if finished["ok"]: await publish_result(connection,job,result)
@@ -232,7 +241,7 @@ class MainWorker:
                     log.info("assembly_published job_id=%s conversation_id=%s bytes=%s", job["id"], conv["id"], count)
 
     async def execute(self, job):
-        log.info("job_started job_id=%s kind=%s conversation_id=%s attempt=%s", job["id"], job["kind"], job["conversation_id"], job["attempt"])
+        log.info("job_started job_id=%s kind=%s conversation_id=%s attempt=%s", job.get("id"), job.get("kind"), job.get("conversation_id"), job.get("attempt"))
         renewal = asyncio.create_task(self.renew(job))
         shutdown = asyncio.create_task(self.stopping.wait())
         task = None
@@ -264,8 +273,16 @@ class MainWorker:
                     await connection.execute("update processing_jobs set submission_state='not_submitted' where id=%s and lease_token=%s and fence=%s",(job["id"],job["lease_token"],job["fence"]))
                 retried = await one(connection,"select retry_job(%s,%s,%s,%s,%s,%s) as accepted",(job["id"],self.id,job["lease_token"],job["fence"],code,uncertain))
                 if retried and retried["accepted"] and job.get("run_id"):
+                    state = await one(connection, "select state from processing_jobs where id=%s", (job["id"],))
+                    actual = state["state"]
+                    visible = "blocked" if actual in {"blocked", "uncertain"} else "pending" if actual in {"queued", "retry"} else "failed"
                     stage = "english_state" if job["kind"]=="translate" else "final_state" if job["kind"]=="finalise" else "transcription_state"
-                    await connection.execute(f"update conversations set {stage}=%s,updated_at=now() where id=%s and deleted_at is null",("blocked" if code in TRANSLATION_BLOCKED_CODES else "failed",job["conversation_id"]))
+                    # Concurrent older windows must not invalidate a published
+                    # final version or a different run explicitly selected later.
+                    guard = " and not exists(select 1 from transcript_versions v where v.id=conversations.active_version_id and (v.run_id<>%s or (v.kind='final' and v.english_state='complete')))"
+                    sql = f"update conversations set {stage}=%s,final_state=%s,updated_at=now() where id=%s and deleted_at is null" if stage != "final_state" else "update conversations set final_state=%s,updated_at=now() where id=%s and deleted_at is null"
+                    params = (visible, visible, job["conversation_id"], job["run_id"]) if stage != "final_state" else (visible, job["conversation_id"], job["run_id"])
+                    await connection.execute(sql + guard, params)
         finally:
             if task and not task.done(): task.cancel()
             renewal.cancel()
@@ -303,35 +320,65 @@ class MainWorker:
                 await connection.execute("update processing_jobs set result=case when result is null then null else '{\"deleted\":true}'::jsonb end where conversation_id=%s",(conv["id"],))
                 await connection.execute("update conversations set upload_state='saved',customer_name_snapshot='Deleted recording',salesperson_name_snapshot='',title='',location='',updated_at=now() where id=%s and deleted_at is not null",(conv["id"],))
 
+    async def maintenance(self):
+        """Heartbeats and retention are independent of slow provider requests."""
+        last_cleanup = 0.0
+        while not self.stopping.is_set():
+            try:
+                async with self.db.connection() as connection:
+                    queue = await one(connection, "select count(*) filter(where state in ('queued','retry')) as queued, count(*) filter(where state='running') as running from processing_jobs where worker_type='main'")
+                    await connection.execute("insert into worker_heartbeats(worker_id,worker_type,metrics) values(%s,'main',%s) on conflict(worker_id) do update set last_seen_at=now(),metrics=excluded.metrics", (self.id, Jsonb({"queued": int(queue["queued"]), "running": int(queue["running"])})))
+                if time.monotonic() - last_cleanup >= 60:
+                    await self.cleanup_deleted()
+                    last_cleanup = time.monotonic()
+            except Exception as exc:
+                log.warning("worker_maintenance_failed exception_type=%s", type(exc).__name__)
+            try: await asyncio.wait_for(self.stopping.wait(), timeout=15)
+            except TimeoutError: pass
+
     async def run(self):
-        if not self.settings.configured: raise RuntimeError("Set backend Supabase/database configuration before starting the main worker.")
-        log.info("worker_starting worker_id=%s worker_type=main", self.id)
-        await self.db.open(); last_cleanup=0.0
-        last_status_log = 0.0
-        log.info("worker_ready worker_id=%s lease_seconds=%s", self.id, self.settings.worker_lease_seconds)
+        if not self.settings.configured:
+            raise RuntimeError("Set backend Supabase/database configuration before starting the main worker.")
+        await self.db.open()
+        concurrency = self.settings.processing_concurrency
+        active = set()
+        maintenance = asyncio.create_task(self.maintenance())
+        log.info("worker_ready worker_id=%s concurrency=%s", self.id, concurrency)
         try:
             while not self.stopping.is_set():
+                self.last_cycle = time.monotonic()
+                for completed in list(active):
+                    if completed.done():
+                        active.remove(completed)
+                        if not completed.cancelled() and completed.exception():
+                            log.warning("worker_job_task_failed exception_type=%s", type(completed.exception()).__name__)
                 try:
-                    async with self.db.connection() as connection:
-                        queue = await one(connection, "select count(*) filter(where state in ('queued','retry')) as queued, count(*) filter(where state='running') as running from processing_jobs where worker_type='main'")
-                        await connection.execute("insert into worker_heartbeats(worker_id,worker_type,metrics) values(%s,'main',%s) on conflict(worker_id) do update set last_seen_at=now(),metrics=excluded.metrics",(self.id, Jsonb({"queued": int(queue["queued"]), "running": int(queue["running"])})))
-                        jobs=await many(connection,"select * from claim_jobs(%s,'main',1,%s)",(self.id,self.settings.worker_lease_seconds))
-                    if jobs:
-                        log.info("job_claimed job_id=%s kind=%s conversation_id=%s attempt=%s", jobs[0]["id"], jobs[0]["kind"], jobs[0]["conversation_id"], jobs[0]["attempt"])
-                        await self.execute(jobs[0])
-                    else:
-                        now = time.monotonic()
-                        if now - last_status_log >= 60:
-                            log.info("worker_heartbeat worker_id=%s queued=%s running=%s", self.id, queue["queued"], queue["running"])
-                            last_status_log = now
-                        try: await asyncio.wait_for(self.stopping.wait(),timeout=1)
-                        except TimeoutError: pass
-                    if time.monotonic()-last_cleanup>60: await self.cleanup_deleted();last_cleanup=time.monotonic()
+                    # Claim separately for each free slot. SQL remains the global
+                    # admission authority across workers, tenants and credentials.
+                    while len(active) < concurrency and not self.stopping.is_set():
+                        async with self.db.connection() as connection:
+                            jobs = await many(connection, "select * from claim_jobs(%s,'main',1,%s)", (self.id, self.settings.worker_lease_seconds))
+                        if not jobs:
+                            break
+                        active.add(asyncio.create_task(self.execute(jobs[0])))
+                    try: await asyncio.wait_for(self.stopping.wait(), timeout=0.25 if active else 1)
+                    except TimeoutError: pass
                 except Exception as exc:
                     sqlstate = getattr(exc, "sqlstate", None) if isinstance(exc, DatabaseError) else None
-                    log.warning("worker_cycle_failed code=dependency_unavailable exception_type=%s sqlstate=%s", type(exc).__name__, sqlstate or "unknown")
-                    await asyncio.sleep(3)
-        finally: await self.db.close()
+                    log.warning("worker_cycle_failed exception_type=%s sqlstate=%s", type(exc).__name__, sqlstate or "unknown")
+                    try: await asyncio.wait_for(self.stopping.wait(), timeout=3)
+                    except TimeoutError: pass
+        finally:
+            # execute observes the same stop event and cancels paid work without
+            # clearing its durable uncertainty fence. Bound external cancellation.
+            self.stopping.set()
+            maintenance.cancel()
+            for task in active:
+                task.cancel()
+            try:
+                await asyncio.gather(maintenance, *active, return_exceptions=True)
+            finally:
+                await self.db.close()
 
 
 async def main():

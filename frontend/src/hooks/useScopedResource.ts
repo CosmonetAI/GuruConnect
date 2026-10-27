@@ -4,7 +4,7 @@ import { ApiError, request, message } from '../services/officeApi'
 
 export function useScopedResource<T>(path: string | null) {
   const { user, workspace } = useOffice()
-  const scope = user && workspace && path ? `${user.id}/${workspace.id}/${path}` : ''
+  const scope = user && workspace && path ? `${user.id}/${workspace.id}/${workspace.member_id ?? user.id}/${path}` : ''
   const [state, setState] = useState<{ scope: string; data?: T; error: string; loading: boolean }>({ scope: '', error: '', loading: false })
   const current = useRef<{ scope: string; abort: AbortController; loading: boolean } | null>(null)
   const reload = useCallback(async () => {

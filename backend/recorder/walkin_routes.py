@@ -384,9 +384,9 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         books_contact_id = None
         try:
             books_contact_id = await ensure_walkin_books_contact(body, context)
-        except Exception:
+        except Exception as error:
             # Visitor registration remains available when Books is disconnected or temporarily unavailable.
-            log.warning("Unable to register walk-in %s as a Zoho Books contact", row["id"], exc_info=True)
+            log.warning("walkin_books_contact_unavailable visit_id=%s exception_type=%s", row["id"], type(error).__name__)
         enquiry = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
             values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
@@ -512,8 +512,13 @@ async def list_recordings(visit_id: UUID, request: Request, context: Workspace =
 @router.post("/{visit_id}/recordings")
 async def link_recording(visit_id: UUID, body: RecordingLink, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        row = await visit(connection, context, visit_id, lock=True, editing=True)
-        await owned_conversation(connection, context, body.conversationId)
+        row = await visit(connection, context, visit_id, lock=True)
+        recording = await owned_conversation(connection, context, body.conversationId)
+        reception_capture = context.role == "receptionist" and row["registered_by"] == context.user.id and recording["audio_bucket"] == "walkin-audio"
+        if row["assigned_agent_id"] != context.user.id and not reception_capture:
+            fail("walkin_assigned_agent_required", 403)
+        if recording["upload_state"] != "saved" or recording["total_samples"] <= 0:
+            fail("recording_not_saved", 409)
         prior = await one(connection, "select visit_id,organisation_id from public.guruconnect_walkin_recordings where conversation_id=%s", (body.conversationId,))
         if prior:
             if prior["visit_id"] != visit_id or prior["organisation_id"] != context.id:
@@ -521,8 +526,6 @@ async def link_recording(visit_id: UUID, body: RecordingLink, request: Request, 
             return {"ok": True}
         if row["status"] in CLOSED:
             fail("walkin_closed", 409)
-        if row["assigned_agent_id"] != context.user.id:
-            fail("walkin_assigned_agent_required", 403)
         already_enquiry = await one(connection, "select id from public.guruconnect_enquiries where conversation_id=%s", (body.conversationId,))
         if already_enquiry:
             fail("recording_already_linked", 409)
@@ -565,10 +568,21 @@ async def conversion_visit(connection, context: Workspace, source_event_id: str)
     row = await visit(connection, context, visit_id, lock=True, editing=True)
     if row["assigned_agent_id"] != context.user.id:
         fail("walkin_assigned_agent_required", 403)
-    if row["converted_enquiry_id"]:
+    if row["status"] in CLOSED:
         fail("walkin_already_converted", 409)
     if row["status"] not in {"Requirements Captured", "Follow-up Required"} or not row["requirements_updated_at"]:
         fail("walkin_requirements_required", 409)
+    if row["converted_enquiry_id"]:
+        # Registration already issues the visitor's ticket. A linked queue item
+        # is not an explicit requirements conversion until the visit says so.
+        enquiry = await one(connection, "select * from public.guruconnect_enquiries where id=%s and organisation_id=%s for update", (row["converted_enquiry_id"], context.id))
+        if not enquiry or not (
+            enquiry["payload"].get("sourceEventId") == source_event_id
+            or (enquiry["payload"].get("sourceWalkinId") == str(visit_id)
+                and enquiry["idempotency_key"] == f"walkin-assignment:{visit_id}")
+        ):
+            fail("walkin_enquiry_mismatch", 409)
+        row["conversion_enquiry"] = enquiry
     return row
 
 

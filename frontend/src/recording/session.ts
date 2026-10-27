@@ -12,7 +12,7 @@ export interface RecordingHooks {
   event(kind: string, sample: number): Promise<void>;
   finalize(manifest: Manifest): Promise<void>;
 }
-export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; chunkSeconds?: number; outboxLimitBytes?: number }
+export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; chunkSeconds?: number; outboxLimitBytes?: number; signal?: AbortSignal }
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   signal?.throwIfAborted();
   const aborted = () => { clearTimeout(timer); signal?.removeEventListener('abort', aborted); reject(signal?.reason ?? new DOMException('The audio upload was cancelled.', 'AbortError')); };
@@ -151,7 +151,7 @@ export class RecorderSession {
       const prepared = await prepareMicrophone(this.options.deviceId); this.stream = prepared.stream;
       this.checkActive();
       this.context = new AudioContext(); await this.context.audioWorklet.addModule(workletUrl); this.checkActive(); await this.context.resume(); this.checkActive();
-      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000, chunkSamples: (this.options.chunkSeconds ?? 180) * 16000 } });
+      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000, chunkSamples: (this.options.chunkSeconds ?? 10) * 16000 } });
       this.node.port.onmessage = (event: MessageEvent) => this.message(event.data);
       const mute = this.context.createGain(); mute.gain.value = 0;
       this.context.createMediaStreamSource(this.stream).connect(this.node).connect(mute).connect(this.context.destination);
@@ -168,7 +168,7 @@ export class RecorderSession {
       this.update({ capture: 'interrupted', error: error instanceof Error ? error.message : 'Microphone preparation failed' }); throw error;
     }
   }
-  private checkActive() { if (this.disposed) throw new DOMException('The recording page was closed. Recover any saved audio before recording again.', 'AbortError'); }
+  private checkActive() { this.options.signal?.throwIfAborted(); if (this.disposed) throw new DOMException('The recording page was closed. Recover any saved audio before recording again.', 'AbortError'); }
   /** Cancel pending permission as well as active capture without losing committed chunks. */
   async dispose() {
     if (this.disposed) return;
@@ -200,9 +200,9 @@ export class RecorderSession {
     if (this.uploading) return;
     this.uploading = true; let attempts = 0;
     try {
-      while ((await pending(this.options.scope, this.options.conversationId)).length) {
-        try { const count = await uploadPending(this.options.scope, this.options.conversationId, this.options.hooks); this.update({ confirmedSamples: this.state.confirmedSamples + count, error: undefined }); attempts = 0; }
-        catch (error) { this.update({ error: error instanceof Error ? error.message : 'Upload interrupted' }); if (++attempts >= 5) break; await delay(Math.min(5000, 300 * 2**attempts) + Math.random()*150); }
+      while (!this.disposed && !this.options.signal?.aborted && (await pending(this.options.scope, this.options.conversationId)).length) {
+        try { const count = await uploadPending(this.options.scope, this.options.conversationId, this.options.hooks, undefined, undefined, { retry: true, signal: this.options.signal, checkLease: () => this.checkActive() }); this.update({ confirmedSamples: this.state.confirmedSamples + count, error: undefined }); attempts = 0; }
+        catch (error) { this.update({ error: error instanceof Error ? error.message : 'Upload interrupted' }); if (this.disposed || this.options.signal?.aborted || !transientAudioError(error) || ++attempts >= 5) break; await delay(Math.min(5000, 300 * 2**attempts) + Math.random()*150); }
         await this.refreshQueue();
       }
     } finally { this.uploading = false; await this.refreshQueue(); }
@@ -248,7 +248,7 @@ export class RecorderSession {
     if (this.closing) return; this.closing = true; this.update({ capture: 'interrupted', error: reason, level: 0 });
     await this.command('stop').catch(() => undefined); await this.persisting.catch(() => undefined);
     await saveRecovery({ ...this.recovery, stopped: true }).catch(() => undefined); await this.cleanup();
-    await this.options.hooks.event('interrupted', this.recovery.totalSamples).catch(() => undefined); void this.pump();
+    await this.options.hooks.event('interrupted', this.recovery.totalSamples).catch(() => undefined); if (!this.disposed && !this.options.signal?.aborted) void this.pump();
   }
   private async cleanup(keepLease = false) {
     if (!keepLease && this.heartbeatTimer) clearInterval(this.heartbeatTimer);

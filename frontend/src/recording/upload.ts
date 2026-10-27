@@ -5,7 +5,7 @@ import { retryAudioOperation, transientAudioError, uploadPending, type Recording
 export const MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024;
 export const MAX_AUDIO_SECONDS = 7200;
 const SAMPLE_RATE = 16000;
-const DEFAULT_CHUNK_SECONDS = 180;
+const DEFAULT_CHUNK_SECONDS = 10;
 export interface PreparedAudioFile { samples: Float32Array; name: string }
 export interface AudioUploadProgress { phase: 'preparing' | 'saving' | 'uploading' | 'finalizing'; confirmedSamples: number; totalSamples: number }
 export type UploadProgress = AudioUploadProgress;

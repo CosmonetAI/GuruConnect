@@ -89,5 +89,5 @@ function ScopedLayout() {
   // Tear down pending page state when the security context changes. Async hooks
   // still check their identity tickets before accepting late responses.
   if (workspace?.role === 'receptionist' && location.pathname !== '/settings' && !location.pathname.startsWith('/walkins')) return <Navigate to="/walkins" replace />
-  return <AppLayout key={`${user?.id}:${workspace?.id}`} />
+  return <AppLayout key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} />
 }

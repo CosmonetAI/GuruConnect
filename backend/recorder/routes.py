@@ -16,7 +16,6 @@ from . import schemas as s
 from .db import many, one
 from .errors import fail
 from .security import User, Workspace, administrator, conversation, current_user, token_hash, workspace
-from .assignment import least_loaded_salesperson
 
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("recorder.api")
@@ -136,6 +135,8 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
         if count["count"] >= 10:
             fail("workspace_limit_reached", 409)
         created = await one(connection, "select create_workspace(%s,%s) as id", (user.id, body.name))
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, created["id"], request.app.state.settings)
         row = await one(connection, "select * from organisations where id=%s", (created["id"],))
         return {**row, "role": "owner"}
 
@@ -305,7 +306,7 @@ async def delete_member(user_id: UUID, request: Request, context: Workspace = De
 @router.get("/customers")
 async def customers(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), limit: int = Query(default=50, ge=1, le=100), cursor: UUID | None = None):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select * from customers where organisation_id=%s and deleted_at is null and (%s or owner_id=%s) and name ilike %s and (%s::uuid is null or id>%s) order by id limit %s", (context.id, context.admin, context.user.id, "%" + q.replace("%", "\\%").replace("_", "\\_") + "%", cursor, cursor, limit + 1))
+        rows = await many(connection, "select * from customers where organisation_id=%s and deleted_at is null and owner_id=%s and name ilike %s and (%s::uuid is null or id>%s) order by id limit %s", (context.id, context.member_id, "%" + q.replace("%", "\\%").replace("_", "\\_") + "%", cursor, cursor, limit + 1))
     return {"items": rows[:limit], "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}
 
 @router.get("/enquiries/unread-count")
@@ -333,7 +334,7 @@ async def create_customer(body: s.CustomerCreate, request: Request, context: Wor
 @router.patch("/customers/{customer_id}")
 async def update_customer(customer_id: UUID, body: s.CustomerCreate, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "update customers set name=%s,is_unnamed=%s,updated_at=now() where id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s) returning *", ("Name not provided" if body.is_unnamed else body.name, body.is_unnamed, customer_id, context.id, context.admin, context.user.id))
+        row = await one(connection, "update customers set name=%s,is_unnamed=%s,updated_at=now() where id=%s and organisation_id=%s and deleted_at is null and owner_id=%s returning *", ("Name not provided" if body.is_unnamed else body.name, body.is_unnamed, customer_id, context.id, context.member_id))
         if not row:
             fail("customer_not_found", 404)
         await audit(connection, context, "customer.updated", {"customer_id": str(customer_id)})
@@ -343,23 +344,33 @@ async def update_customer(customer_id: UUID, body: s.CustomerCreate, request: Re
 @router.get("/customers/{customer_id}/conversations")
 async def customer_history(customer_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        customer = await one(connection, "select id from customers where id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s)", (customer_id, context.id, context.admin, context.user.id))
+        customer = await one(connection, "select id from customers where id=%s and organisation_id=%s and deleted_at is null and owner_id=%s", (customer_id, context.id, context.member_id))
         if not customer:
             fail("customer_not_found", 404)
-        rows = await many(connection, "select * from conversations where customer_id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s) order by created_at desc limit 100", (customer_id, context.id, context.admin, context.user.id))
+        rows = await many(connection, "select * from conversations where customer_id=%s and organisation_id=%s and deleted_at is null and owner_id=%s order by created_at desc limit 100", (customer_id, context.id, context.member_id))
     return {"items": rows, "next_cursor": None}
 
 
 @router.get("/conversations")
-async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: datetime | None = None):
+async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: str | None = Query(default=None, max_length=100)):
+    cursor_time, cursor_id = None, None
+    if cursor:
+        try:
+            timestamp, separator, identifier = cursor.partition("|")
+            cursor_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            cursor_id = UUID(identifier) if separator else None
+        except (ValueError, TypeError):
+            fail("invalid_cursor", 400)
     async with request.app.state.db.connection() as connection:
         audio_bucket = "walkin-audio" if context.role == "receptionist" else "session-audio"
-        workspace_reader = context.admin or context.role == "salesperson"
-        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and c.audio_bucket=%s and (%s or c.owner_id=%s) and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s) and (%s::text is not null or (c.upload_state='saved' and c.total_samples>0)) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s) order by c.created_at desc,c.id desc limit %s", (context.id, audio_bucket, workspace_reader, context.user.id, "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
-    return {"items": rows[:limit], "next_cursor": rows[limit-1]["created_at"].isoformat() if len(rows)>limit else None}
+        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and c.audio_bucket=%s and c.owner_id=%s and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s or coalesce(cust.email,'') ilike %s) and (%s::text is not null or (c.upload_state='saved' and c.total_samples>0)) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s or (%s::uuid is not null and c.created_at=%s and c.id<%s)) order by c.created_at desc,c.id desc limit %s", (context.id, audio_bucket, context.member_id, "%"+q+"%", "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, state, date_from, date_from, date_to, date_to, cursor_time, cursor_time, cursor_id, cursor_time, cursor_id, limit+1))
+    return {"items": rows[:limit], "next_cursor": f"{rows[limit-1]['created_at'].isoformat()}|{rows[limit-1]['id']}" if len(rows)>limit else None}
 
 
-async def create_run(connection, context: Workspace, conv: dict, engine_id: str, kind: str, idempotency_key: str, *, allow_blocked: bool = False):
+async def create_run(connection, context: Workspace, conv: dict, engine_id: str, kind: str, idempotency_key: str, *, allow_blocked: bool = False, settings=None):
+    if settings is not None:
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, context.id, settings)
     previous = await one(connection, "select * from processing_runs where conversation_id=%s and idempotency_key=%s", (conv["id"], idempotency_key))
     if previous:
         if previous["engine_id"] != engine_id or previous["kind"] != kind:
@@ -384,6 +395,8 @@ async def create_run(connection, context: Workspace, conv: dict, engine_id: str,
 async def new_conversation(body: s.ConversationCreate, request: Request, response: Response,
                            context: Workspace = Depends(workspace),
                            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    if context.member_id != context.user.id:
+        fail("personal_workspace_required", 403, "Switch to your own workspace before creating a recording")
     if body.audio_bucket == "walkin-audio" and context.role != "receptionist":
         fail("walkin_recording_role_required", 403, "Only receptionists can create walk-in recordings")
     if body.audio_bucket == "session-audio" and context.role == "receptionist":
@@ -408,6 +421,8 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
                 runs = await many(connection, "select * from processing_runs where conversation_id=%s order by created_at", (prior["id"],))
                 response.status_code = 200
                 return {**prior, "runs": runs}
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, context.id, request.app.state.settings)
         settings = await one(connection, "select * from workspace_engine_settings where organisation_id=%s", (context.id,))
         engine_id = body.engine_id or settings["default_engine_id"]
         if not engine_id and not body.audio_only:

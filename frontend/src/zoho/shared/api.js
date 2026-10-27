@@ -7,6 +7,8 @@ export async function call(path, opts = {}, workspaceId = null) {
     || localStorage.getItem('guruconnect-active-organisation')
     || localStorage.getItem('guruconnect-active-workspace');
   if (workspace) headers.set('X-Workspace-ID', workspace);
+  const member = localStorage.getItem('guruconnect-active-workspace');
+  if (member && !headers.has('X-Workspace-Member-ID')) headers.set('X-Workspace-Member-ID', member);
   try {
     const { supabase } = await import('../../services/officeApi');
     const session = supabase ? (await supabase.auth.getSession()).data.session : null;
@@ -15,9 +17,11 @@ export async function call(path, opts = {}, workspaceId = null) {
       headers.set('X-User-ID', session.user.id);
     }
   } catch {}
-  const response = await fetch(API + path, { ...opts, headers });
+  const timeout = AbortSignal.timeout(30000);
+  const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
+  const response = await fetch(API + path, { ...opts, headers, signal, credentials: 'omit' });
   const data = await response.json();
-  if (!response.ok) throw Error(data.detail || 'Request failed');
+  if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : data.detail?.message || data.error?.message || 'Request failed');
   return data;
 }
 

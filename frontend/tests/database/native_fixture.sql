@@ -11,6 +11,8 @@ create function auth.uid() returns uuid language sql stable as $$ select (nullif
 grant usage on schema auth to authenticated,service_role;
 grant execute on function auth.uid() to authenticated,service_role;
 create schema storage;
+create function storage.foldername(name text) returns text[] language sql immutable
+  as $$ select (string_to_array(name,'/'))[1:greatest(array_length(string_to_array(name,'/'),1)-1,0)] $$;
 create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
 create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text references storage.buckets(id),name text not null,owner_id text,unique(bucket_id,name));
 alter table storage.objects enable row level security;
@@ -34,3 +36,35 @@ create function pgmq.archive(queue_name text,msg_id bigint) returns boolean lang
   return found;
 end $$;
 create publication supabase_realtime;
+
+-- EMULATION ONLY: cron stores schedules without executing commands; pg_net
+-- returns a synthetic request id without contacting a URL. Vault deliberately
+-- discards supplied secret values, including legacy migration literals.
+create schema extensions;
+create schema cron;
+create table cron.job(jobid bigint generated always as identity primary key,jobname text unique,schedule text,command text);
+create function cron.schedule(job_name text,schedule text,command text) returns bigint language plpgsql as $$
+declare result bigint;
+begin
+  insert into cron.job(jobname,schedule,command) values(job_name,schedule,command)
+    on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command returning jobid into result;
+  return result;
+end $$;
+create function cron.unschedule(job_id bigint) returns boolean language plpgsql as $$
+begin
+  delete from cron.job where jobid=job_id;
+  return found;
+end $$;
+create schema vault;
+create table vault.decrypted_secrets(id uuid primary key default gen_random_uuid(),name text,decrypted_secret text);
+create function vault.create_secret(secret text,name text default null,description text default '') returns uuid language plpgsql as $$
+declare result uuid;
+begin
+  insert into vault.decrypted_secrets(name,decrypted_secret) values(name,'native-emulation-placeholder') returning id into result;
+  return result;
+end $$;
+create schema net;
+create sequence net.native_request_id;
+create function net.http_post(url text,body jsonb default '{}'::jsonb,params jsonb default '{}'::jsonb,
+  headers jsonb default '{}'::jsonb,timeout_milliseconds integer default 1000) returns bigint language sql
+  as $$ select nextval('net.native_request_id') $$;

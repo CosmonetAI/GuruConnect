@@ -197,7 +197,7 @@ export default function NewEnquiry() {
   const resource = useScopedResource<Enquiry>(id ? `/enquiries/${encodeURIComponent(id)}` : null)
   if (!user || !workspace) return <PageLoader kind="enquiries" label="Loading your workspace" detail="Preparing the enquiry capture workspace." />
   if (id && !resource.data) return resource.loading ? <PageLoader kind="enquiries" label="Loading enquiry" detail="Preparing the saved customer opportunity." /> : <p role="status">{resource.error || 'Enquiry unavailable.'}</p>
-  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${id || conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${id ? `:edit:${id}` : conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} existing={resource.data} />
+  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${workspace.member_id ?? user.id}:${id || conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${workspace.member_id && workspace.member_id !== user.id ? `:member:${workspace.member_id}` : ""}${id ? `:edit:${id}` : conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} existing={resource.data} />
 }
 
 function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: string; conversion?: WalkinConversion; existing?: Enquiry }) {
@@ -337,8 +337,8 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
         ...(conversion ? { sourceEventId: `walkin:${conversion.visitId}` } : {}),
       }
       const created = existing
-        ? await updateEnquiry(workspace.id, existing.id, enquiryData)
-        : await createEnquiry(workspace.id, enquiryData, conversion ? `walkin:${conversion.visitId}` : saveKey)
+        ? await updateEnquiry(workspace.id, existing.id, enquiryData, workspace.member_id)
+        : await createEnquiry(workspace.id, enquiryData, conversion ? `walkin:${conversion.visitId}` : saveKey, workspace.member_id)
       let draftCleanupMessage = ''
       if (conversion && walkinService!.isWalkinDemoMode()) { try { await walkinService!.markWalkinConverted(workspace.id, conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
       try {
@@ -430,10 +430,10 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
                 <input id="customerName" maxLength={200} disabled={!!conversationId} aria-describedby={conversationId ? 'customerName-hint' : errors.customerName ? 'customerName-error' : undefined} aria-invalid={!!errors.customerName} autoComplete="name" placeholder="e.g. Priya Sharma" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} />
               </Field>
               <Field label="Phone number" htmlFor="phone" required error={errors.phone}>
-                <input id="phone" type="tel" maxLength={20} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+                <input disabled={!!conversationId} id="phone" type="tel" maxLength={20} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
               </Field>
               <Field label="Email address" htmlFor="email" error={errors.email}>
-                <input id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
+                <input disabled={!!conversationId} id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
               </Field>
               <Field label="Enquiry source" htmlFor="channel" required error={errors.channel}>
                 <select id="channel" value={form.channel} onChange={(event) => update('channel', event.target.value as NewEnquiryForm['channel'])}>

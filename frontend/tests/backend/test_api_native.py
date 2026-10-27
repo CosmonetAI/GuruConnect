@@ -8,6 +8,7 @@ import io
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 import wave
 from pathlib import Path
 from uuid import uuid4
@@ -23,8 +24,9 @@ from recorder.db import one
 from recorder.processing import publish_result
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from database.native_migrations import apply_native_migrations
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")
@@ -39,10 +41,8 @@ def database_url():
         url = f"postgresql:///postgres?host={path}&port=55441"
         try:
             with psycopg.connect(url, autocommit=True) as connection:
-                connection.execute((ROOT/"tests/database/native_fixture.sql").read_text(), prepare=False)
-                for migration in sorted((ROOT/"supabase/migrations").glob("*.sql")):
-                    sql = migration.read_text().replace("create extension if not exists pgmq;", "")
-                    connection.execute(sql, prepare=False)
+                connection.execute((ROOT/"frontend/tests/database/native_fixture.sql").read_text(), prepare=False)
+                apply_native_migrations(connection, sorted((ROOT/"supabase/migrations").glob("*.sql")))
             yield url
         finally:
             subprocess.run(["pg_ctl", "-D", str(path/"data"), "-m", "fast", "-w", "stop"], check=True, capture_output=True)
@@ -114,7 +114,7 @@ def reserve(client, headers, conv, lease, blobs, sequence=0, samples=80000, star
 def test_customers_conversations_isolation_and_role_escalation(api):
     client, headers, ids, _, _ = api
     a, again = new(client, headers), new(client, headers)
-    assert a["customer_id"] != again["customer_id"]
+    assert a["customer_id"] == again["customer_id"]  # Same member and contact identity reuse the customer.
     assert a["owner_id"] == str(ids[1])
     b = {**headers, "X-Test-User": "2"}
     own_b = new(client, b, customer_name="Another customer")
@@ -124,8 +124,106 @@ def test_customers_conversations_isolation_and_role_escalation(api):
     assert client.post("/api/v1/conversations", headers=b, json={"customer_name": "Sam", "consent_confirmed": True, "owner_id": str(ids[1])}).status_code == 422
     assert client.patch("/api/v1/engine-settings", headers=b, json={"default_engine": "elevenlabs"}).status_code == 403
     assert client.post("/api/v1/invites", headers=b, json={"email": "x@example.test", "role": "admin"}).status_code == 403
-    assert {row["id"] for row in client.get("/api/v1/conversations", headers=b).json()["items"]} == {own_b["id"]}
-    assert client.get(f"/api/v1/conversations/{a['id']}", headers={**headers, "X-Test-User": "0"}).status_code == 200
+    assert {row["id"] for row in client.get("/api/v1/conversations?state=ready", headers=b).json()["items"]} == {own_b["id"]}
+    admin = {**headers, "X-Test-User": "0"}
+    assert client.get(f"/api/v1/conversations/{a['id']}", headers=admin).status_code == 404
+    assert client.get(f"/api/v1/conversations/{a['id']}", headers={**admin, "X-Workspace-Member-ID": str(ids[1])}).status_code == 200
+
+
+def test_twenty_agents_record_in_parallel_and_share_four_processing_slots(api, monkeypatch):
+    """Real DB/API/queue fences; in-memory private Storage and synthetic ASR only."""
+    from recorder.providers import ElevenLabsAdapter
+    from recorder.worker import MainWorker
+    client, headers, ids, blobs, database_url = api
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        for index in range(3, 21):
+            user_id = uuid4()
+            ids.append(user_id)
+            connection.execute("insert into auth.users(id,email,email_confirmed_at) values(%s,%s,now())", (user_id, f"parallel-agent-{index}@example.invalid"))
+            connection.execute("insert into members(organisation_id,user_id,role) values(%s,%s,'salesperson')", (headers['X-Workspace-ID'], user_id))
+        connection.execute("update organisations set max_concurrent_jobs=4 where id=%s", (headers['X-Workspace-ID'],))
+        connection.execute("update engine_connections set credential_scope='synthetic-shared-provider',max_concurrency=4 where organisation_id=%s and engine_id='elevenlabs'", (headers['X-Workspace-ID'],))
+
+    def capture(index):
+        agent = {**headers, 'X-Test-User': str(index)}
+        conv = new(client, agent, customer_name=f'Parallel customer {index}', phone=f'900000{index:04d}')
+        prefix = f"/api/v1/conversations/{conv['id']}"
+        lease = client.post(prefix + '/lease', headers=agent, json={'tab_id': f'parallel-tab-{index:04d}'}).json()
+        chunk, url = reserve(client, agent, conv, lease, blobs)
+        confirmed = client.post(url + '/confirm', headers=agent, json=chunk)
+        assert confirmed.status_code == 200, confirmed.text
+        manifest = {'part_id': lease['part_id'], 'lease_token': lease['lease_token'], 'expected_chunks': 1, 'total_samples': chunk['sample_count']}
+        saved = client.post(prefix + '/finalize', headers=agent, json=manifest)
+        assert saved.status_code == 200, saved.text
+        return agent, conv
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        captures = list(pool.map(capture, range(1, 21)))
+    assert len({conv['id'] for _, conv in captures}) == 20
+    assert len({conv['customer_id'] for _, conv in captures}) == 20
+    with psycopg.connect(database_url) as connection:
+        planned_jobs = connection.execute("select count(*) from processing_jobs where organisation_id=%s and kind in ('transcribe','finalise')", (headers['X-Workspace-ID'],)).fetchone()[0]
+
+    active = peak = calls = 0
+    async def synthetic_asr(self, audio, language_hint, scope):
+        nonlocal active, peak, calls
+        active += 1
+        peak = max(peak, active)
+        calls += 1
+        try:
+            await asyncio.sleep(0.03)
+            return {'raw': {'synthetic': True}, 'language': 'en', 'language_probability': .99,
+                'source_segments': [{'start': 0., 'end': 4., 'text': f'Synthetic transcript {scope}', 'speaker': 'speaker-a'}],
+                'diarization_status': 'completed', 'diarization_intervals': [], 'provenance': {'synthetic': True}}
+        finally:
+            active -= 1
+    monkeypatch.setattr(ElevenLabsAdapter, 'process', synthetic_asr)
+
+    async def process_jobs():
+        settings = Settings(_env_file=None, database_url=database_url, supabase_url='https://fixture.supabase.co',
+            supabase_service_role_key='synthetic-service-key', processing_concurrency=4)
+        worker = MainWorker(settings)
+        async def credentials(connection_id):
+            return {'api_key': 'synthetic-provider-key'}
+        async def read(path, maximum):
+            assert path in blobs and len(blobs[path]) <= maximum
+            return blobs[path]
+        async def put(path, data, mime='application/json'):
+            blobs[path] = data
+        async def maintenance():
+            await worker.stopping.wait()
+        monkeypatch.setattr(worker, 'credentials', credentials)
+        monkeypatch.setattr(worker.storage, 'read', read)
+        monkeypatch.setattr(worker.storage, 'put', put)
+        monkeypatch.setattr(worker, 'maintenance', maintenance)
+        task = asyncio.create_task(worker.run())
+        try:
+            async with asyncio.timeout(15):
+                async with await psycopg.AsyncConnection.connect(database_url, autocommit=True) as connection:
+                    while True:
+                        cursor = await connection.execute("select count(*) from processing_jobs where organisation_id=%s and state='succeeded'", (headers['X-Workspace-ID'],))
+                        if (await cursor.fetchone())[0] == planned_jobs:
+                            break
+                        await asyncio.sleep(.05)
+        finally:
+            worker.stopping.set()
+            await task
+    asyncio.run(process_jobs())
+    assert calls == planned_jobs and 1 < peak <= 4
+
+    for index, (agent, conv) in enumerate(captures):
+        prefix = f"/api/v1/conversations/{conv['id']}"
+        transcript = client.get(prefix + '/transcript', headers=agent)
+        assert transcript.status_code == 200 and transcript.json()['version']['english_state'] == 'complete'
+        assert len(transcript.json()['turns']) == 1
+        playback = client.get(prefix + '/playback/stream', headers=agent)
+        assert playback.status_code == 200 and playback.content == wav()
+        peer = captures[(index + 1) % len(captures)][0]
+        assert client.get(prefix + '/transcript', headers=peer).status_code == 404
+        assert client.get(prefix + '/playback/stream', headers=peer).status_code == 404
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute("select count(*) from processing_jobs where organisation_id=%s and state='succeeded'", (headers['X-Workspace-ID'],)).fetchone()[0] == planned_jobs
+        assert connection.execute("select count(*) from transcript_versions v join conversations c on c.id=v.conversation_id where c.organisation_id=%s", (headers['X-Workspace-ID'],)).fetchone()[0] == planned_jobs
 
 
 def test_chunk_integrity_idempotency_gaps_stop_and_tail(api):
@@ -166,7 +264,9 @@ def test_chunk_integrity_idempotency_gaps_stop_and_tail(api):
     assert client.post(prefix+"/finalize", headers=headers, json={**manifest, "total_samples": 161235}).status_code == 409
     with psycopg.connect(database_url) as connection:
         assert connection.execute("select count(*) from processing_jobs where conversation_id=%s and kind='finalise'", (conv["id"],)).fetchone()[0] == 1
-        assert connection.execute("select count(*) from processing_jobs where conversation_id=%s and kind='assemble'", (conv["id"],)).fetchone()[0] == 1
+        assert connection.execute("select count(*) from processing_jobs where conversation_id=%s and kind='assemble'", (conv["id"],)).fetchone()[0] == 0
+    playback = client.get(prefix + "/playback/stream", headers=headers)
+    assert playback.status_code == 200 and len(playback.content) == 44 + 161234 * 2
 
 
 def test_revocation_preserves_history_and_blocks_upload(api):
@@ -178,7 +278,9 @@ def test_revocation_preserves_history_and_blocks_upload(api):
     assert client.delete(f"/api/v1/team/{ids[1]}", headers=admin).status_code == 200
     assert client.get(f"/api/v1/conversations/{conv['id']}", headers=headers).status_code == 403
     assert client.post(url+"/confirm", headers=headers, json=chunk).status_code == 403
-    assert client.get(f"/api/v1/conversations/{conv['id']}", headers=admin).status_code == 200
+    selected = {**admin, "X-Workspace-Member-ID": str(ids[1])}
+    assert client.get(f"/api/v1/conversations/{conv['id']}", headers=selected).status_code == 200
+    assert client.post(url + "/confirm", headers=selected, json=chunk).status_code == 403
 
 
 def test_disconnect_never_reroutes_default_and_audio_only_is_explicit(api):

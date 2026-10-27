@@ -181,8 +181,10 @@ async def workspace(request: Request, user: User = Depends(current_user),
     async with request.app.state.db.connection() as connection:
         actor = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
         selected_id = x_workspace_member_id or user.id
-        selected = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, selected_id))
+        selected = await one(connection, "select role,status from members where organisation_id=%s and user_id=%s", (x_workspace_id, selected_id))
     if not actor or not selected or (selected_id != user.id and actor["role"] != "owner"):
+        fail("workspace_access_denied", 403)
+    if selected.get("status", "active") != "active" and (actor["role"] != "owner" or request.method not in {"GET", "HEAD"}):
         fail("workspace_access_denied", 403)
     return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])
 
@@ -197,7 +199,9 @@ async def administrator(request: Request, context: Workspace = Depends(workspace
 
 async def conversation(connection, context: Workspace, conversation_id: UUID, *, lock: bool = False) -> dict:
     row = await one(connection, "select * from conversations where id=%s and organisation_id=%s and deleted_at is null" + (" for update" if lock else ""), (conversation_id, context.id))
-    if not row or (row["owner_id"] != context.user.id and not context.admin):
+    # A workspace owner may select another member through the verified workspace
+    # dependency, but ordinary agents never see a peer's recording by ID.
+    if not row or row["owner_id"] != context.member_id:
         fail("conversation_not_found", 404)
     return row
 

@@ -31,7 +31,7 @@ def main() -> None:
         raise RuntimeError("Refusing a database without the native-emulation fixture marker")
     sql("create table recorder_private.native_claim_log(job_id uuid primary key,worker_id text not null);")
 
-    for stage, count, workspace_count in [("22", 22, 1), ("100", 100, 20)]:
+    for stage, count, workspace_count in [("20", 20, 1), ("100", 100, 20)]:
         start = time.monotonic()
         users = [identity(f"{stage}:user:{i}") for i in range(count)]
         orgs = [identity(f"{stage}:org:{i}") for i in range(workspace_count)]
@@ -57,7 +57,7 @@ def main() -> None:
         def ingest(i: int) -> None:
             # Out-of-order durable metadata reservations from independent clients.
             org, user, conv, part = orgs[i % workspace_count], users[i], conversations[i], parts[i]
-            path = f"{org}/{user}/{conv}/{part}/"
+            path = f"{org}/{user}/{conv}/session-audio/no-phone/{part}/"
             sql(f"""begin;
                 insert into public.audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,bytes,sha256,object_path)
                 values('{conv}','{part}',1,80000,80000,160044,repeat('b',64),'{path}1.wav'),

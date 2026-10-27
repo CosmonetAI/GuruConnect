@@ -13,6 +13,22 @@ PYANNOTE_REVISION = "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"
 MAX_SESSION_SAMPLES = 16000 * 7200
 
 
+def partition_saved_segments(segments, start: float, end: float):
+    """Keep saved source words exactly once when retrying bounded speaker groups."""
+    output = []
+    for segment in segments or []:
+        if segment.get("words"):
+            words = [{**word, "start": max(start, word["start"])-start, "end": min(end, word["end"])-start}
+                for word in segment["words"] if start <= (word["start"]+word["end"])/2 < end]
+            if words:
+                output.append({**segment, "start": words[0]["start"], "end": words[-1]["end"],
+                    "text": "".join(word["text"] for word in words), "words": words})
+        elif start <= (segment["start"]+segment["end"])/2 < end:
+            output.append({**segment, "start": max(start, segment["start"])-start,
+                "end": min(end, segment["end"])-start, "words": None})
+    return output
+
+
 def validate_audio_file(audio_path: str) -> int:
     """Reject malformed/oversized containers before any model/decoder sees them."""
     path = Path(audio_path)
@@ -87,7 +103,7 @@ class Engine:
                     if base:
                         base={**base}
                         for key in ('source_segments','english_segments'):
-                            base[key]=[{**segment,'start':max(0,segment['start']-offset/16000),'end':min(block_samples/16000,segment['end']-offset/16000),'words':None} for segment in base.get(key) or [] if offset/16000 <= (segment['start']+segment['end'])/2 < (offset+block_samples)/16000]
+                            base[key] = partition_saved_segments(base.get(key), offset/16000, min(total, offset+block_samples)/16000)
                     result = self._process_block(path, {**job, "base_result":base,"job_id": f"{job['job_id']}:group-{offset//block_samples}"})
                     for key in ("source_segments", "english_segments", "diarization_intervals"):
                         for segment in result.get(key) or []:

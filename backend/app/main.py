@@ -3,35 +3,96 @@ import asyncio, json
 import hashlib
 import secrets
 import re
+import logging
+from uuid import UUID
 from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
-from .db import require_db, row_dict, now
-from .zoho import zoho, refresh_loop, set_organisation_id, set_member_id, get_organisation_id, get_member_id
-from .chat import get_or_create_customer, run_graph
+from .db import require_db, row_dict, now, sales_workspace, scope_parameters
+from .zoho import zoho, refresh_loop, refresh_all, set_organisation_id, set_member_id, get_organisation_id, get_member_id
+from .chat import get_or_create_customer, get_or_create_customer_sync, run_graph
 
 @asynccontextmanager
 async def lifespan(app):
-    task=asyncio.create_task(refresh_loop()); yield; task.cancel()
-app=FastAPI(title='Guru Group AI Sales API',version='0.1.0',lifespan=lifespan)
+    task = asyncio.create_task(refresh_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+app=FastAPI(title='Guru Group AI Sales API',version='0.1.0',lifespan=lifespan,
+            docs_url=None, redoc_url=None, openapi_url=None)
+log = logging.getLogger('sales.api')
 from .settings import settings
 app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in settings.cors_origins.split(',') if origin.strip()],allow_credentials=True,allow_methods=['*'],allow_headers=['Authorization','Content-Type','X-User-ID','X-Workspace-ID','Idempotency-Key'])
 
 @app.middleware('http')
 async def zoho_workspace_scope(request: Request, call_next):
-    set_organisation_id(request.headers.get('x-workspace-id'))
-    set_member_id(request.headers.get('x-user-id'))
-    try:
+    # Bind the parent per ASGI request, so separate create_app() instances never
+    # overwrite one another's verifier/settings on this shared child app.
+    if request.url.path in {'/docs', '/redoc', '/openapi.json'}:
+        return JSONResponse(status_code=404, content={'detail': 'Not found'})
+    if request.method == 'OPTIONS' or request.url.path in {'/', '/api/health', '/api/internal/zoho/refresh'}:
         return await call_next(request)
-    except PermissionError as error:
-        return JSONResponse(status_code=403, content={'detail': str(error)})
-    except RuntimeError as error:
-        if 'signed-in workspace member' in str(error):
-            return JSONResponse(status_code=403, content={'detail': str(error)})
-        raise
+    parent = request.scope.get('recorder_app')
+    if parent is None:
+        return JSONResponse(status_code=503, content={'detail': {'code': 'authentication_not_configured'}})
+    token = None
+    try:
+        from recorder.security import current_user, workspace
+        authorization = request.headers.get('authorization', '').split(' ', 1)
+        if len(authorization) != 2 or authorization[0].lower() != 'bearer' or not authorization[1]:
+            raise HTTPException(401, 'Authentication required')
+        parent_request = Request({**request.scope, 'app': parent})
+        user = await current_user(parent_request, HTTPAuthorizationCredentials(scheme='Bearer', credentials=authorization[1]))
+        try:
+            org = UUID(request.headers['x-workspace-id']) if request.headers.get('x-workspace-id') else None
+            member = UUID(request.headers['x-workspace-member-id']) if request.headers.get('x-workspace-member-id') else None
+        except ValueError:
+            raise HTTPException(400, 'Invalid workspace identity') from None
+        context = await workspace(parent_request, user, org, member)
+        # Voice history/notes do not call Zoho. Every other sales route may
+        # invoke the sales agent or integration and requires a sales role.
+        if context.role == 'receptionist' and not request.url.path.startswith('/api/voice-sessions'):
+            raise HTTPException(403, 'Sales access required')
+        token = sales_workspace.set(context)
+        set_organisation_id(str(context.id))
+        set_member_id(str(context.member_id))
+        return await call_next(request)
+    except HTTPException as error:
+        return JSONResponse(status_code=error.status_code, content={'detail': error.detail}, headers=error.headers)
+    except PermissionError:
+        return JSONResponse(status_code=403, content={'detail': 'Workspace access denied'})
+    except Exception as error:
+        log.error('sales_request_failed exception_type=%s', type(error).__name__)
+        return JSONResponse(status_code=503, content={'detail': {'code': 'service_unavailable'}})
+    finally:
+        if token is not None:
+            sales_workspace.reset(token)
+        set_organisation_id(None)
+        set_member_id(None)
+
+
+def bind_parent(parent_app):
+    """Mount this child with the recorder's verified identity on every request."""
+    async def bound(scope, receive, send):
+        await app({**scope, 'recorder_app': parent_app}, receive, send)
+    return bound
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, error):
+    return JSONResponse({'detail': {'code': 'validation_failed'}}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request, error):
+    log.error('sales_error exception_type=%s', type(error).__name__)
+    return JSONResponse({'detail': {'code': 'internal_error'}}, status_code=500)
 
 @app.get('/', response_class=HTMLResponse, include_in_schema=False)
 def landing_page():
@@ -94,7 +155,7 @@ def landing_page():
 </body>
 </html>'''
 class CustomerIn(BaseModel): name:str=Field(min_length=2); phone:str|None=None; email:str|None=None; phone_extension:str='+91'
-class ChatIn(BaseModel): message:str=Field(min_length=1); customer:CustomerIn|None=None; session_id:str|None=None
+class ChatIn(BaseModel): message:str=Field(min_length=1); customer:CustomerIn|None=None; session_id:UUID|None=None
 class CodeIn(BaseModel): code:str=Field(min_length=3)
 class OrganizationIn(BaseModel): organization_id:str=Field(min_length=1)
 class ZohoConfigIn(BaseModel): client_id:str=Field(min_length=5); client_secret:str=''
@@ -136,16 +197,17 @@ class VoiceSessionIn(BaseModel):
     phone: str | None = None
     email: str | None = None
 class VoiceSessionLinkIn(BaseModel):
-    conversation_id: str | None = Field(default=None, min_length=8)
+    conversation_id: UUID | None = None
 class VoiceSessionNoteIn(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 class VoiceSessionContextIn(BaseModel):
     product_requirements: list[dict] = Field(default_factory=list, max_length=25)
 def _db_http_error(error: Exception):
-    detail = 'Database unavailable. Configure Render DATABASE_URL with the Supabase IPv4 pooler URI and redeploy.'
-    if isinstance(error, OperationalError):
-        raise HTTPException(503, detail) from error
-    raise error
+    if isinstance(error, HTTPException):
+        raise error
+    if isinstance(error, PermissionError):
+        raise HTTPException(403, 'Workspace access denied') from None
+    raise HTTPException(503, 'Service temporarily unavailable') from None
 
 RECENT_ZOHO_LIMIT = 40
 
@@ -262,131 +324,157 @@ async def zoho_configuration_save(payload:ZohoConfigIn): return await zoho.save_
 @app.post('/api/zoho/connect')
 async def zoho_connect(payload:CodeIn):
     try: return await zoho.exchange_code(payload.code)
-    except Exception as e: raise HTTPException(400,f'Zoho authorization failed: {e}')
+    except Exception: raise HTTPException(400,'Zoho authorization failed')
 @app.post('/api/zoho/organizations')
 async def zoho_organizations():
     try: return await zoho.smoke_test()
-    except Exception as e: raise HTTPException(502,f'Unable to load Zoho Books organizations: {e}')
+    except Exception: raise HTTPException(502,'Unable to load Zoho Books organizations')
 @app.post('/api/zoho/organization')
 async def zoho_organization(payload:OrganizationIn):
     try: return await zoho.select_organization(payload.organization_id)
-    except Exception as e: raise HTTPException(400,f'Unable to select Zoho Books organization: {e}')
+    except Exception: raise HTTPException(400,'Unable to select Zoho Books organization')
 @app.post('/api/zoho/smoke-test')
 async def zoho_smoke():
     try: return await zoho.smoke_test()
-    except Exception as e: raise HTTPException(502,str(e))
+    except Exception: raise HTTPException(502,'Integration service unavailable')
 
-def _voice_identity(phone, email):
-    normalized_phone = ''.join(ch for ch in (phone or '') if ch.isdigit())[-15:] or None
-    normalized_email = (email or '').strip().lower() or None
-    return normalized_phone, normalized_email
+def _session(db, session_id, *, lock=False):
+    params = {**scope_parameters(), 'session': str(session_id)}
+    row = db.execute(text("""select s.*,c.name,c.phone,c.email from chat_sessions s
+      join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id
+      where s.id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid)
+        and s.member_id=cast(:member as uuid) and c.deleted_at is null""" + (' for update of s' if lock else '')), params).first()
+    if not row:
+        raise HTTPException(404, 'Session not found')
+    return row_dict(row)
+
+
+def _session_messages(db, session_id, *, history=False):
+    columns = 'm.role,m.content' if history else 'm.id,m.role,m.content,m.intent,m.metadata,m.created_at'
+    suffix = ' order by m.created_at desc limit 10' if history else ' order by m.created_at'
+    return [row_dict(row) for row in db.execute(text(f"""select {columns} from chat_messages m
+      join chat_sessions s on s.id=m.session_id
+      where m.session_id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid)
+        and s.member_id=cast(:member as uuid)""" + suffix), {**scope_parameters(), 'session': str(session_id)}).all()]
+
+
+def _voice_history(db, session):
+    params = {**scope_parameters(), 'session': str(session['id']), 'customer': str(session['customer_id'])}
+    chunks = [row_dict(row) for row in db.execute(text("""select r.id,r.chunk_index,r.duration_seconds,r.mime_type,r.size_bytes,r.object_path,r.created_at
+      from chat_recording_chunks r join chat_sessions s on s.id=r.session_id
+      where r.session_id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid)
+        and s.member_id=cast(:member as uuid) order by r.chunk_index"""), params).all()]
+    recordings = [row_dict(row) for row in db.execute(text("""select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds
+      from conversations where customer_id=cast(:customer as uuid) and organisation_id=cast(:org as uuid)
+        and owner_id=cast(:member as uuid) and deleted_at is null and upload_state='saved' and total_samples>0
+      order by created_at desc limit 100"""), params).all()]
+    return {'session': session, 'conversation_id': session.get('conversation_id'),
+            'messages': _session_messages(db, session['id']), 'recordings': chunks, 'recorder_sessions': recordings}
+
 
 @app.post('/api/voice-sessions')
-async def open_voice_session(payload: VoiceSessionIn, request: Request):
-    phone, email = _voice_identity(payload.phone, payload.email)
-    if not phone and not email: raise HTTPException(422, 'Phone number or email is required to start a voice session')
+def open_voice_session(payload: VoiceSessionIn, request: Request):
     try:
+        customer = get_or_create_customer_sync(payload.name, payload.phone, payload.email)
+        params = {**scope_parameters(), 'customer': str(customer['id']),
+                  'phone': customer.get('normalized_phone'), 'email': customer.get('normalized_email'),
+                  'title': f"{customer['name']} voice session"}
         with require_db() as db:
-            org = get_organisation_id(); member = request.headers.get('x-user-id')
-            customer = db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and (cast(:phone as text) is not null and right(normalized_phone, 10)=right(cast(:phone as text), 10)) limit 1"), {'org': org, 'phone': phone}).first() if phone and org else db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and normalized_email=cast(:email as text) limit 1"), {'org': org, 'email': email}).first() if email and org else None
-            if not customer and phone and email:
-                customer = db.execute(text("select * from customers where organisation_id=cast(:org as uuid) and normalized_email=cast(:email as text) limit 1"), {'org': org, 'email': email}).first() if org else None
-            if customer:
-                customer = row_dict(customer)
-                session = db.execute(text("select * from chat_sessions where organisation_id=cast(:org as uuid) and customer_id=:customer and cast(:phone as text) is not null and identity_phone=cast(:phone as text) order by updated_at desc limit 1"), {'org': org, 'customer': customer['id'], 'phone': phone}).first()
-            else:
-                customer = db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,owner_id,member_id) values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid),cast(:member as uuid)) returning *"), {'name': payload.name.strip(), 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
-                customer = row_dict(customer)
-                session = None
-            if not session:
-                session = db.execute(text("insert into chat_sessions(customer_id,title,identity_phone,identity_email,organisation_id,member_id) values(:customer,:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"), {'customer': customer['id'], 'title': f"{customer['name']} voice session", 'phone': phone, 'email': email, 'org': org, 'member': member}).first()
+            row = db.execute(text("""select * from chat_sessions where organisation_id=cast(:org as uuid)
+              and member_id=cast(:member as uuid) and customer_id=cast(:customer as uuid)
+              order by updated_at desc limit 1"""), params).first()
+            if not row:
+                row = db.execute(text("""insert into chat_sessions(customer_id,title,identity_phone,identity_email,organisation_id,member_id)
+                  values(cast(:customer as uuid),:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"""), params).first()
+            session = row_dict(row)
             db.commit()
-            session = row_dict(session)
-            messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session['id']}).all()]
-            chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session['id']}).all()]
-            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer and deleted_at is null and upload_state='saved' and total_samples>0 order by created_at desc limit 100"), {'customer': customer['id']}).all()]
-            return {'session': session, 'customer': customer, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
-    except Exception as e: raise HTTPException(500, f'Unable to open voice session: {e}')
+            return {**_voice_history(db, session), 'customer': customer}
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(422, 'Phone number or email is required to start a voice session') from None
+    except Exception:
+        raise HTTPException(503, 'Unable to open voice session') from None
+
 
 @app.get('/api/voice-sessions/{session_id}/history')
-async def voice_session_history(session_id: str, request: Request):
-    try:
-        with require_db() as db:
-            session = db.execute(text("select s.*,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id where s.id=:session and s.organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not session: raise HTTPException(404, 'Voice session not found')
-            messages = [row_dict(row) for row in db.execute(text("select id,role,content,created_at from chat_messages where session_id=:session order by created_at"), {'session': session_id}).all()]
-            chunks = [row_dict(row) for row in db.execute(text("select id,chunk_index,duration_seconds,mime_type,size_bytes,object_path,created_at from chat_recording_chunks where session_id=:session order by chunk_index"), {'session': session_id}).all()]
-            session = row_dict(session)
-            recorder_sessions = [row_dict(row) for row in db.execute(text("select id,title,created_at,updated_at,capture_state,upload_state,transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds from conversations where customer_id=:customer_id and deleted_at is null and upload_state='saved' and total_samples>0 order by created_at desc limit 100"), {'customer_id': session['customer_id']}).all()]
-            return {'session': session, 'conversation_id': session.get('conversation_id'), 'messages': messages, 'recordings': chunks, 'recorder_sessions': recorder_sessions}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500, f'Unable to load voice session history: {e}')
+def voice_session_history(session_id: UUID, request: Request):
+    with require_db() as db:
+        return _voice_history(db, _session(db, session_id))
+
 
 @app.post('/api/voice-sessions/{session_id}/conversation')
-async def link_voice_conversation(session_id: str, payload: VoiceSessionLinkIn, request: Request):
-    try:
-        with require_db() as db:
-            db.execute(text("update chat_sessions set conversation_id=:conversation,updated_at=now() where id=:session and organisation_id=cast(:org as uuid)"), {'conversation': payload.conversation_id, 'session': session_id, 'org': get_organisation_id()})
-            db.commit()
-        return {'linked': True, 'session_id': session_id, 'conversation_id': payload.conversation_id}
-    except Exception as e: raise HTTPException(500, f'Unable to link saved conversation: {e}')
+def link_voice_conversation(session_id: UUID, payload: VoiceSessionLinkIn, request: Request):
+    with require_db() as db:
+        session = _session(db, session_id, lock=True)
+        params = {**scope_parameters(), 'session': str(session_id), 'customer': str(session['customer_id']),
+                  'conversation': str(payload.conversation_id) if payload.conversation_id else None}
+        if payload.conversation_id:
+            row = db.execute(text("""select id from conversations where id=cast(:conversation as uuid)
+              and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid)
+              and customer_id=cast(:customer as uuid) and deleted_at is null for share"""), params).first()
+            if not row:
+                raise HTTPException(404, 'Conversation not found')
+        row = db.execute(text("""update chat_sessions set conversation_id=cast(:conversation as uuid),updated_at=now()
+          where id=cast(:session as uuid) and organisation_id=cast(:org as uuid)
+            and member_id=cast(:member as uuid) and customer_id=cast(:customer as uuid) returning id"""), params).first()
+        if not row:
+            raise HTTPException(404, 'Session not found')
+        db.commit()
+    return {'linked': True, 'session_id': str(session_id), 'conversation_id': payload.conversation_id}
+
 
 @app.get('/api/voice-sessions/{session_id}/notes')
-async def voice_session_notes(session_id: str, request: Request):
-    try:
-        with require_db() as db:
-            row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not row: raise HTTPException(404, 'Voice session not found')
-            row = row_dict(row)
-            notes = db.execute(text("""select id,content,created_at,author_id,session_id
-              from voice_session_notes where organisation_id=cast(:org as uuid) and customer_id=:customer
-              order by created_at asc"""), {'org': get_organisation_id(), 'customer': row['customer_id']}).all()
-            return {'notes': [row_dict(note) for note in notes]}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500, f'Unable to load voice session notes: {e}')
+def voice_session_notes(session_id: UUID, request: Request):
+    with require_db() as db:
+        session = _session(db, session_id)
+        notes = db.execute(text("""select n.id,n.content,n.created_at,n.author_id,n.session_id from voice_session_notes n
+          join customers c on c.id=n.customer_id and c.organisation_id=n.organisation_id
+          where n.organisation_id=cast(:org as uuid) and n.customer_id=cast(:customer as uuid)
+            and c.owner_id=cast(:member as uuid) and c.deleted_at is null order by n.created_at"""),
+          {**scope_parameters(), 'customer': str(session['customer_id'])}).all()
+        return {'notes': [row_dict(note) for note in notes]}
+
 
 @app.post('/api/voice-sessions/{session_id}/notes')
-async def add_voice_session_note(session_id: str, payload: VoiceSessionNoteIn, request: Request):
-    try:
-        with require_db() as db:
-            row = db.execute(text("select customer_id from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not row: raise HTTPException(404, 'Voice session not found')
-            row = row_dict(row)
-            note = db.execute(text("""insert into voice_session_notes
-              (organisation_id,customer_id,session_id,author_id,content)
-              values(cast(:org as uuid),:customer,:session,cast(:author as uuid),:content)
-              returning id,content,created_at,author_id,session_id"""), {'org': get_organisation_id(), 'customer': row['customer_id'], 'session': session_id, 'author': request.headers.get('x-user-id'), 'content': payload.content.strip()}).first()
-            db.commit()
-            return {'note': row_dict(note)}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500, f'Unable to save voice session note: {e}')
+def add_voice_session_note(session_id: UUID, payload: VoiceSessionNoteIn, request: Request):
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(422, 'Note cannot be empty')
+    with require_db() as db:
+        session = _session(db, session_id, lock=True)
+        note = db.execute(text("""insert into voice_session_notes(organisation_id,customer_id,session_id,author_id,content)
+          select s.organisation_id,s.customer_id,s.id,cast(:actor as uuid),:content from chat_sessions s
+          where s.id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)
+          returning id,content,created_at,author_id,session_id"""),
+          {**scope_parameters(), 'session': str(session['id']), 'content': content}).first()
+        if not note:
+            raise HTTPException(404, 'Session not found')
+        db.commit()
+        return {'note': row_dict(note)}
+
 
 @app.get('/api/voice-sessions/{session_id}/context')
-async def voice_session_context(session_id: str, request: Request):
-    try:
-        with require_db() as db:
-            row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not row: raise HTTPException(404, 'Voice session not found')
-            row = row_dict(row)
-            context = row['context'] or {}
-            return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else []}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500, f'Unable to load voice session context: {e}')
+def voice_session_context(session_id: UUID, request: Request):
+    with require_db() as db:
+        context = _session(db, session_id).get('context') or {}
+        return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else []}
+
 
 @app.put('/api/voice-sessions/{session_id}/context')
-async def update_voice_session_context(session_id: str, payload: VoiceSessionContextIn, request: Request):
-    try:
-        with require_db() as db:
-            row = db.execute(text("select context from chat_sessions where id=:session and organisation_id=cast(:org as uuid)"), {'session': session_id, 'org': get_organisation_id()}).first()
-            if not row: raise HTTPException(404, 'Voice session not found')
-            row = row_dict(row)
-            context = row['context'] if isinstance(row['context'], dict) else {}
-            context['product_requirements'] = payload.product_requirements
-            db.execute(text("update chat_sessions set context=cast(:context as jsonb),updated_at=now() where id=:session"), {'context': json.dumps(context), 'session': session_id})
-            db.commit()
-            return {'product_requirements': payload.product_requirements}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500, f'Unable to save voice session context: {e}')
+def update_voice_session_context(session_id: UUID, payload: VoiceSessionContextIn, request: Request):
+    with require_db() as db:
+        session = _session(db, session_id, lock=True)
+        context = session.get('context') if isinstance(session.get('context'), dict) else {}
+        context['product_requirements'] = payload.product_requirements
+        row = db.execute(text("""update chat_sessions set context=cast(:context as jsonb),updated_at=now()
+          where id=cast(:session as uuid) and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) returning id"""),
+          {**scope_parameters(), 'context': json.dumps(context), 'session': str(session_id)}).first()
+        if not row:
+            raise HTTPException(404, 'Session not found')
+        db.commit()
+        return {'product_requirements': payload.product_requirements}
+
 
 def _pipeline_layouts(payload):
     rows = payload.get('layouts', payload.get('data', [])) if isinstance(payload, dict) else []
@@ -405,7 +493,7 @@ def _pipeline_layouts(payload):
 async def pipeline_layouts(refresh: bool = False):
     try:
         return {'layouts': _pipeline_layouts(await zoho.pipeline_layout())}
-    except Exception as e: raise HTTPException(502, f'Unable to load Zoho Bigin pipeline layouts: {e}')
+    except Exception: raise HTTPException(502, 'Unable to load Zoho Bigin pipeline layouts')
 
 @app.get('/api/pipelines')
 async def pipeline_records(pipeline_id: str, page: int = 1):
@@ -429,7 +517,7 @@ async def pipeline_records(pipeline_id: str, page: int = 1):
         records = result.get('data', [])
         _cache_recent_rows('pipelines', records)
         return {'records': records, 'page': page, 'has_more': bool(info.get('more_records')), 'source': 'zoho', 'last_sync': last_sync.isoformat() if last_sync else None}
-    except Exception as e: raise HTTPException(502, f'Unable to load pipeline records: {e}')
+    except Exception: raise HTTPException(502, 'Unable to load pipeline records')
 
 @app.get('/api/pipelines/search')
 async def pipeline_search(word: str):
@@ -441,7 +529,7 @@ async def pipeline_search(word: str):
         records = result.get('data', [])
         _cache_recent_rows('pipelines', records)
         return {'records': records, 'info': result.get('info', {})}
-    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Bigin pipelines: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Zoho Bigin pipelines')
 
 @app.get('/api/pipelines/record/{record_id}')
 async def pipeline_record(record_id: str):
@@ -450,7 +538,7 @@ async def pipeline_record(record_id: str):
         record = (result.get('data') or [None])[0]
         _cache_recent_rows('pipelines', [record] if record else [])
         return {'record': record}
-    except Exception as e: raise HTTPException(502, f'Unable to load pipeline record: {e}')
+    except Exception: raise HTTPException(502, 'Unable to load pipeline record')
 
 @app.post('/api/pipelines')
 async def create_pipeline_record(body: dict):
@@ -459,7 +547,7 @@ async def create_pipeline_record(body: dict):
         record = (result.get('data') or [None])[0]
         _cache_recent_rows('pipelines', [record] if record else [])
         return {'record': record, 'response': result}
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Bigin pipeline record: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Bigin pipeline record')
 
 @app.put('/api/pipelines/record/{record_id}')
 async def update_pipeline_record(record_id: str, body: dict):
@@ -484,7 +572,7 @@ async def update_pipeline_record(record_id: str, body: dict):
             except Exception:
                 pass
         return {'record': record, 'response': result}
-    except Exception as e: raise HTTPException(502, f'Unable to update Zoho Bigin pipeline record: {e}')
+    except Exception: raise HTTPException(502, 'Unable to update Zoho Bigin pipeline record')
 
 @app.delete('/api/pipelines/record/{record_id}')
 async def delete_pipeline_record(record_id: str):
@@ -492,7 +580,7 @@ async def delete_pipeline_record(record_id: str):
         result = await zoho.delete_pipeline(record_id)
         _recent_cache_remove('pipelines', record_id)
         return result
-    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Bigin pipeline record: {e}')
+    except Exception: raise HTTPException(502, 'Unable to delete Zoho Bigin pipeline record')
 
 @app.get('/api/bigin/deleted/{module}')
 async def deleted_bigin_records(module: str, type: str = 'recycle', page: int = 1):
@@ -506,7 +594,7 @@ async def deleted_bigin_records(module: str, type: str = 'recycle', page: int = 
         raise HTTPException(422, 'Page must be at least 1')
     try:
         return await zoho.list_deleted_bigin_records(module, type, page)
-    except Exception as e: raise HTTPException(502, f'Unable to load deleted Zoho Bigin {module.lower()}: {e}')
+    except Exception: raise HTTPException(502, 'Unable to load deleted Zoho Bigin')
 
 @app.get('/api/pipelines/deleted')
 async def deleted_pipeline_records(type: str = 'recycle', page: int = 1):
@@ -520,7 +608,7 @@ async def deleted_task_records(type: str = 'recycle', page: int = 1):
 async def delete_task(task_id: str):
     try:
         return await zoho.delete_task(task_id)
-    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Bigin task: {e}')
+    except Exception: raise HTTPException(502, 'Unable to delete Zoho Bigin task')
 
 @app.post('/api/pipelines/sync')
 async def sync_pipelines():
@@ -554,7 +642,7 @@ async def sync_pipelines():
               and record_id not in (select record_id from zoho_pipeline_records where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) order by modified_time desc nulls last limit 40)"""), {'org': get_organisation_id(), 'member': get_member_id()})
             db.commit()
         return {'synced': True, 'limited': False, 'last_sync': now().isoformat(), 'count': len(fetched)}
-    except Exception as e: raise HTTPException(502, f'Unable to sync Zoho Bigin pipelines: {e}')
+    except Exception: raise HTTPException(502, 'Unable to sync Zoho Bigin pipelines')
 @app.get('/api/products')
 async def products(search: str = '', date: str = '', page: int = 1):
     """Return the member's recent cache by default, then use live Books search."""
@@ -579,8 +667,8 @@ async def products(search: str = '', date: str = '', page: int = 1):
         return {'items': items[:40], 'search': query, 'page': page, 'has_more': bool(context.get('has_more_page')), 'search_by': 'search_text', 'organization_id': status['organization_id'], 'source': 'zoho', 'stored_in_supabase': True}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to search Zoho Books items: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to search Zoho Books items')
 @app.post('/api/products')
 async def create_product(payload: dict):
     try:
@@ -597,7 +685,7 @@ async def create_product(payload: dict):
         _cache_recent_rows('products', [item] if item else [])
         return {'item': item, 'response': result}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books item: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Books item')
 @app.get('/api/books/customers')
 async def books_customers(search: str = '', date: str = ''):
     query = search.strip()
@@ -611,7 +699,7 @@ async def books_customers(search: str = '', date: str = ''):
         _cache_recent_rows('contacts', rows)
         return {'customers': rows, 'info': payload.get('page_context', {})}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Books customers: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Books customers')
 @app.get('/api/books/vendors')
 async def books_vendors(search: str = ''):
     query = search.strip()
@@ -625,7 +713,7 @@ async def books_vendors(search: str = ''):
         _cache_recent_rows('contacts', rows)
         return {'vendors': rows, 'info': payload.get('page_context', {})}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Books vendors: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Books vendors')
 
 @app.get('/api/document-contacts')
 async def document_contacts(search: str = '', role: str = 'customer'):
@@ -660,8 +748,8 @@ async def document_contacts(search: str = '', role: str = 'customer'):
         return {'contacts': result_contacts, 'search': query, 'role': role}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to search Zoho contact sources: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to search Zoho contact sources')
 
 @app.get('/api/purchase-orders/options')
 @app.get('/api/documents/options')
@@ -689,8 +777,8 @@ async def purchase_order_options():
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to load purchase order options: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to load purchase order options')
 
 @app.get('/api/purchase-orders/vendors/{vendor_id}')
 async def purchase_order_vendor(vendor_id: str):
@@ -714,8 +802,8 @@ async def purchase_order_vendor(vendor_id: str):
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to load Zoho Books vendor details: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to load Zoho Books vendor details')
 
 @app.get('/api/documents/contacts/{contact_id}')
 async def document_contact(contact_id: str):
@@ -735,8 +823,8 @@ async def document_contact(contact_id: str):
         return {'contact': contact, 'contact_persons': contact_persons, 'organization_id': org}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to load Zoho Books contact details: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to load Zoho Books contact details')
 
 @app.get('/api/purchase-orders/options/tag-options')
 async def purchase_order_tag_options(tag_id: str):
@@ -748,8 +836,8 @@ async def purchase_order_tag_options(tag_id: str):
         return {'options': payload.get('options', payload.get('tag_options', payload.get('data', []))), 'tag_id': tag_id, 'organization_id': org}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to load reporting tag options: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to load reporting tag options')
 
 async def _resolve_books_document_contact(payload: dict, role: str, org: str):
     id_key = f'{role}_id'; source_key = f'{role}_source'; record_key = f'{role}_record'
@@ -804,7 +892,7 @@ async def quotes(search: str = '', date: str = '', page: int = 1):
         _cache_recent_rows('quotes', rows)
         return {'quotes': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books quotes: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Zoho Books quotes')
 @app.post('/api/quotes')
 async def create_quote(payload: dict):
     try:
@@ -819,7 +907,7 @@ async def create_quote(payload: dict):
         _cache_recent_rows('quotes', [quote] if quote else [])
         return {'quote': quote, 'response': result}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books quote: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Books quote')
 @app.post('/api/quotes/{estimate_id}/email')
 async def email_quote(estimate_id: str, payload: dict | None = None):
     try:
@@ -827,7 +915,7 @@ async def email_quote(estimate_id: str, payload: dict | None = None):
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         return await zoho.email_estimate(org, estimate_id, payload)
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books quote: {e}')
+    except Exception: raise HTTPException(502, 'Unable to email Zoho Books quote')
 @app.get('/api/orders')
 async def orders(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -846,7 +934,7 @@ async def orders(search: str = '', date: str = '', page: int = 1):
         _cache_recent_rows('orders', rows)
         return {'orders': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books orders: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Zoho Books orders')
 @app.post('/api/orders')
 async def create_order(payload: dict):
     try:
@@ -861,7 +949,7 @@ async def create_order(payload: dict):
         _cache_recent_rows('orders', [order] if order else [])
         return {'order': order, 'response': result}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books sales order: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Books sales order')
 @app.post('/api/orders/{salesorder_id}/email')
 async def email_order(salesorder_id: str, payload: dict | None = None):
     try:
@@ -869,7 +957,7 @@ async def email_order(salesorder_id: str, payload: dict | None = None):
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         return await zoho.email_sales_order(org, salesorder_id, payload)
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books sales order: {e}')
+    except Exception: raise HTTPException(502, 'Unable to email Zoho Books sales order')
 @app.get('/api/purchase-orders')
 async def purchase_orders(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -888,7 +976,7 @@ async def purchase_orders(search: str = '', date: str = '', page: int = 1):
         _cache_recent_rows('purchase_orders', rows)
         return {'purchase_orders': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books purchase orders: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Zoho Books purchase orders')
 @app.post('/api/purchase-orders')
 async def create_purchase_order(payload: dict):
     try:
@@ -906,7 +994,7 @@ async def create_purchase_order(payload: dict):
         _cache_recent_rows('purchase_orders', [purchase_order] if purchase_order else [])
         return {'purchase_order': purchase_order, 'response': result}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books purchase order: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Books purchase order')
 @app.post('/api/purchase-orders/{purchaseorder_id}/email')
 async def email_purchase_order(purchaseorder_id: str, payload: dict | None = None):
     try:
@@ -914,7 +1002,7 @@ async def email_purchase_order(purchaseorder_id: str, payload: dict | None = Non
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         return await zoho.email_purchase_order(org, purchaseorder_id, payload)
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books purchase order: {e}')
+    except Exception: raise HTTPException(502, 'Unable to email Zoho Books purchase order')
 @app.get('/api/invoices')
 async def invoices(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -933,7 +1021,7 @@ async def invoices(search: str = '', date: str = '', page: int = 1):
         _cache_recent_rows('invoices', rows)
         return {'invoices': rows, 'info': info, 'page': page, 'has_more': bool(info.get('has_more_page')), 'organization_id': status['organization_id'], 'source': 'zoho'}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to search Zoho Books invoices: {e}')
+    except Exception: raise HTTPException(502, 'Unable to search Zoho Books invoices')
 @app.post('/api/invoices')
 async def create_invoice(payload: dict):
     try:
@@ -951,7 +1039,7 @@ async def create_invoice(payload: dict):
         _cache_recent_rows('invoices', [invoice] if invoice else [])
         return {'invoice': invoice, 'response': result}
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to create Zoho Books invoice: {e}')
+    except Exception: raise HTTPException(502, 'Unable to create Zoho Books invoice')
 @app.post('/api/invoices/{invoice_id}/email')
 async def email_invoice(invoice_id: str, payload: dict | None = None):
     try:
@@ -959,7 +1047,7 @@ async def email_invoice(invoice_id: str, payload: dict | None = None):
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         return await zoho.email_invoice(org, invoice_id, payload)
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to email Zoho Books invoice: {e}')
+    except Exception: raise HTTPException(502, 'Unable to email Zoho Books invoice')
 @app.get('/api/contacts')
 async def contacts(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -1025,8 +1113,8 @@ async def contacts(search: str = '', date: str = '', page: int = 1):
         return {'contacts': rows[:40], 'info': info, 'search': query, 'page': page, 'has_more': bool(info.get('more_records') or info.get('has_more_page')), 'search_by': search_by, 'source': source}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to search Bigin contacts: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to search Bigin contacts')
 @app.post('/api/contacts')
 @app.post('/api/books/contacts')
 async def create_contact(payload: ContactIn):
@@ -1066,8 +1154,8 @@ async def create_contact(payload: ContactIn):
         return {'contact': updated_contact, 'response': result}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to create Zoho Books contact: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to create Zoho Books contact')
 async def _update_books_record(update_fn, record_id: str, payload: dict):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org:
@@ -1078,8 +1166,8 @@ async def _update_books_record(update_fn, record_id: str, payload: dict):
         return await update_fn(org, record_id, payload)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to update Zoho Books record: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to update Zoho Books record')
 
 def _books_contact_view(payload: dict):
     contact = payload.get('contact') or payload.get('data') or payload
@@ -1148,18 +1236,17 @@ async def update_contact(contact_id: str, payload: dict):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org:
         raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-    books_error = None
     try:
         result = await zoho.update_books_contact(org, contact_id, payload)
         contact = result.get('contact') if isinstance(result, dict) else None
         _cache_recent_rows('contacts', [{**contact, '__source': 'books'}] if isinstance(contact, dict) else [])
         return {'contact': result, 'source': 'books'}
-    except Exception as error:
-        books_error = error
+    except Exception:
+        pass
     try:
         return {'contact': await zoho.update_bigin_contact(contact_id, payload), 'source': 'bigin'}
-    except Exception as bigin_error:
-        raise HTTPException(502, f'Unable to update contact in Zoho Books or Zoho Bigin: Books={books_error}; Bigin={bigin_error}')
+    except Exception:
+        raise HTTPException(502, 'Unable to update contact in Zoho Books or Zoho Bigin')
 
 @app.put('/api/bigin/contacts/{contact_id}')
 async def update_bigin_contact(contact_id: str, payload: dict):
@@ -1175,8 +1262,8 @@ async def update_bigin_contact(contact_id: str, payload: dict):
         return {'contact': contact}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to update Zoho Bigin contact: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to update Zoho Bigin contact')
 
 @app.put('/api/books/contacts/{contact_id}')
 async def update_books_contact(contact_id: str, payload: dict):
@@ -1203,8 +1290,8 @@ async def update_books_contact(contact_id: str, payload: dict):
         return {'contact': contact}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(502, f'Unable to update Zoho Books contact: {e}')
+    except Exception:
+        raise HTTPException(502, 'Unable to update Zoho Books contact')
 async def _delete_books_record(delete_fn, record_id: str, dataset: str | None = None):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
@@ -1214,25 +1301,24 @@ async def _delete_books_record(delete_fn, record_id: str, dataset: str | None = 
             _recent_cache_remove(dataset, record_id)
         return result
     except HTTPException: raise
-    except Exception as e: raise HTTPException(502, f'Unable to delete Zoho Books record: {e}')
+    except Exception: raise HTTPException(502, 'Unable to delete Zoho Books record')
 @app.delete('/api/contacts/{contact_id}')
 async def delete_contact(contact_id: str):
     status = zoho.status(); org = status.get('organization_id')
     if not status.get('connected') or not org:
         raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-    books_error = None
     try:
         result = await zoho.delete_books_contact(org, contact_id)
         _recent_cache_remove('contacts', contact_id)
         return {'response': result, 'source': 'books'}
-    except Exception as error:
-        books_error = error
+    except Exception:
+        pass
     try:
         result = await zoho.delete_bigin_contact(contact_id)
         _recent_cache_remove('contacts', contact_id)
         return {'response': result, 'source': 'bigin'}
-    except Exception as bigin_error:
-        raise HTTPException(502, f'Unable to delete contact in Zoho Books or Zoho Bigin: Books={books_error}; Bigin={bigin_error}')
+    except Exception:
+        raise HTTPException(502, 'Unable to delete contact in Zoho Books or Zoho Bigin')
 
 @app.delete('/api/bigin/contacts/{contact_id}')
 async def delete_bigin_contact(contact_id: str):
@@ -1247,15 +1333,15 @@ async def zoho_refresh_cron(x_zoho_refresh_secret: str|None = Header(default=Non
     if not settings.zoho_refresh_cron_secret or not x_zoho_refresh_secret or not secrets.compare_digest(x_zoho_refresh_secret, settings.zoho_refresh_cron_secret):
         raise HTTPException(401, 'Unauthorized')
     try:
-        refreshed=await zoho.refresh(force=False)
+        refreshed=await refresh_all()
         return {'ok':True,'refreshed':refreshed}
-    except Exception as e:
-        raise HTTPException(502, f'Zoho token refresh failed: {e}')
+    except Exception:
+        raise HTTPException(502, 'Zoho token refresh failed')
 @app.get('/api/chats')
 def chats(request: Request):
     try:
         with require_db() as db:
-            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id where s.organisation_id=cast(:org as uuid) order by s.updated_at desc limit 50"), {'org': get_organisation_id()}).all(); return [row_dict(r) for r in rows]
+            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null order by s.updated_at desc limit 50"), scope_parameters()).all(); return [row_dict(r) for r in rows]
     except Exception as e: return _db_http_error(e)
 
 @app.get('/api/session-contacts')
@@ -1277,19 +1363,20 @@ async def session_contacts(search: str = ''):
     errors = []
     try:
         with require_db() as db:
-            org = get_organisation_id()
-            rows = db.execute(text("select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id from chat_sessions s join customers c on c.id=s.customer_id where s.organisation_id=cast(:org as uuid) order by s.updated_at desc limit 50"), {'org': org}).all()
-            for row in rows: add(row_dict(row), 'session', session_id=row['session_id'])
-            rows = db.execute(text("select id as enquiry_id, customer_name as name,phone, payload->>'email' as email, stage as enquiry_stage, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) order by created_at desc limit 50"), {'org': org}).all()
-            for row in rows:
-                item = row_dict(row)
-                add(item, 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])
+            rows = db.execute(text("select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id from chat_sessions s join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null order by s.updated_at desc limit 50"), scope_parameters()).all()
+            for raw in rows:
+                row = row_dict(raw)
+                add(row, 'session', session_id=row['session_id'])
+            rows = db.execute(text("select id as enquiry_id, customer_name as name,phone, payload->>'email' as email, stage as enquiry_stage, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) and assigned_to=cast(:member as uuid) order by created_at desc limit 50"), scope_parameters()).all()
+            for raw in rows:
+                row = row_dict(raw)
+                add(row, 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])
                 key = f"phone:{''.join(ch for ch in str(row['phone'] or '') if ch.isdigit())[-10:]}" if row['phone'] else f"email:{str(row['email'] or '').lower()}"
                 if key in contacts:
                     contacts[key]['enquiry_id'] = str(row['enquiry_id'])
                     contacts[key]['enquiry_stage'] = row['enquiry_stage'] or 'new'
-    except Exception as e:
-        errors.append(f'Local contacts unavailable: {e}')
+    except Exception:
+        errors.append('Local contacts unavailable')
     try:
         status = zoho.status()
         books_org = status.get('organization_id')
@@ -1297,49 +1384,75 @@ async def session_contacts(search: str = ''):
             books = await zoho.books_customers(books_org)
             for row in (books.get('contacts', books.get('data', [])) or [])[:50]: add(row, 'books', row.get('contact_id') or row.get('id'))
         else: errors.append('Books is not connected')
-    except Exception as e: errors.append(f'Books contacts unavailable: {e}')
+    except Exception: errors.append('Books contacts unavailable')
     try:
         if zoho.status().get('connected'):
             bigin = await zoho.search_bigin_contacts(query, 'word') if query else await zoho.list_bigin_contacts()
             for row in (bigin.get('data', []) or [])[:50]: add(row, 'bigin', row.get('id'))
-    except Exception as e: errors.append(f'Bigin contacts unavailable: {e}')
+    except Exception: errors.append('Bigin contacts unavailable')
     return {'contacts': list(contacts.values())[:50], 'errors': errors}
 @app.get('/api/chats/{session_id}/messages')
-def messages(session_id:str):
-    try:
-        with require_db() as db:
-            rows=db.execute(text("select id,role,content,intent,metadata,created_at from chat_messages where session_id=:id order by created_at"),{'id':session_id}).all(); return [row_dict(r) for r in rows]
-    except Exception as e: return _db_http_error(e)
+def messages(session_id: UUID):
+    with require_db() as db:
+        _session(db, session_id)
+        return _session_messages(db, session_id)
+
+
 @app.post('/api/chat')
-async def chat(payload:ChatIn):
-    try:
-        with require_db() as db:
-            if not payload.session_id:
-                if not payload.customer: raise HTTPException(422,'Name plus phone or email is required to start a chat')
-                local_phone=''.join(ch for ch in (payload.customer.phone or '') if ch.isdigit())
-                if len(local_phone) != 10 or local_phone[0] == '0':
-                    raise HTTPException(422,'Phone number must contain exactly 10 digits and cannot start with 0')
-                if payload.customer.email and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', payload.customer.email.strip()):
-                    raise HTTPException(422,'Enter a valid email address')
-                customer=await get_or_create_customer(payload.customer.name,(payload.customer.phone_extension or '+91') + local_phone,payload.customer.email)
-                session=db.execute(text("insert into chat_sessions(customer_id,title) values(:customer,:title) returning *"),{'customer':customer['id'],'title':f"{customer['name']} enquiry"}).first(); db.commit(); session=row_dict(session)
-            else:
-                session=row_dict(db.execute(text("select * from chat_sessions where id=:id"),{'id':payload.session_id}).first())
-                if not session: raise HTTPException(404,'Session not found')
-                customer=row_dict(db.execute(text("select * from customers where id=:id"),{'id':session['customer_id']}).first())
-                customer['session_context']=session.get('context') or {}
-            history=[row_dict(r) for r in db.execute(text("select role,content from chat_messages where session_id=:id order by created_at desc limit 10"),{'id':session['id']}).all()][::-1]
-            customer['session_id']=str(session['id'])
-            existing_enquiry=db.execute(text("select id from enquiries where session_id=:id limit 1"),{'id':session['id']}).first()
-            if not existing_enquiry:
-                db.execute(text("insert into enquiries(session_id,customer_id,source,status) values(:session,:customer,'chat','new')"),{'session':session['id'],'customer':customer['id']})
-            db.execute(text("insert into chat_messages(session_id,role,content) values(:id,'user',:content)"),{'id':session['id'],'content':payload.message}); db.commit()
-        result=await run_graph(payload.message,customer,history)
-        with require_db() as db:
-            db.execute(text("insert into chat_messages(session_id,role,content,intent,metadata) values(:id,'assistant',:content,:intent,cast(:metadata as jsonb))"),{'id':session['id'],'content':result['answer'],'intent':result['intent'],'metadata':json.dumps(result['metadata'])})
-            next_context={'last_intent':result.get('intent'),'language':result.get('language'),'topic':result.get('topic', result.get('intent')),'focal_entity':result.get('focal_entity'),'pending_action':result.get('pending_action'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])[:8]}
-            db.execute(text("update chat_sessions set last_intent=:intent,language=:language,context=cast(:context as jsonb),updated_at=now() where id=:id"),{'intent':result['intent'],'language':result.get('language'),'context':json.dumps(next_context,default=str),'id':session['id']})
-            db.execute(text("update enquiries set status='processed',extracted_data=cast(:data as jsonb),updated_at=now() where session_id=:id"),{'data':json.dumps({'intent':result.get('intent'),'language':result.get('language'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])},default=str),'id':session['id']}); db.commit()
-        return {'session_id':str(session['id']),'customer':customer,'intent':result['intent'],'answer':result['answer']}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(500,str(e))
+async def chat(payload: ChatIn):
+    with require_db() as db:
+        params = scope_parameters()
+        if not payload.session_id:
+            if not payload.customer:
+                raise HTTPException(422, 'Name plus phone or email is required to start a chat')
+            local_phone = ''.join(ch for ch in (payload.customer.phone or '') if ch.isdigit())
+            if len(local_phone) != 10 or local_phone[0] == '0':
+                raise HTTPException(422, 'Phone number must contain exactly 10 digits and cannot start with 0')
+            if payload.customer.email and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', payload.customer.email.strip()):
+                raise HTTPException(422, 'Enter a valid email address')
+            customer = await get_or_create_customer(payload.customer.name,(payload.customer.phone_extension or '+91') + local_phone,payload.customer.email)
+            row = db.execute(text("""insert into chat_sessions(customer_id,title,organisation_id,member_id)
+              values(cast(:customer as uuid),:title,cast(:org as uuid),cast(:member as uuid)) returning *"""),
+              {**params, 'customer': str(customer['id']), 'title': f"{customer['name']} enquiry"}).first()
+            session = row_dict(row)
+        else:
+            session = _session(db, payload.session_id, lock=True)
+            row = db.execute(text("""select * from customers where id=cast(:customer as uuid)
+              and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null"""),
+              {**params, 'customer': str(session['customer_id'])}).first()
+            if not row:
+                raise HTTPException(404, 'Customer not found')
+            customer = row_dict(row)
+        params['session'] = str(session['id'])
+        customer['session_context'] = session.get('context') or {}
+        customer['session_id'] = str(session['id'])
+        history = _session_messages(db, session['id'], history=True)[::-1]
+        existing = db.execute(text("""select e.id from enquiries e join chat_sessions s on s.id=e.session_id
+          where s.id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid)
+            and s.member_id=cast(:member as uuid) limit 1"""), params).first()
+        if not existing:
+            db.execute(text("""insert into enquiries(session_id,customer_id,source,status)
+              select id,customer_id,'chat','new' from chat_sessions where id=cast(:session as uuid)
+                and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), params)
+        db.execute(text("""insert into chat_messages(session_id,role,content)
+          select id,'user',:content from chat_sessions where id=cast(:session as uuid)
+            and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), {**params, 'content': payload.message})
+        db.commit()
+    result = await run_graph(payload.message, customer, history)
+    with require_db() as db:
+        # Recheck scope after the provider call before storing its result.
+        session = _session(db, session['id'], lock=True)
+        db.execute(text("""insert into chat_messages(session_id,role,content,intent,metadata)
+          select id,'assistant',:content,:intent,cast(:metadata as jsonb) from chat_sessions
+          where id=cast(:session as uuid) and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+          {**params, 'content': result['answer'], 'intent': result['intent'], 'metadata': json.dumps(result['metadata'])})
+        next_context = {**(session.get('context') or {}), 'last_intent':result.get('intent'),'language':result.get('language'),'topic':result.get('topic',result.get('intent')),'focal_entity':result.get('focal_entity'),'pending_action':result.get('pending_action'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])[:8]}
+        db.execute(text("""update chat_sessions set last_intent=:intent,language=:language,context=cast(:context as jsonb),updated_at=now()
+          where id=cast(:session as uuid) and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+          {**params, 'intent':result['intent'],'language':result.get('language'),'context':json.dumps(next_context,default=str)})
+        db.execute(text("""update enquiries e set status='processed',extracted_data=cast(:data as jsonb),updated_at=now()
+          from chat_sessions s where e.session_id=s.id and s.id=cast(:session as uuid)
+            and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)"""),
+          {**params, 'data':json.dumps({'intent':result.get('intent'),'language':result.get('language'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])},default=str)})
+        db.commit()
+    return {'session_id':str(session['id']),'customer':customer,'intent':result['intent'],'answer':result['answer']}

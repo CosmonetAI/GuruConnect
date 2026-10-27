@@ -9,7 +9,6 @@
     "build:production": "node scripts/build-production.mjs",
     "preview": "vite preview",
     "dev:api": "node scripts/run-backend.mjs api",
-    "dev:worker": "node scripts/run-backend.mjs worker",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:scripts": "node --test tests/scripts/*.test.mjs",

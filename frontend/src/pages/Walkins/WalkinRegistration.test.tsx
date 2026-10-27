@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(), attach: vi.fn(), navigate: vi.fn(), demo: false,
   panel: null as null | { onConversationChange: (id: string | null) => void; onBusyChange: (busy: boolean) => void; onApply: (field: string, value: string) => void },
 }))
-vi.mock('react-router-dom', async () => ({ ...(await vi.importActual<object>('react-router-dom')), useNavigate: () => mocks.navigate }))
+vi.mock('react-router-dom', async () => ({ ...(await vi.importActual<object>('react-router-dom')), useNavigate: () => mocks.navigate, useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
 vi.mock('../../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u1' }, workspace: { id: 'w1' } }) }))
 vi.mock('../../services/walkinService', () => ({ registerWalkin: mocks.register, attachWalkinRecording: mocks.attach, isWalkinDemoMode: () => mocks.demo }))
 vi.mock('./VoiceAssistPanel', () => ({ default: (props: NonNullable<typeof mocks.panel>) => { mocks.panel = props; return <div>voice panel</div> } }))

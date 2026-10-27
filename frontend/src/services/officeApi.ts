@@ -13,7 +13,7 @@ export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010')
 const serviceErrorMessages: Record<string, string> = {
   api_unreachable: localMode ? 'Local services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
   configuration_mismatch: 'Workspace services are using different modes. Ask your administrator to finish the workspace setup, then try again.',
-  engine_unconfigured: 'Configure ElevenLabs in Connections, then explicitly retry the failed speech stage. Your saved audio is preserved.',
+  engine_unconfigured: 'The managed speech service is unavailable. Contact your administrator, then retry the failed stage. Your saved audio is preserved.',
   database_schema_missing: 'GuruConnect setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
   recording_not_saved: 'Stop recording and finish saving the audio before saving this enquiry.',
   stale_connection_generation: 'This connection changed while the form was open. Refresh its settings and try again.',
@@ -22,7 +22,7 @@ const serviceErrorMessages: Record<string, string> = {
   database_busy: 'Workspace services are temporarily unavailable. Wait a moment and try again. If this continues, ask your administrator to check the database connection.',
   request_timeout: 'The request took too long. Check your connection and try again. If you were saving a change, refresh its status before submitting it again.',
   configuration_missing: 'Workspace services are not configured yet. Ask your administrator to finish the workspace setup, then try again.',
-  invalid_credentials: 'The provider rejected the saved API key. Copy a complete, active key from its dashboard, save it here, and test again.',
+  invalid_credentials: 'The managed service rejected its credentials. Ask your administrator to check the service configuration.',
   metadata_permission_denied: 'This connection check needs User → Read (user_read) permission on your ElevenLabs key. Enable it, save changes in ElevenLabs, and test again.',
   provider_permission_denied: 'The API key does not allow this action. Check its permissions in the provider dashboard and try again.',
   provider_quota_exceeded: 'The provider account or API key has reached its credit limit. Check its remaining credits and key limits before retrying.',
@@ -40,7 +40,7 @@ const serviceErrorMessages: Record<string, string> = {
   translation_term_preservation_failed: 'The translation changed a number or product code. Your source text is preserved for review.',
   external_translation_uncertain: 'The translation request may have been processed. Review its usage before submitting another paid attempt.',
   translator_execution_uncertain: 'The translation request may have been processed. Review its usage before submitting another paid attempt.',
-  translator_unconfigured: 'Configure English translation with an OpenAI API key, then test the connection.',
+  translator_unconfigured: 'The managed English translation service is unavailable. Ask your administrator to check its configuration.',
   provider_model_mismatch: 'The provider returned a different model. Your source text is preserved; ask your administrator to check model access.',
 };
 export function errorMessageForCode(code: string, fallback = 'The request failed. Please try again.'): string {
@@ -107,13 +107,12 @@ export async function request<T>(path: string, workspace?: string | null, init: 
 export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<Response> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
-  const abort = new AbortController();
-  const cancelled = () => abort.abort(init.signal?.reason ?? new DOMException('The request was cancelled.', 'AbortError'));
-  init.signal?.addEventListener('abort', cancelled, { once: true });
-  if (init.signal?.aborted) cancelled();
+  const signal = init.signal ?? undefined;
+  signal?.throwIfAborted();
   try {
-    const session = supabase ? (await supabase.auth.getSession()).data.session : null;
-    if (abort.signal.aborted) throw abort.signal.reason;
+    const sessionPromise = supabase?.auth.getSession();
+    const session = sessionPromise ? (await (signal ? abortable(sessionPromise, signal) : sessionPromise)).data.session : null;
+    signal?.throwIfAborted();
     if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
     const headers = new Headers(init.headers);
     if (session) {
@@ -122,7 +121,7 @@ export async function requestStream(path: string, workspace?: string | null, ini
     }
     if (workspace) headers.set('X-Workspace-ID', workspace);
     if (memberId) headers.set('X-Workspace-Member-ID', memberId);
-    const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
+    const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal, credentials: 'omit' });
     if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { detail?: string | Record<string, unknown>; error?: Record<string, unknown> };
@@ -131,10 +130,8 @@ export async function requestStream(path: string, workspace?: string | null, ini
     }
     return response;
   } catch (error) {
-    if (error instanceof TypeError && !abort.signal.aborted) throw new ApiError(503, 'api_unreachable', 'Workspace services could not be reached.');
+    if (error instanceof TypeError && !signal?.aborted) throw new ApiError(503, 'api_unreachable', 'Workspace services could not be reached.');
     throw error;
-  } finally {
-    init.signal?.removeEventListener('abort', cancelled);
   }
 }
 // These presentation aliases mirror the validated API's snake_case schema. They do not infer completion.
@@ -182,8 +179,8 @@ export interface Transcript { translation_strategy?: string; translator_model?: 
 export interface Progress { conversation: Conversation; runs?: Run[]; jobs?: Job[]; missing_chunks?: number[]; confirmed_samples?: number; }
 export interface Job { id: string; run_id?: string; job_type: string; status: string; error_code?: string; audio_start_seconds?: number; audio_end_seconds?: number; }
 export interface Run { id: string; engine_id: string; kind: string; state: string; model?: string; transcript_version_id?: string; covered_seconds?: number; created_at?: string; versions?: {id:string;english_state:string;kind:string}[]; processed_audio_seconds?:number; translation_characters?:number; translation_strategy?:string; translator_model?:string; translation_input_tokens?:number; translation_output_tokens?:number; }
-export interface Connection { id: string; engine_id: string; state: string; enabled: boolean; generation: number; last_test_at?: string; last_error?: string; queued_jobs?: number; inflight_jobs?: number; safe_config?: Record<string, unknown>; }
-export interface EngineSettings { default_engine_id: string | null; salesperson_engine_selection?: boolean; comparison_allowed?: boolean; allowed_engine_ids?: string[]; budget_policy?:Record<string,unknown>; }
+export interface Connection { id: string; engine_id: string; state: string; enabled: boolean; generation: number; last_test_at?: string; last_error?: string; queued_jobs?: number; inflight_jobs?: number; safe_config?: Record<string, unknown>; safe_metadata?: { platform_managed?: boolean; readiness_source?: string }; }
+export interface EngineSettings { default_engine_id: string | null; salesperson_engine_selection?: boolean; comparison_allowed?: boolean; allowed_engine_ids?: string[]; budget_policy?:Record<string,unknown>; server_managed_providers?: boolean; }
 export interface Member { user_id: string; display_name?: string; email?: string; role: Role; status: string; availability_status?: string; last_seen_at?: string; }
 export function message(error: unknown): string { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
 export function duration(seconds = 0): string { const s = Math.max(0, Math.floor(seconds)); return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`; }

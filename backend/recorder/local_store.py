@@ -109,6 +109,8 @@ class LocalStore:
             if not row:
                 raise KeyError(row_id)
             old = json.loads(row["data"])
+            if table == "conversations" and old.get("capture_state") == "deleted" and updates.get("capture_state") != "deleted":
+                raise ValueError("conversation_deleted")
             if any(old.get(key) != value for key, value in (expected or {}).items()):
                 raise ValueError("local_record_changed")
             data = {**old, **updates, "updated_at": now()}
@@ -380,6 +382,40 @@ class LocalStore:
 
     def get_transcript(self, conversation_id: str) -> dict:
         return self.get("transcripts", conversation_id) or {"version": None, "turns": [], "speakers": [], "revisions": []}
+
+    def delete_conversation(self, conversation_id: str) -> dict:
+        conversation_id = identifier(conversation_id)
+        with self.transaction() as db:
+            found = db.execute("select data from records where table_name='conversations' and id=?", (conversation_id,)).fetchone()
+            if not found:
+                raise ValueError("conversation_not_found")
+            row = json.loads(found["data"])
+            row.update(capture_state="deleted", deleted_at=row.get("deleted_at") or now(), updated_at=now(),
+                customer_name_snapshot="Deleted recording", salesperson_name_snapshot="", title="", location="",
+                active_version_id=None, lease_token=None, lease_until=0, playback_object_path=None, playback_path=None)
+            db.execute("update records set data=? where table_name='conversations' and id=?", (encoded(row), conversation_id))
+            db.execute("update jobs set state='cancelled',lease_token=null,lease_until=null,result=null,updated_at=? where conversation_id=? and kind<>'delete'", (now(), conversation_id))
+            dedupe = f"{conversation_id}:delete"
+            db.execute("insert into jobs(id,conversation_id,kind,dedupe_key,state,payload,created_at,updated_at) values(?,?,'delete',?,'queued','{}',?,?) on conflict(dedupe_key) do update set state=case when jobs.state in ('failed','blocked','cancelled') then 'queued' else jobs.state end,updated_at=excluded.updated_at", (str(uuid4()), conversation_id, dedupe, now(), now()))
+        return {"deleted": True, "cleanup": "queued"}
+
+    def retry_cleanup_jobs(self):
+        with self.transaction() as db:
+            db.execute("update jobs set state='queued',lease_token=null,lease_until=null,updated_at=? where kind='delete' and state='failed'", (now(),))
+
+    def finish_deleted_conversation(self, conversation_id, job_id, lease_token):
+        with self.transaction() as db:
+            self._fenced(db, job_id, lease_token)
+            run_ids = {row["id"] for row in db.execute("select id,data from records where table_name='runs'") if json.loads(row["data"]).get("conversation_id") == conversation_id}
+            current = db.execute("select data from records where table_name='transcripts' and id=?", (conversation_id,)).fetchone()
+            current_id = (json.loads(current["data"]).get("version") or {}).get("id") if current else None
+            for version in db.execute("select id,data from records where table_name='versions'").fetchall():
+                data = json.loads(version["data"])
+                if version["id"] == current_id or (data.get("version") or {}).get("run_id") in run_ids:
+                    db.execute("delete from records where table_name='versions' and id=?", (version["id"],))
+            db.execute("delete from records where table_name='transcripts' and id=?", (conversation_id,))
+            db.execute("delete from chunks where conversation_id=?", (conversation_id,))
+            db.execute("update jobs set state='succeeded',result='{}',submission_state='received',lease_token=null,lease_until=null,updated_at=? where id=?", (now(), job_id))
 
     def create_enquiry(self, data: dict, idem: str) -> tuple[dict, bool]:
         digest = hashlib.sha256(encoded(data).encode()).hexdigest()

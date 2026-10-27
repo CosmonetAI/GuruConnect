@@ -135,7 +135,7 @@ async def test_full_pipeline_preserves_original_words_speakers_and_numeric_engli
             return result()
 
     class Translate:
-        def __init__(self, key, usage_callback=None):
+        def __init__(self, key, usage_callback=None, model=OPENAI_TRANSLATION_MODEL):
             self.usage_callback = usage_callback
 
         async def translate(self, text, language):
@@ -204,7 +204,7 @@ async def test_missing_translator_preserves_source_and_retries_translation_witho
             return result()
 
     class Translate:
-        def __init__(self, key, usage_callback=None):
+        def __init__(self, key, usage_callback=None, model=OPENAI_TRANSLATION_MODEL):
             pass
 
         async def translate(self, *args):
@@ -329,7 +329,7 @@ async def test_partial_translation_is_cached_and_explicit_retry_only_translates_
             return value
 
     class Translate:
-        def __init__(self, key, usage_callback=None):
+        def __init__(self, key, usage_callback=None, model=OPENAI_TRANSLATION_MODEL):
             self.usage_callback = usage_callback
 
         async def translate(self, text, *args):

@@ -8,6 +8,7 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY backend/recorder ./recorder
+COPY backend/app ./app
 COPY backend/supabase-ca.crt ./supabase-ca.crt
 RUN test -s /app/backend/supabase-ca.crt
 COPY frontend/scripts/migrate.py /app/frontend/scripts/migrate.py

@@ -77,7 +77,7 @@ describe('local and authenticated request boundaries', () => {
   it('uses safe provider error messages without displaying submitted credential text', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: { code: 'invalid_credentials', message: 'fixture-private-provider-key' } }), { status: 401 }))
     const api = await load()
-    await expect(api.request('/connections')).rejects.toThrow('The provider rejected the saved API key')
+    await expect(api.request('/connections')).rejects.toThrow('The managed service rejected its credentials')
     await expect(api.request('/connections')).rejects.not.toThrow('fixture-private-provider-key')
   })
   it('maps backend network failure to an actionable local message', async () => {
@@ -126,5 +126,17 @@ describe('request deadlines cover auth, fetch and response bodies', () => {
     const api = await load(); const controller = new AbortController(); const pending = api.request('/enquiries', null, { signal: controller.signal })
     const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     controller.abort(new DOMException('cancelled', 'AbortError')); await cancelled
+  })
+})
+
+
+describe('authenticated media cancellation', () => {
+  it('keeps cancellation connected after response headers arrive and while audio is consumed', async () => {
+    const api = await load(); const controller = new AbortController()
+    vi.mocked(fetch).mockResolvedValue(new Response('audio', { headers: { 'Content-Type': 'audio/wav' } }))
+    await api.requestStream('/conversations/c/playback/stream', 'w', { signal: controller.signal })
+    const signal = vi.mocked(fetch).mock.calls[0][1]?.signal as AbortSignal
+    expect(signal.aborted).toBe(false)
+    controller.abort(); expect(signal.aborted).toBe(true)
   })
 })

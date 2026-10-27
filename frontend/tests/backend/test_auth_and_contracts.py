@@ -69,7 +69,7 @@ def test_missing_configuration_keeps_health_and_fails_closed():
         assert client.get("/ready").status_code == 503
         assert client.get("/api/v1/workspaces").status_code == 401
         assert client.get("/api/v1/workspaces", headers={"Authorization": "Bearer untrusted"}).status_code == 503
-        assert client.get("/internal/v1/claim").status_code == 405
+        assert client.get("/internal/v1/claim").status_code == 401
         response = client.post("/api/v1/conversations", content=b"x"*1_000_001)
         assert response.status_code == 413
         def chunks():

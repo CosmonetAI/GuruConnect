@@ -208,8 +208,24 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             response.status_code = 200
             return serialize_enquiry(prior)
         visit = await conversion_visit(connection, context, body.sourceEventId)
-        assignee = await least_loaded_salesperson(connection, context.id)
+        existing_ticket = visit.get("conversion_enquiry") if visit else None
+        if visit:
+            # The locked visit owns assignment. Requirements conversion must
+            # retain its current agent rather than load-balance the ticket again.
+            assignee = await one(connection, "select m.user_id,p.display_name,u.email from public.members m join public.profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s and m.user_id=%s and m.status='active' for share of m", (context.id, visit["assigned_agent_id"]))
+            if not assignee:
+                fail("walkin_agent_not_found", 409)
+        else:
+            assignee = await least_loaded_salesperson(connection, context.id)
         assigned_to = assignee["user_id"] if assignee else None
+        if existing_ticket:
+            if existing_ticket["conversation_id"] and existing_ticket["conversation_id"] != body.conversationId:
+                fail("walkin_recording_already_linked", 409)
+            # Keep ticket metadata and reception notes that the conversion form
+            # did not submit. Explicitly submitted fields remain editable.
+            payload = {**payload, **existing_ticket["payload"], **body.model_dump(mode="json", exclude_unset=True)}
+            payload["sourceEventId"] = f"walkin:{visit['id']}"
+            payload["sourceWalkinId"] = str(visit["id"])
         if assignee:
             payload["assignedExecutive"] = assignee["display_name"] or assignee["email"]
             payload["assignedSalespersonEmail"] = assignee["email"]
@@ -221,25 +237,38 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
                 fail("recording_not_saved", 409, "Finish the recording or audio upload and wait until its audio is saved before saving the enquiry")
             await validate_conversion_recording(connection, context, visit, body.conversationId)
             linked = await one(connection, "select id from public.guruconnect_enquiries where conversation_id=%s", (body.conversationId,))
-            if linked:
+            if linked and (not existing_ticket or linked["id"] != existing_ticket["id"]):
                 fail("recording_already_linked", 409, "This recording is already attached to an enquiry")
-        books_contact_id = None
+        books_contact_id = existing_ticket.get("books_contact_id") if existing_ticket else None
         try:
-            zoho_status = zoho.status()
+            zoho_status = zoho.status() if not books_contact_id else {}
             books_org = zoho_status.get("organization_id")
             email = payload.get("email") or payload.get("customerEmail")
             if books_org and (body.phone or email):
                 books_contact = await zoho.ensure_books_contact(books_org, name=body.customerName, email=email, phone=body.phone)
                 books_contact_id = books_contact.get("contact_id") or books_contact.get("id")
         except Exception:
-            books_contact_id = None
-        row = await one(connection, """insert into public.guruconnect_enquiries
+            pass
+        if existing_ticket:
+            # Preserve the issued ticket number/day, public token hash and row
+            # identity. Owning the locked assigned visit authorizes the handoff
+            # from reception to this agent; the recording owner FK stays exact.
+            await connection.execute("""update public.guruconnect_enquiries set
+                owner_id=%s,conversation_id=%s,idempotency_key=%s,payload_hash=%s,payload=%s,
+                customer_name=%s,phone=%s,channel=%s,branch=%s,assigned_to=%s,unread=true,books_contact_id=%s
+                where id=%s and organisation_id=%s""",
+                (context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
+                 body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id,
+                 existing_ticket["id"], context.id))
+            row = {"id": existing_ticket["id"]}
+        else:
+            row = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,
              customer_name,phone,channel,branch,assigned_to,stage,unread,books_contact_id)
             values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s) returning id""",
-                        (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
-                         body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id))
-        await audit(connection, context, "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
+                            (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
+                             body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id))
+        await audit(connection, context, "enquiry.converted_from_walkin" if existing_ticket else "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
         if visit:
             await complete_conversion(connection, context, visit, row["id"])
         saved = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s", (row["id"], context.id))
@@ -325,9 +354,9 @@ async def track_public_ticket(request: Request, token: str = Query(min_length=16
                                where e.public_token_hash=%s limit 1""", (token_hash,))
     if not row:
         raise HTTPException(404, "Ticket not found or token expired")
-    return {"ticketNumber": row.daily_sequence, "date": str(row.ticket_day), "stage": row.stage,
-            "createdAt": row.created_at.isoformat(), "salesperson": row.salesperson_name or "Awaiting assignment",
-            "salespersonEmail": row.salesperson_email or ""}
+    return {"ticketNumber": row["daily_sequence"], "date": str(row["ticket_day"]), "stage": row["stage"],
+            "createdAt": row["created_at"].isoformat(), "salesperson": row["salesperson_name"] or "Awaiting assignment",
+            "salespersonEmail": row["salesperson_email"] or ""}
 
 @router.get("/{enquiry_id}")
 async def get_enquiry(enquiry_id: UUID, request: Request, context: Workspace = Depends(workspace)):

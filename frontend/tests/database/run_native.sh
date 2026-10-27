@@ -2,7 +2,7 @@
 # Isolated native PostgreSQL emulation; does not verify hosted Supabase APIs.
 set -euo pipefail
 test_dir="$(cd "$(dirname "$0")" && pwd)"
-project_dir="$(cd "$test_dir/../.." && pwd)"
+project_dir="$(cd "$test_dir/../../.." && pwd)"
 test_data="${GURU_NATIVE_TEST_DIR:-}"
 test_port="${GURU_NATIVE_TEST_PORT:-55439}"
 if [[ -n "$test_data" && -e "$test_data" ]]; then
@@ -17,8 +17,8 @@ trap 'pg_ctl -D "$test_data/data" -m fast -w stop' EXIT
 db_args=(-h 127.0.0.1 -p "$test_port" -d postgres -v ON_ERROR_STOP=1)
 psql "${db_args[@]}" -f "$test_dir/native_fixture.sql" > "$test_data/fixture.log"
 for migration in "$project_dir"/supabase/migrations/*.sql; do
-  # pgmq extension is unavailable in stock Postgres; fixture implements signatures.
-  sed '/^create extension if not exists pgmq;$/d' "$migration" > "$test_data/current_migration.sql"
+  # Supabase-only extension signatures are emulated without any network calls.
+  python3 "$test_dir/native_migrations.py" "$migration" > "$test_data/current_migration.sql"
   psql "${db_args[@]}" -f "$test_data/current_migration.sql" >> "$test_data/migrations.log"
 done
 if ! psql "${db_args[@]}" -qAt -f "$test_dir/security_invariants.sql" > "$test_data/invariants.log" 2>&1; then
@@ -36,6 +36,11 @@ if ! psql "${db_args[@]}" -qAt -f "$test_dir/walkin_invariants.sql" > "$test_dat
   exit 1
 fi
 printf 'Walk-in SQL assertions passed: %s\n' "$(rg -c 'NOTICE:  PASS:' "$test_data/walkin-invariants.log")"
+if ! psql "${db_args[@]}" -qAt -f "$test_dir/sales_session_invariants.sql" > "$test_data/sales-invariants.log" 2>&1; then
+  tail -n 30 "$test_data/sales-invariants.log"
+  exit 1
+fi
+printf 'Sales-session SQL assertions passed: %s\n' "$(rg -c 'NOTICE:  PASS:' "$test_data/sales-invariants.log")"
 python3 "$test_dir/concurrent_native.py" --port "$test_port" | tee "$test_data/concurrent.log"
 printf '%s\n' "Native Postgres emulation passed. Hosted Supabase/storage/pgmq verification is still required."
 printf 'Evidence directory: %s\n' "$test_data"

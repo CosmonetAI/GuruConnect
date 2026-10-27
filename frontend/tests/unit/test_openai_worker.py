@@ -78,6 +78,8 @@ def worker_case(monkeypatch):
         if "begin_job_submission(" in sql:
             state.submitted.append(params)
             return {"ok": True}
+        if sql.startswith("select state from processing_jobs"):
+            return {"state": "uncertain" if state.provider_failure else "failed"}
         if "retry_job(" in sql:
             state.executed.append((sql, params))
             return {"accepted": True}
@@ -104,7 +106,7 @@ def worker_case(monkeypatch):
             return {"api_key": f"fixture-{state.connection['engine_id']}", "region": "centralindia"}
 
     class FakeOpenAI:
-        def __init__(self, key, *, usage_callback=None):
+        def __init__(self, key, *, usage_callback=None, model=MODEL):
             assert key == "fixture-openai-translator"
             self.usage_callback = usage_callback
 
@@ -150,7 +152,7 @@ async def test_openai_worker_preserves_source_speaker_interval_and_records_actua
     state = worker_case
     source_before = copy.deepcopy(state.source)
     await state.worker.translate(state.job)
-    assert state.openai_calls == [("ऑर्डर X123 25 kg", None)]
+    assert state.openai_calls == [("ऑर्डर X123 25 kg", "hi")]
     assert not state.azure_calls and len(state.submitted) == 1
     assert state.source == source_before
     result = state.published[-1]

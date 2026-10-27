@@ -87,10 +87,10 @@ select pg_temp.assert_rejected($q$update public.workspace_engine_settings set de
 select pg_temp.assert_rejected($q$select * from public.claim_jobs('attacker')$q$,array['42501'],'browser queue claim denied');
 select pg_temp.assert_rejected($q$select public.create_workspace('a0000000-0000-0000-0000-000000000002','forged')$q$,array['42501'],'browser trusted workspace RPC denied');
 select pg_temp.assert_rejected($q$select * from pgmq.q_recorder_jobs$q$,array['42501'],'browser direct queue denied');
-insert into storage.objects(bucket_id,name,owner_id) values('recorder-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000002/d0000000-0000-0000-0000-000000000001/f0000000-0000-0000-0000-000000000001/0.wav','a0000000-0000-0000-0000-000000000002');
+insert into storage.objects(bucket_id,name,owner_id) values('session-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000002/d0000000-0000-0000-0000-000000000001/session-audio/no-phone/f0000000-0000-0000-0000-000000000001/0.wav','a0000000-0000-0000-0000-000000000002');
 select pg_temp.assert_true((select count(*)=1 from storage.objects),'owner storage read allowed');
-select pg_temp.assert_rejected($q$insert into storage.objects(bucket_id,name) values('recorder-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000003/d0000000-0000-0000-0000-000000000002/f0000000-0000-0000-0000-000000000002/0.wav')$q$,array['42501'],'cross-owner storage upload denied');
-select pg_temp.assert_rejected($q$insert into storage.objects(bucket_id,name) values('recorder-audio','arbitrary.wav')$q$,array['42501'],'unreserved object upload denied');
+select pg_temp.assert_rejected($q$insert into storage.objects(bucket_id,name) values('session-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000003/d0000000-0000-0000-0000-000000000002/session-audio/no-phone/f0000000-0000-0000-0000-000000000002/0.wav')$q$,array['42501'],'cross-owner storage upload denied');
+select pg_temp.assert_rejected($q$insert into storage.objects(bucket_id,name) values('session-audio','arbitrary.wav')$q$,array['42501'],'unreserved object upload denied');
 select pg_temp.assert_rejected($q$insert into storage.objects(bucket_id,name) values('recorder-artifacts','raw.json')$q$,array['42501'],'browser artifact upload denied');
 update storage.objects set name='overwritten.wav';
 select pg_temp.assert_true((select count(*)=1 from storage.objects where name like '%/0.wav'),'immutable storage update denied');
@@ -107,7 +107,7 @@ reset role;
 
 select pg_temp.assert_true((public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','tab-a')).fence=1,'first lease acquired');
 select pg_temp.assert_true((public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','tab-a')).fence=1,'same-tab lease idempotent');
-select pg_temp.assert_rejected($q$select public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','tab-b',true)$q$,array['55P03'],'active other-tab lease cannot be silently stolen');
+select pg_temp.assert_rejected($q$select public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','tab-b',false)$q$,array['55P03'],'active other-tab lease requires explicit takeover');
 select pg_temp.assert_rejected($q$select public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000003','tab-b')$q$,array['42501'],'cross-owner recording lease denied');
 update public.recording_leases set expires_at=now()-interval '1 second';
 select pg_temp.assert_rejected($q$select public.acquire_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','tab-b')$q$,array['55P03'],'expired lease requires explicit recovery');
@@ -213,7 +213,7 @@ select pg_temp.assert_true((select count(*)=0 from public.conversations),'revoke
 select pg_temp.assert_true((select count(*)=0 from public.customers),'revoked account cannot see customers');
 select pg_temp.assert_true((select count(*)=0 from public.engine_connections),'revoked account cannot inspect connections');
 select pg_temp.assert_true((select count(*)=0 from storage.objects),'revoked account storage access denied');
-select pg_temp.assert_true(not public.recorder_upload_allowed('recorder-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000002/d0000000-0000-0000-0000-000000000001/f0000000-0000-0000-0000-000000000001/0.wav'),'revoked member pending upload denied');
+select pg_temp.assert_true(not public.recorder_upload_allowed('session-audio','b0000000-0000-0000-0000-000000000001/a0000000-0000-0000-0000-000000000002/d0000000-0000-0000-0000-000000000001/session-audio/no-phone/f0000000-0000-0000-0000-000000000001/0.wav'),'revoked member pending upload denied');
 reset role;
 select pg_temp.assert_true(not public.heartbeat_recording_lease('d0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','upload-recovery',(select token from public.recording_leases where user_id='a0000000-0000-0000-0000-000000000002')),'revoked recording heartbeat denied');
 select pg_temp.assert_true(public.allow_api_request('test:user',2,60),'rate first request accepted');

@@ -48,7 +48,7 @@ class ZohoClient:
     def status(self):
         c=self._connection()
         if not c: return {'status':'not_connected','connected':False}
-        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'last_error':c.get('last_error')}
+        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
     def configuration(self):
         c=self._connection() or {}
         return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
@@ -172,7 +172,6 @@ class ZohoClient:
         result = await self.create_books_contact(org, payload)
         return result.get('contact') or (result.get('data') or [None])[0] or result
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
-    async def get_books_contact(self, org, contact_id): return await self.request('GET',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
     async def update_bigin_contact(self, contact_id, data): return await self.request('PUT',f'/bigin/v2/Contacts/{contact_id}',json={'data':[{'id': contact_id, **data}]})
@@ -294,11 +293,23 @@ zoho=ZohoClient()
 async def refresh_all():
     with require_db() as db:
         rows = [row_dict(row) for row in db.execute(text("select organisation_id,member_id from zoho_connections where refresh_token is not null")).all()]
-    for row in rows:
-        set_organisation_id(str(row['organisation_id']))
-        set_member_id(str(row['member_id']))
-        try: await zoho.refresh(force=False)
-        except Exception: pass
+    refreshed = 0
+    org_token = _organisation_id.set(None)
+    member_token = _member_id.set(None)
+    try:
+        for row in rows:
+            if not row['organisation_id'] or not row['member_id']:
+                continue
+            set_organisation_id(str(row['organisation_id']))
+            set_member_id(str(row['member_id']))
+            try:
+                refreshed += bool(await zoho.refresh(force=False))
+            except Exception:
+                log.warning('zoho_refresh_failed')
+    finally:
+        _organisation_id.reset(org_token)
+        _member_id.reset(member_token)
+    return refreshed
 
 async def refresh_loop():
     while True:

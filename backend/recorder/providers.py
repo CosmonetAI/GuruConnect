@@ -75,7 +75,7 @@ REGISTRY = {
     "elevenlabs": Capabilities("elevenlabs", "scribe_v2", False, True, "source_word"),
     "faster-whisper": Capabilities("faster-whisper", "large-v3/community-1", True, True, "segment"),
     "azure-translator": Capabilities("azure-translator", "standard-v3", True, False, "source_turn"),
-    "openai-translator": Capabilities("openai-translator", "gpt-5.6-luna", True, False, "source_turn"),
+    "openai-translator": Capabilities("openai-translator", "gpt-5.4-mini-2026-03-17", True, False, "source_turn"),
 }
 
 

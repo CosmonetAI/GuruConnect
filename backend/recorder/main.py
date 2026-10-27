@@ -18,10 +18,11 @@ from .middleware import RequestBoundary, security_headers
 from .recording_routes import router as recording_router
 from .routes import router as public_router
 from .security import JWTVerifier
+from .runtime import ProcessingRuntime
 from .storage import Storage
 from .transcript_routes import router as transcript_router
 from .walkin_routes import router as walkin_router
-from app.main import app as gg_sales_app
+from app.main import bind_parent
 from app.zoho import refresh_loop as gg_refresh_loop
 
 log = logging.getLogger("recorder.api")
@@ -50,6 +51,7 @@ select
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
     and to_regprocedure('recorder_private.version_job_guard()') is not null
     and to_regprocedure('public.resume_translation_job(uuid,uuid)') is not null
+    and to_regprocedure('recorder_private.recording_owner_access_ready()') is not null
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='input_tokens')
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='output_tokens')
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='provider_model')
@@ -69,13 +71,17 @@ def create_app(settings=None, *, allow_local=False):
         await app.state.db.open()
         gg_refresh_task = asyncio.create_task(gg_refresh_loop())
         try:
+            await app.state.processing.start()
             log.info("api_ready")
             yield
         finally:
             log.info("api_stopping")
-            gg_refresh_task.cancel()
-            await asyncio.gather(gg_refresh_task, return_exceptions=True)
-            await app.state.db.close()
+            try:
+                await app.state.processing.stop()
+            finally:
+                gg_refresh_task.cancel()
+                await asyncio.gather(gg_refresh_task, return_exceptions=True)
+                await app.state.db.close()
 
     app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan,
                   docs_url=None if settings.deployed else "/docs",
@@ -85,6 +91,7 @@ def create_app(settings=None, *, allow_local=False):
     app.state.db = Database(settings)
     app.state.verifier = JWTVerifier(settings)
     app.state.storage = Storage(settings)
+    app.state.processing = ProcessingRuntime(settings, database=app.state.db)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                        allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Workspace-ID", "X-Workspace-Member-ID", "Idempotency-Key"],
@@ -144,6 +151,9 @@ def create_app(settings=None, *, allow_local=False):
                     schema = await one(connection, SCHEMA_READINESS_QUERY)
             if not schema or not schema["schema_ready"]:
                 return JSONResponse({"status": "not_ready", "code": "database_schema_missing"}, 503)
+            if settings.embedded_processing_enabled and not app.state.processing.healthy:
+                return JSONResponse({"status": "not_ready", "code": "processing_unavailable",
+                                     "processing": app.state.processing.status()}, 503)
             return {"status": "ready"}
         except Exception:
             return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
@@ -152,7 +162,7 @@ def create_app(settings=None, *, allow_local=False):
         app.include_router(router)
     # One backend process serves both products. Existing GuruConnect routes
     # remain under /api/v1; the GG sales assistant keeps its /api routes.
-    app.mount("/", gg_sales_app)
+    app.mount("/", bind_parent(app))
     return app
 
 app = create_app(allow_local=True)

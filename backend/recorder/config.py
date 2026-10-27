@@ -7,12 +7,12 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from psycopg.conninfo import conninfo_to_dict
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True)
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True, populate_by_name=True)
     environment: Literal["development", "local", "test", "staging", "production"] = "development"
     local_data_dir: Path = Path(__file__).resolve().parents[1] / ".local-data"
     database_url: SecretStr | None = None
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5176", "http://127.0.0.1:5176", "http://localhost:5174", "http://127.0.0.1:5174"]
     trusted_hosts: list[str] = ["localhost", "127.0.0.1", "::1", "testserver"]
     request_body_timeout_seconds: float = Field(default=15, gt=0, le=120)
-    max_concurrent_requests: int = Field(default=20, ge=1, le=1000)
+    max_concurrent_requests: int = Field(default=64, ge=1, le=1000)
     preauth_rate_limit_per_minute: int = Field(default=300, ge=1, le=10000)
     preauth_rate_limit_max_peers: int = Field(default=4096, ge=1, le=100000)
     storage_bucket: str = "session-audio"
@@ -41,9 +41,21 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=180, ge=30, le=900)
     rate_limit_per_minute: int = Field(default=120, ge=10, le=10000)
     elevenlabs_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    openai_translation_model: str = Field(default="gpt-5.4-mini-2026-03-17", validation_alias=AliasChoices("OPENAI_TRANSLATION_MODEL", "OPENAI_MODEL"))
+    embedded_processing_enabled: bool = True
+    processing_shutdown_seconds: float = Field(default=15, gt=0, le=25)
+    processing_concurrency: int = Field(default=4, ge=1, le=20)
+    managed_provider_concurrency: int = Field(default=4, ge=1, le=20)
     azure_translator_key: SecretStr | None = None
     azure_translator_region: str = ""
     azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
+
+    @field_validator("openai_translation_model")
+    @classmethod
+    def validate_translation_model(cls, value):
+        from .openai_translator import validate_translation_model
+        return validate_translation_model(value)
 
     @field_validator("environment", mode="before")
     @classmethod

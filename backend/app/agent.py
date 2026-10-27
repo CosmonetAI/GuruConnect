@@ -16,7 +16,7 @@ from typing import Any, TypedDict
 from sqlalchemy import text
 
 from .chat import normalize_email, normalize_phone
-from .db import require_db, row_dict
+from .db import require_db, scope_parameters
 from .settings import settings
 from .zoho import zoho
 
@@ -300,7 +300,10 @@ async def _persist_transaction(state: AgentState, fields: dict[str, Any]) -> Non
         return
     assignments = ', '.join(f"{key}=:{key}" for key in fields)
     with require_db() as db:
-        db.execute(text(f"update enquiries set {assignments}, updated_at=now() where session_id=:session"), {'session': session_id, **fields})
+        db.execute(text(f"""update enquiries e set {assignments}, updated_at=now()
+          from chat_sessions s where e.session_id=s.id and s.id=cast(:session as uuid)
+            and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)"""),
+          {**scope_parameters(), 'session': session_id, **fields})
         db.commit()
 
 
@@ -351,7 +354,7 @@ async def execute_node(state: AgentState) -> AgentState:
                         books_customer = {'contact_id': match.get('contact_id') or match.get('customer_id'), 'record': match}
                         if books_customer.get('contact_id'):
                             with require_db() as db:
-                                db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer'), {'id': books_customer['contact_id'], 'customer': customer['id']}); db.commit()
+                                db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null'), {**scope_parameters(), 'id': books_customer['contact_id'], 'customer': customer['id']}); db.commit()
                 results.append({'tool': tool, 'success': bool(books_customer and books_customer.get('contact_id')), 'data': books_customer or {'missing': 'books_contact_id'}})
             elif tool == 'books_invoices':
                 payload = await zoho.list_invoices(org)
@@ -397,11 +400,10 @@ async def execute_node(state: AgentState) -> AgentState:
                     contact_id = contact.get('contact_id')
                     if contact_id:
                         with require_db() as db:
-                            db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer'), {'id': contact_id, 'customer': customer['id']}); db.commit()
-                note_id = None
+                            db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null'), {**scope_parameters(), 'id': contact_id, 'customer': customer['id']}); db.commit()
                 results.append({'tool': tool, 'success': True, 'data': {'books_contact_id': contact_id, 'crm_context_created': bool(contact_id)}})
-    except Exception as exc:
-        results.append({'tool': 'zoho', 'success': False, 'error': str(exc)[:300]})
+    except Exception:
+        results.append({'tool': 'zoho', 'success': False, 'error': 'Zoho operation unavailable'})
     state['tool_results'] = results
     if any(result.get('tool') in {'create_estimate', 'create_sales_order'} and result.get('success') for result in results):
         state['pending_action'] = None
@@ -414,7 +416,6 @@ def verified_context(state: AgentState) -> str:
 
 async def compose_node(state: AgentState) -> AgentState:
     language = state.get('language', 'english')
-    results = state.get('tool_results', [])
     if settings.openai_api_key:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=settings.openai_api_key)

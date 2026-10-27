@@ -194,7 +194,7 @@ export async function listWalkinHistoryPage(workspaceId: string, visitId?: strin
 }
 export async function listWalkinHistory(workspaceId: string, visitId?: string): Promise<WalkinHistoryEvent[]> { return (await listWalkinHistoryPage(workspaceId, visitId)).items }
 export function walkinRecordingsPath(visitId: string, page = 1) {
-  return localMode ? `/conversations?q=${encodeURIComponent(visitId)}&limit=100` : `/walkins/${encodeURIComponent(visitId)}/recordings?page=${page}&pageSize=100`
+  return localMode ? `/conversations?q=${encodeURIComponent(visitId)}&limit=100&audio_bucket=walkin-audio` : `/walkins/${encodeURIComponent(visitId)}/recordings?page=${page}&pageSize=100`
 }
 export async function attachWalkinRecording(workspaceId: string, visitId: string, conversationId: string) {
   scope(workspaceId)

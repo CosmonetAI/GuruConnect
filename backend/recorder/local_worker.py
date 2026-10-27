@@ -12,6 +12,8 @@ import logging
 import math
 import os
 import tempfile
+import time
+import shutil
 import wave
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -19,6 +21,7 @@ from uuid import UUID, uuid4
 from .audio import MAX_SESSION_SAMPLES, SAMPLE_RATE, validate_wav
 from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator
 from .providers import ElevenLabsAdapter, ProviderError
+from .provider_bootstrap import server_credentials, bootstrap_local_managed_providers
 
 log = logging.getLogger("recorder.local_worker")
 BLOCKED_CODES = {
@@ -51,12 +54,19 @@ class LocalWorker:
         self.store = store or LocalStore(Path(settings.local_data_dir))
         self.id = os.environ.get("MAIN_WORKER_ID") or f"local-main-{uuid4()}"
         self.stopping = asyncio.Event()
+        self.last_cycle = None
+        self.last_cleanup = 0.0
+        bootstrap_local_managed_providers(settings, self.store)
 
     def mutate(self, job, method, *args, **kwargs):
         return getattr(self.store, method)(job["id"], *args, lease_token=job.get("lease_token"), **kwargs)
 
     def credentials(self, engine: str) -> dict:
         configured = self.store.connection(engine)
+        if configured and configured.get("config", {}).get("platform_managed"):
+            credentials = server_credentials(self.settings, engine)
+            if credentials: return credentials
+            raise ProviderError("translator_unconfigured" if engine == "openai-translator" else "engine_unconfigured")
         if not configured or configured.get("state") != "connected":
             raise ProviderError("translator_unconfigured" if engine == "openai-translator" else "engine_unconfigured")
         secrets = self.store.secrets(engine)
@@ -90,6 +100,7 @@ class LocalWorker:
         if not rows or not 0 < expected_samples <= MAX_SESSION_SAMPLES:
             raise ProviderError("invalid_audio")
         destination = self.store.audio_path(conversation_id)
+        self.store.assert_job(job["id"], job["lease_token"])
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor, scratch = tempfile.mkstemp(prefix="assembly-", suffix=".wav", dir=destination.parent)
         os.close(descriptor)
@@ -112,10 +123,10 @@ class LocalWorker:
                         raise ProviderError("invalid_audio")
                     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
                     with os.fdopen(descriptor, "rb") as source:
-                        data = source.read(160000 * 2 + 4097)
-                    if len(data) > 160000 * 2 + 4096:
+                        data = source.read(180 * SAMPLE_RATE * 2 + 4097)
+                    if len(data) > 180 * SAMPLE_RATE * 2 + 4096:
                         raise ProviderError("invalid_audio")
-                    info = validate_wav(data, int(row["sample_count"]))
+                    info = validate_wav(data, int(row["sample_count"]), max_samples=180 * SAMPLE_RATE)
                     if info.sha256 != row["sha256"] or len(data) != int(row["bytes"]):
                         raise ProviderError("input_hash_mismatch")
                     output.writeframesraw(info.pcm)
@@ -133,7 +144,13 @@ class LocalWorker:
             os.replace(scratch, destination)
         finally:
             Path(scratch).unlink(missing_ok=True)
-        self.store.assert_job(job["id"], job["lease_token"])
+        try:
+            self.store.assert_job(job["id"], job["lease_token"])
+        except ValueError:
+            # A deletion can fence a worker between directory creation and
+            # atomic rename. Do not leave reconstructed audio behind it.
+            destination.unlink(missing_ok=True)
+            raise
         self.patch_conversation(
             conversation_id,
             playback_object_path=str(destination),
@@ -292,6 +309,7 @@ class LocalWorker:
         if not conversation or conversation.get("capture_state") == "deleted":
             raise ProviderError("permission_denied")
         credentials = self.credentials("openai-translator")
+        model = (self.store.connection("openai-translator") or {}).get("config", {}).get("model", OPENAI_TRANSLATION_MODEL)
         transcript = self.store.get_transcript(conversation_id)
         version = transcript.get("version")
         if not version or not transcript.get("turns"):
@@ -316,10 +334,10 @@ class LocalWorker:
                     job,
                     translation_input_tokens=int(prior.get("translation_input_tokens", 0)) + usage.input_tokens,
                     translation_output_tokens=int(prior.get("translation_output_tokens", 0)) + usage.output_tokens,
-                    translator_model=OPENAI_TRANSLATION_MODEL,
+                    translator_model=model,
                 )
 
-            translated = await OpenAITranslator(credentials["api_key"], usage_callback=account_usage).translate(
+            translated = await OpenAITranslator(credentials["api_key"], usage_callback=account_usage, model=model).translate(
                 turn["source_text"], turn.get("source_language")
             )
             turn["english_text"] = translated.text
@@ -328,15 +346,15 @@ class LocalWorker:
             self.publish_turns(job, turns, version, transcript.get("speakers", []))
         provenance = {
             **version.get("provenance", {}),
-            "translation": "openai-gpt-5.6-luna",
-            "translation_model": OPENAI_TRANSLATION_MODEL,
+            "translation": f"openai-{model}",
+            "translation_model": model,
             "translated_word_alignment": None,
         }
         version = {**version, "english_state": "complete", "provenance": provenance}
         self.publish_turns(job, turns, version, transcript.get("speakers", []))
         self.patch_conversation(conversation_id, english_state="complete", final_state="complete", processing_error_code=None)
         self.patch_run(
-            job, state="succeeded", provenance=provenance, translation_strategy="openai", translator_model=OPENAI_TRANSLATION_MODEL
+            job, state="succeeded", provenance=provenance, translation_strategy="openai", translator_model=model
         )
         self.mutate(job, "complete_job", {"source_version_id": version["id"], "translated_turns": len(turns)})
 
@@ -351,6 +369,8 @@ class LocalWorker:
                 if job["kind"] in {"transcribe", "finalise"}
                 else self.translate(job)
                 if job["kind"] == "translate"
+                else self.delete(job)
+                if job["kind"] == "delete"
                 else None
             )
             if operation is None:
@@ -386,12 +406,15 @@ class LocalWorker:
                 "fail_job",
                 state,
                 code,
-                "Add the provider key in Settings, test the connection, then explicitly retry processing."
+                "The server administrator needs to check the provider configuration before processing can resume."
                 if state == "blocked"
                 else "Review processing before retrying; a provider request may already have executed."
                 if state == "uncertain"
                 else "Your saved audio and source text are preserved. Check processing and retry explicitly.",
             )
+            if job["kind"] == "delete":
+                log.warning("local_cleanup_pending job_id=%s code=%s", job["id"], code)
+                return
             updates = {"final_state": state, "processing_error_code": code}
             updates["english_state" if job["kind"] == "translate" else "transcription_state"] = state
             self.patch_conversation(job["conversation_id"], **updates)
@@ -404,10 +427,27 @@ class LocalWorker:
             await asyncio.gather(renewal, *([execution] if execution else []), return_exceptions=True)
 
     async def run_once(self):
+        self.last_cycle = time.monotonic()
+        if self.last_cycle - self.last_cleanup >= 60:
+            self.store.retry_cleanup_jobs()
+            self.last_cleanup = self.last_cycle
         job = self.store.claim_job(self.id, lease_seconds=max(900, int(self.settings.worker_lease_seconds)))
         if job:
             await self.execute(job)
         return job is not None
+
+    async def delete(self, job):
+        conversation_id = str(UUID(str(job["conversation_id"])))
+        self.store.assert_job(job["id"], job["lease_token"])
+        row = self.store.get("conversations", conversation_id)
+        if not row or row.get("capture_state") != "deleted":
+            raise ProviderError("permission_denied")
+        directory = self.store.root / "audio" / conversation_id
+        if directory.is_symlink() or not directory.resolve().is_relative_to(self.store.root):
+            raise ProviderError("invalid_audio")
+        if directory.exists():
+            await asyncio.to_thread(shutil.rmtree, directory)
+        self.store.finish_deleted_conversation(conversation_id, job["id"], job["lease_token"])
 
     async def run(self):
         print("Local processing worker started", flush=True)

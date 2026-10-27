@@ -11,8 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 from recorder.config import Settings
 from recorder.main import create_app
+from database.native_migrations import apply_native_migrations
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = sorted((ROOT / "supabase/migrations").glob("*.sql"))
 
 
@@ -35,7 +36,7 @@ def database_url():
         url = f"postgresql:///postgres?host={path}&port=55442"
         try:
             with psycopg.connect(url, autocommit=True) as connection:
-                connection.execute((ROOT / "tests/database/native_fixture.sql").read_text(), prepare=False)
+                connection.execute((ROOT / "frontend/tests/database/native_fixture.sql").read_text(), prepare=False)
             yield url
         finally:
             subprocess.run(
@@ -58,10 +59,7 @@ def test_ready_requires_complete_migrations(database_url, migration_count):
     migrations = sorted((ROOT / "supabase/migrations").glob("*.sql"))
     assert migrations == MIGRATIONS
     with psycopg.connect(database_url, autocommit=True) as connection:
-        for migration in migrations[:migration_count]:
-            # The fixture emulates pgmq because stock PostgreSQL lacks it.
-            sql = migration.read_text().replace("create extension if not exists pgmq;", "")
-            connection.execute(sql, prepare=False)
+        apply_native_migrations(connection, migrations[:migration_count])
 
     with TestClient(create_app(configured_settings(database_url))) as client:
         response = client.get("/ready")
