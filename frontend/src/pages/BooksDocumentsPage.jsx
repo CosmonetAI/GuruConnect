@@ -6,7 +6,7 @@ import BooksDocumentForm from '../components/BooksDocumentForm';
 import PageLoader from '../components/PageLoader';
 
 const config = {
-  quote: { path: '/quotes', key: 'quotes', type: 'Quote', title: 'Quotes', description: 'Prepare clear, accurate quotations from approved products and customer details.', empty: 'No recent quotes are available.' },
+  quote: { path: '/quotes', key: 'quotes', type: 'Quote', title: 'Quotes', loaderKind: 'quotes', description: 'Prepare clear, accurate quotations from approved products and customer details.', empty: 'No recent quotes are available.' },
   'sales-order': { path: '/orders', key: 'orders', type: 'Sales order', title: 'Sales orders', loaderKind: 'sales-orders', description: 'Turn confirmed customer requirements into traceable sales orders.', empty: 'No recent sales orders are available.' },
   invoice: { path: '/invoices', key: 'invoices', type: 'Invoice', title: 'Invoices', loaderKind: 'invoices', description: 'Create and track customer invoices with the right commercial terms.', empty: 'No recent invoices are available.' },
   'purchase-order': { path: '/purchase-orders', key: 'purchase_orders', type: 'Purchase order', title: 'Purchase orders', loaderKind: 'purchase-orders', description: 'Coordinate supplier purchasing with clear items, quantities, and delivery terms.', empty: 'No recent purchase orders are available.' }

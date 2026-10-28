@@ -60,7 +60,7 @@ type PageLoaderProps = {
 }
 
 export default function PageLoader({ kind, label, detail, compact = false }: PageLoaderProps) {
-  const Icon = icons[kind]
+  const Icon = icons[kind] ?? FileText
   return <div className={`page-loader page-loader-${kind}${compact ? ' page-loader-compact' : ''}`} role="status" aria-live="polite">
     <div className="page-loader-visual" aria-hidden="true">
       <span className="page-loader-orbit" />
