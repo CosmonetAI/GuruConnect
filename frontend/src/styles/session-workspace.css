@@ -1,10 +1,12 @@
 .voice-sessions-page { height: calc(100vh - 48px); min-height: 0; }
 .voice-sessions-layout { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); height: 100%; min-height: 0; }
 .voice-sessions-layout .conversation { min-width: 0; }
-.voice-sessions-layout .voice-composer { padding: 12px; max-height: 72%; overflow: hidden; }
-.session-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr); gap: 12px; min-height: 0; height: 100%; align-items: start; }
+.voice-sessions-layout .voice-composer { flex: 1 1 auto; min-height: 0; padding: 12px; max-height: none; overflow: hidden; }
+.voice-sessions-layout .conversation:has(.voice-composer) .messages { flex: 0 1 220px; min-height: 0; max-height: 220px; padding: 12px 22px; overflow-y: auto; }
+.session-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 12px; min-height: 0; height: 100%; align-items: stretch; }
 .session-workspace-left { min-width: 0; min-height: 0; overflow: visible; padding-right: 4px; display: contents; }
 .session-workspace-left .needs-panel { order: 1; }
+.session-insights-panel { grid-column: 1; grid-row: 1; min-height: 0; height: 100%; overflow-y: auto; }
 .session-workspace-left > .connected-recorder { grid-column: 1 / -1; order: 2; position: sticky; bottom: 0; z-index: 4; display: block; padding-top: 10px; background: #fff; }
 .session-recording-container { display: grid; gap: 8px; padding: 12px; border: 1px solid #dce8f2; border-radius: 12px; background: #fff; box-shadow: 0 3px 12px rgba(19, 55, 93, .04); }
 .voice-sessions-layout .connected-recorder .recorder-panel { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 68px; padding: 4px 2px 10px; border: 0; border-bottom: 1px solid #e8eef5; border-radius: 0; background: transparent; }
@@ -59,7 +61,7 @@
 .voice-sessions-layout .connected-recorder .recorder-visual .voice-level-wave { flex: 1; min-width: 80px; margin-top: 0; }
 .voice-level-wave i { flex: 1 0 2px; min-width: 2px; max-width: 4px; border-radius: 3px; background: #d8685f; transition: height .08s ease; animation: voice-wave-drift 1.2s linear infinite; }
 @keyframes voice-wave-drift { from { transform: translateX(0); opacity: .55; } 50% { opacity: 1; } to { transform: translateX(-3px); opacity: .7; } }
-.session-notes { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid #dce8f2; border-radius: 12px; background: #fbfdff; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+.session-notes { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; border: 1px solid #dce8f2; border-radius: 12px; background: #fbfdff; overflow: hidden; scrollbar-gutter: stable; }
 .notes-heading, .needs-heading { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; padding: 14px; border-bottom: 1px solid #e4edf4; }
 .session-panel-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .session-panel-toggle > div { min-width: 0; flex: 1; }
@@ -68,8 +70,8 @@
 .session-panel-toggle:hover { background: transparent; color: inherit; }
 .session-panel-content { min-width: 0; min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .session-panel-content[hidden] { display: none; }
-.session-notes .session-panel-content { flex: 0 0 auto; }
-.session-notes .notes-list { min-height: 0; flex: 0 0 auto; overflow: visible; }
+.session-notes .session-panel-content { flex: 1 1 auto; min-height: 0; }
+.session-notes .notes-list { min-height: 0; max-height: none; flex: 1 1 auto; overflow-y: auto; }
 .session-notes .note-editor { flex: 0 0 auto; }
 .needs-panel.is-collapsed,
 .session-notes.is-collapsed { height: auto; min-height: 0; max-height: none; align-self: start; }
@@ -193,3 +195,69 @@ body[data-document-party="customer"] .document-actions button:nth-child(4) { dis
 .sales-document-footer { display:flex; justify-content:flex-end; gap:9px; padding:14px 24px; border-top:1px solid #e5edf5; background:#fbfdff; }
 .sales-document-footer button { min-height:38px; padding:0 15px; }
 @media(max-width:680px){.sales-document-heading,.sales-document-body,.sales-document-footer{padding-left:15px;padding-right:15px}.document-type-grid,.sales-email-grid{grid-template-columns:1fr}.sales-summary-header,.sales-summary-row{grid-template-columns:minmax(0,1.8fr) 65px 36px 75px}.sales-summary-header span:nth-child(2),.sales-summary-row span:nth-child(2){display:none}}
+
+/* Active sessions follow the reference workspace: conversation, selling tools, notes, then controls. */
+.voice-sessions-layout .conversation:has(.voice-composer) {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.05fr) minmax(360px, 1.55fr) minmax(250px, .9fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) .contact-record { grid-column: 1 / -1; grid-row: 1; }
+.voice-sessions-layout .conversation:has(.voice-composer) .messages {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  max-height: none;
+  padding: 16px 14px;
+  border-right: 1px solid #e4edf4;
+  overflow-y: auto;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) .voice-composer,
+.voice-sessions-layout .conversation:has(.voice-composer) .session-workspace { display: contents; }
+.voice-sessions-layout .conversation:has(.voice-composer) .session-insights-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-radius: 12px;
+  overflow-y: auto;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) .session-notes {
+  grid-column: 3;
+  grid-row: 2;
+  min-height: 0;
+  height: 100%;
+  border-radius: 12px;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) > .session-document-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin-top: 0;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) .connected-recorder {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  min-width: 0;
+}
+.voice-sessions-layout .conversation:has(.voice-composer) .voice-processing-note { max-width: none; margin: 10px 0; }
+.voice-sessions-layout .conversation:has(.voice-composer) .session-recording-history { max-width: none; margin: 10px 0; }
+.voice-sessions-layout .conversation:has(.voice-composer) .bubble { max-width: 94%; font-size: 12px; }
+.voice-sessions-layout .conversation:has(.voice-composer) .recommendations-row { padding-bottom: 12px; }
+.voice-sessions-layout .conversation:has(.voice-composer) .recommendation-card { flex-basis: 155px; }
+.voice-sessions-layout .conversation:has(.voice-composer) .session-cart { margin-bottom: 12px; }
+.voice-sessions-layout .conversation:has(.voice-composer) .session-transcript { display: none; }
+
+@media (max-width: 1100px) {
+  .voice-sessions-layout .conversation:has(.voice-composer) { grid-template-columns: minmax(190px, .9fr) minmax(330px, 1.45fr) minmax(220px, .8fr); }
+}
+@media (max-width: 900px) {
+  .voice-sessions-layout .conversation:has(.voice-composer) { display: flex; overflow: hidden; }
+  .voice-sessions-layout .conversation:has(.voice-composer) .voice-composer,
+  .voice-sessions-layout .conversation:has(.voice-composer) .session-workspace { display: block; }
+  .voice-sessions-layout .conversation:has(.voice-composer) .messages { max-height: 220px; flex: 0 1 220px; border-right: 0; }
+  .voice-sessions-layout .conversation:has(.voice-composer) .session-insights-panel { height: auto; }
+  .voice-sessions-layout .conversation:has(.voice-composer) .session-notes { height: auto; }
+}

@@ -162,9 +162,14 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
     operationRef.current = false; setOperation(false)
     void refreshRecoveries().catch(reason => { if (mounted.current) setError(message(reason)) })
   }
-  async function startMicrophone() {
-    if (operationRef.current || captureActive || saved || unfinished) return
+  async function startMicrophone(startNew = false) {
+    if (operationRef.current || captureActive || (!startNew && (saved || unfinished))) return
     try { validateStart() } catch (reason) { setError(message(reason)); return }
+    if (startNew && saved) {
+      idRef.current = null; creation.current = null; notifiedSaved.current = null
+      setConversationId(null); setSaved(false); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setPhase('idle')
+      await notify(null)
+    }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
       const id = await createConversation(controller.signal)
@@ -265,8 +270,8 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
         {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
         <div className="recorder-copy"><span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span><h3>{saved ? (registrationOnly ? 'Registration ended' : sessionOnly ? 'Session ended' : 'Audio saved in your workspace') : registrationOnly ? 'Start visitor registration' : sessionOnly ? 'Start a customer session' : 'Record or upload the conversation'}</h3><p>{saved ? 'Your conversation is saved. Processing continues in the background.' : registrationOnly ? 'Start registration to record the visitor conversation.' : sessionOnly ? 'Start the session to record and process the customer conversation.' : 'Consented audio is transcribed and translated where needed.'}</p>{(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}</div>
         <div className="recorder-controls">
-          {sessionOnly && !captureActive && !operation && !saved && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />Start session</button>}
-          {registrationOnly && !captureActive && !operation && !saved && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />Start registration</button>}
+          {sessionOnly && !captureActive && !operation && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(saved)}><Mic2 size={16} />Start session</button>}
+          {registrationOnly && !captureActive && !operation && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(saved)}><Mic2 size={16} />Start registration</button>}
           {!singleAction && !captureActive && !operation && !saved && !unfinished && !file && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />Start recording</button>}
           {!singleAction && !operation && !captureActive && !capture.saving && !saved && !unfinished && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" disabled={blocked} onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
           {!singleAction && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}>{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}

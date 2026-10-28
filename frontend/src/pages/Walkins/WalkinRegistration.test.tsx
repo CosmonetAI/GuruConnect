@@ -4,17 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   register: vi.fn(), attach: vi.fn(), navigate: vi.fn(), demo: false,
-  panel: null as null | { onConversationChange: (id: string | null) => void; onBusyChange: (busy: boolean) => void; onApply: (field: string, value: string) => void },
+  panel: null as null | { onConversationChange: (id: string | null) => void; onBusyChange: (busy: boolean) => void },
 }))
 vi.mock('react-router-dom', async () => ({ ...(await vi.importActual<object>('react-router-dom')), useNavigate: () => mocks.navigate, useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
 vi.mock('../../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u1' }, workspace: { id: 'w1' } }) }))
 vi.mock('../../services/walkinService', () => ({ registerWalkin: mocks.register, attachWalkinRecording: mocks.attach, isWalkinDemoMode: () => mocks.demo }))
-vi.mock('./VoiceAssistPanel', () => ({ default: (props: NonNullable<typeof mocks.panel>) => { mocks.panel = props; return <div>voice panel</div> } }))
+vi.mock('../Enquiries/ConversationRecorder', () => ({ default: (props: NonNullable<typeof mocks.panel>) => { mocks.panel = props; return <div>compact recorder</div> } }))
 import WalkinRegistration from './WalkinRegistration'
 
 function fill() {
   fireEvent.change(screen.getByLabelText(/customer full name/i), { target: { value: 'Asha Rao' } })
   fireEvent.change(screen.getByLabelText(/mobile number/i), { target: { value: '9876543210' } })
+  fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'asha@example.com' } })
 }
 const submit = () => fireEvent.click(screen.getByRole('button', { name: /register visitor/i }))
 beforeEach(() => {
@@ -27,7 +28,7 @@ function setup() { render(<MemoryRouter><WalkinRegistration /></MemoryRouter>) }
 describe('WalkinRegistration voice assist', () => {
   it('never submits on its own and applies voice values only through the form', () => {
     setup()
-    act(() => mocks.panel!.onApply('customerName', 'Asha Rao'))
+    fill()
     expect(mocks.register).not.toHaveBeenCalled()
     expect(screen.getByLabelText(/customer full name/i)).toHaveValue('Asha Rao')
   })
@@ -36,8 +37,7 @@ describe('WalkinRegistration voice assist', () => {
     submit()
     expect(await screen.findByText(/enter the customer’s full name/i)).toBeInTheDocument()
     fill(); act(() => mocks.panel!.onBusyChange(true))
-    submit()
-    expect(await screen.findAllByText(/stop and save the voice recording/i)).not.toHaveLength(0)
+    expect(screen.getByRole('button', { name: /register visitor/i })).toBeDisabled()
     expect(mocks.register).not.toHaveBeenCalled()
   })
   it('registers without audio exactly as before', async () => {

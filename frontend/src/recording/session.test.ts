@@ -2,6 +2,11 @@ import { IDBFactory } from 'fake-indexeddb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { prepareMicrophone, RecorderSession, type RecordingHooks } from './session'
 
+vi.mock('../services/officeApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/officeApi')>()
+  return { ...actual, localMode: true }
+})
+
 beforeEach(() => vi.stubGlobal('indexedDB', new IDBFactory()))
 afterEach(() => vi.unstubAllGlobals())
 const hooks = (): RecordingHooks => ({ authorize: vi.fn(), confirm: vi.fn(), heartbeat: vi.fn().mockResolvedValue(undefined), event: vi.fn().mockResolvedValue(undefined), finalize: vi.fn().mockResolvedValue(undefined) })

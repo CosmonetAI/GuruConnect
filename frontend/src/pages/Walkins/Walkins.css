@@ -447,6 +447,17 @@
   gap: 10px;
   margin-top: 20px;
 }
+.walkin-form-actions > .connected-recorder { flex: 0 0 auto; min-width: 0; }
+.walkin-form-actions > .connected-recorder .session-recording-container { padding: 0; border: 0; box-shadow: none; background: transparent; }
+.walkin-form-actions > .connected-recorder .recorder-panel { display: flex; align-items: center; min-height: 0; padding: 0; border: 0; background: transparent; }
+.walkin-form-actions > .connected-recorder .recorder-visual,
+.walkin-form-actions > .connected-recorder .recorder-copy,
+.walkin-form-actions > .connected-recorder .connected-recording-metrics { display: none; }
+.walkin-form-actions > .connected-recorder .recording-consent { display: flex; align-items: center; margin: 4px 0 0; padding: 0; border: 0; background: transparent; color: #64748b; font-size: 11px; }
+.walkin-form-actions > .connected-recorder .recording-consent .checkbox-field { white-space: nowrap; }
+.walkin-form-actions > .connected-recorder .recorder-controls { margin: 0; flex-wrap: nowrap; }
+.walkin-form-actions > .connected-recorder .voice-level-wave { display: flex; width: 108px; min-width: 90px; height: 30px; margin: 0 2px; align-items: center; gap: 2px; overflow: hidden; }
+.walkin-form-actions > .connected-recorder .voice-level-wave i { flex: 1 1 0; min-width: 2px; max-width: 4px; border-radius: 4px; background: #2563eb; opacity: .82; }
 
 .walkin-detail-grid {
   display: grid;
