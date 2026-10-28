@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import asyncio, json
 import hashlib
+import hmac
 import secrets
 import re
 import logging
@@ -15,6 +16,7 @@ from sqlalchemy import text
 from .db import require_db, row_dict, now, sales_workspace, scope_parameters
 from .zoho import zoho, refresh_loop, refresh_all, set_organisation_id, set_member_id, get_organisation_id, get_member_id
 from .chat import get_or_create_customer, get_or_create_customer_sync, run_graph
+from .voice_ai import VoiceConversationOrchestrator
 
 @asynccontextmanager
 async def lifespan(app):
@@ -36,7 +38,7 @@ async def zoho_workspace_scope(request: Request, call_next):
     # overwrite one another's verifier/settings on this shared child app.
     if request.url.path in {'/docs', '/redoc', '/openapi.json'}:
         return JSONResponse(status_code=404, content={'detail': 'Not found'})
-    if request.method == 'OPTIONS' or request.url.path in {'/', '/api/health', '/api/internal/zoho/refresh'}:
+    if request.method == 'OPTIONS' or request.url.path in {'/', '/api/health', '/api/internal/zoho/refresh', '/api/internal/voice/extraction-webhook'}:
         return await call_next(request)
     parent = request.scope.get('recorder_app')
     if parent is None:
@@ -194,14 +196,15 @@ class ContactIn(BaseModel):
 
 class VoiceSessionIn(BaseModel):
     name: str = Field(min_length=2)
-    phone: str | None = None
-    email: str | None = None
+    phone: str = Field(min_length=7)
+    email: str = Field(min_length=3)
 class VoiceSessionLinkIn(BaseModel):
     conversation_id: UUID | None = None
 class VoiceSessionNoteIn(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 class VoiceSessionContextIn(BaseModel):
     product_requirements: list[dict] = Field(default_factory=list, max_length=25)
+    cart: list[dict] = Field(default_factory=list, max_length=50)
 def _db_http_error(error: Exception):
     if isinstance(error, HTTPException):
         raise error
@@ -358,6 +361,27 @@ def _session_messages(db, session_id, *, history=False):
         and s.member_id=cast(:member as uuid)""" + suffix), {**scope_parameters(), 'session': str(session_id)}).all()]
 
 
+def _recording_status_label(row):
+    capture = row.get('capture_state')
+    if capture in {'recording', 'paused'}:
+        return 'Recording'
+    if row.get('transcription_state') in {'failed', 'blocked', 'uncertain'}:
+        return 'Transcription failed'
+    if row.get('english_state') in {'failed', 'blocked', 'uncertain'}:
+        return 'Translation failed'
+    if row.get('upload_state') not in {None, 'saved'}:
+        return 'Uploading audio'
+    if row.get('transcription_state') in {'pending', 'queued', 'running', 'processing'}:
+        return 'Transcribing'
+    if row.get('english_state') in {'pending', 'queued', 'running', 'processing'}:
+        return 'Translating'
+    if row.get('final_state') in {'pending', 'queued', 'running', 'processing'}:
+        return 'Processing'
+    if row.get('final_state') == 'complete' and row.get('english_state') == 'complete':
+        return 'Processing complete'
+    return 'Ready to record'
+
+
 def _voice_history(db, session):
     params = {**scope_parameters(), 'session': str(session['id']), 'customer': str(session['customer_id'])}
     chunks = [row_dict(row) for row in db.execute(text("""select r.id,r.chunk_index,r.duration_seconds,r.mime_type,r.size_bytes,r.object_path,r.created_at
@@ -368,13 +392,102 @@ def _voice_history(db, session):
       from conversations where customer_id=cast(:customer as uuid) and organisation_id=cast(:org as uuid)
         and owner_id=cast(:member as uuid) and deleted_at is null and upload_state='saved' and total_samples>0
       order by created_at desc limit 100"""), params).all()]
+    insights = []
+    transcript_preview = []
+    if session.get('conversation_id'):
+        insights = [row_dict(row) for row in db.execute(text("""select id,fingerprint,status,data,error_message,created_at,updated_at
+          from conversation_extractions where conversation_id=cast(:conversation as uuid)
+          order by created_at"""), {**params, 'conversation': str(session['conversation_id'])}).all()]
+        transcript_preview = [row_dict(row) for row in db.execute(text("""select t.id,t.ordinal,t.start_seconds,t.end_seconds,t.source_text,
+          coalesce(t.english_text,tr.english_text) as english_text,t.speaker_ref,t.created_at
+          from transcript_turns t left join translations tr on tr.source_turn_id=t.id and tr.state='complete'
+          where t.conversation_id=cast(:conversation as uuid) and (t.english_text is not null or tr.id is not null)
+          order by t.start_seconds,t.ordinal"""), {**params, 'conversation': str(session['conversation_id'])}).all()]
     return {'session': session, 'conversation_id': session.get('conversation_id'),
-            'messages': _session_messages(db, session['id']), 'recordings': chunks, 'recorder_sessions': recordings}
+            'messages': _session_messages(db, session['id']), 'recordings': chunks, 'recorder_sessions': recordings,
+            'insights': insights, 'transcript_preview': transcript_preview}
+
+
+def _extract_voice_chunk(db, payload):
+    """Process one database event. The event contains identifiers only; transcript data is read server-side."""
+    conversation_id = str(payload.get('conversation_id') or '')
+    record_id = str(payload.get('record_id') or '')
+    if not conversation_id or not record_id:
+        raise HTTPException(422, 'Invalid extraction event')
+    row = db.execute(text("""select t.id,t.source_text,coalesce(t.english_text,tr.english_text) as english_text,
+      t.source_language,t.speaker_ref,t.start_seconds,t.end_seconds,t.created_at
+      from transcript_turns t left join translations tr on tr.source_turn_id=t.id and tr.state='complete'
+      where t.id=cast(:record as uuid) and t.conversation_id=cast(:conversation as uuid)
+      union all
+      select t.id,t.source_text,coalesce(t.english_text,tr.english_text),t.source_language,t.speaker_ref,t.start_seconds,t.end_seconds,t.created_at
+      from translations tr join transcript_turns t on t.id=tr.source_turn_id
+      where tr.id=cast(:record as uuid) and tr.conversation_id=cast(:conversation as uuid) and tr.state='complete'
+      limit 1"""), {'record': record_id, 'conversation': conversation_id}).first()
+    if not row or not row.english_text:
+        return {'accepted': True, 'status': 'waiting_for_translation'}
+    chunk = row_dict(row)
+    fingerprint = hashlib.sha256(json.dumps({k: chunk.get(k) for k in ('id','source_text','english_text','start_seconds','end_seconds')}, sort_keys=True, default=str).encode()).hexdigest()
+    # Serialize deliveries for one conversation/chunk. This prevents two
+    # concurrent database webhook retries from both calling OpenAI or merging
+    # the same context update.
+    db.execute(text("select pg_advisory_xact_lock(hashtext(:key))"), {'key': f'{conversation_id}:{fingerprint}'})
+    existing = db.execute(text("select id,status,data from conversation_extractions where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"), {'conversation': conversation_id, 'fingerprint': fingerprint}).first()
+    if existing and existing.status == 'complete':
+        return {'accepted': True, 'status': 'duplicate', 'extraction_id': str(existing.id)}
+    if not settings.openai_api_key:
+        raise HTTPException(503, 'OpenAI extraction is not configured')
+    db.execute(text("""insert into conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
+      select cast(:conversation as uuid),c.organisation_id,:fingerprint,'running','{}'::jsonb from conversations c where c.id=cast(:conversation as uuid)
+      on conflict(conversation_id,fingerprint) do update set status='running',error_message=null,updated_at=now()"""), {'conversation': conversation_id, 'fingerprint': fingerprint})
+    context_row = db.execute(text("select context from voice_ai_contexts where conversation_id=cast(:conversation as uuid)"), {'conversation': conversation_id}).first()
+    chunk['conversation_id'] = conversation_id
+    chunk['fingerprint'] = fingerprint
+    try:
+        result = asyncio.run(VoiceConversationOrchestrator().run(chunk=chunk, durable_context=context_row[0] if context_row else {}))
+    except Exception as error:
+        # Commit only this chunk's retry marker. The advisory transaction lock
+        # still prevents a concurrent delivery from processing the same
+        # fingerprint, and unrelated chunks are never marked failed.
+        db.execute(text("""update conversation_extractions
+          set status='failed',error_message=:message,updated_at=now()
+          where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"""),
+          {'conversation': conversation_id, 'fingerprint': fingerprint, 'message': type(error).__name__})
+        db.commit()
+        raise
+    data = {**result.get('extraction', {}), '_source': {'conversation_id': conversation_id, 'transcript_chunk_id': str(chunk['id']), 'fingerprint': fingerprint},
+            '_route': result.get('route', {}), '_agent_result': result.get('agent_result', {})}
+    db.execute(text("""update conversation_extractions set status='complete',data=cast(:data as jsonb),updated_at=now()
+      where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"""), {'conversation': conversation_id, 'fingerprint': fingerprint, 'data': json.dumps(data, ensure_ascii=False)})
+    db.execute(text("""insert into voice_ai_contexts(conversation_id,organisation_id,context,last_intent,last_route,updated_at)
+      select cast(:conversation as uuid),c.organisation_id,cast(:context as jsonb),:intent,cast(:route as jsonb),now()
+      from conversations c where c.id=cast(:conversation as uuid)
+      on conflict(conversation_id) do update set context=excluded.context,last_intent=excluded.last_intent,last_route=excluded.last_route,updated_at=now()"""),
+      {'conversation': conversation_id, 'context': json.dumps(result.get('context', {}), ensure_ascii=False), 'intent': result.get('route', {}).get('intent'), 'route': json.dumps(result.get('route', {}))})
+    db.commit()
+    return {'accepted': True, 'status': 'complete', 'extraction_id': fingerprint}
+
+
+@app.post('/api/internal/voice/extraction-webhook')
+def voice_extraction_webhook(request: Request, payload: dict, x_voice_extraction_secret: str = Header(default='')):
+    expected = settings.voice_extraction_webhook_secret
+    if not expected or not hmac.compare_digest(x_voice_extraction_secret, expected):
+        raise HTTPException(401, 'Invalid webhook signature')
+    with require_db() as db:
+        try:
+            result = _extract_voice_chunk(db, payload)
+        except Exception:
+            # _extract_voice_chunk persists a failure marker for the exact
+            # fingerprint. Do not broaden that update to other chunks in the
+            # same conversation when deliveries are concurrent.
+            raise
+    return result
 
 
 @app.post('/api/voice-sessions')
 def open_voice_session(payload: VoiceSessionIn, request: Request):
     try:
+        if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', payload.email.strip()):
+            raise HTTPException(422, 'Enter a valid customer email address before starting the session')
         customer = get_or_create_customer_sync(payload.name, payload.phone, payload.email)
         params = {**scope_parameters(), 'customer': str(customer['id']),
                   'phone': customer.get('normalized_phone'), 'email': customer.get('normalized_email'),
@@ -458,7 +571,7 @@ def add_voice_session_note(session_id: UUID, payload: VoiceSessionNoteIn, reques
 def voice_session_context(session_id: UUID, request: Request):
     with require_db() as db:
         context = _session(db, session_id).get('context') or {}
-        return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else []}
+        return {'product_requirements': context.get('product_requirements', []) if isinstance(context, dict) else [], 'cart': context.get('cart', []) if isinstance(context, dict) else []}
 
 
 @app.put('/api/voice-sessions/{session_id}/context')
@@ -467,13 +580,14 @@ def update_voice_session_context(session_id: UUID, payload: VoiceSessionContextI
         session = _session(db, session_id, lock=True)
         context = session.get('context') if isinstance(session.get('context'), dict) else {}
         context['product_requirements'] = payload.product_requirements
+        context['cart'] = payload.cart
         row = db.execute(text("""update chat_sessions set context=cast(:context as jsonb),updated_at=now()
           where id=cast(:session as uuid) and organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) returning id"""),
           {**scope_parameters(), 'context': json.dumps(context), 'session': str(session_id)}).first()
         if not row:
             raise HTTPException(404, 'Session not found')
         db.commit()
-        return {'product_requirements': payload.product_requirements}
+        return {'product_requirements': payload.product_requirements, 'cart': payload.cart}
 
 
 def _pipeline_layouts(payload):
@@ -908,12 +1022,29 @@ async def create_quote(payload: dict):
         return {'quote': quote, 'response': result}
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to create Zoho Books quote')
+
+
+def _connected_zoho_email_payload(payload: dict | None) -> dict:
+    """Keep sender identity under the connected Zoho OAuth account's control."""
+    payload = payload or {}
+    allowed = {'to_mail_ids', 'cc_mail_ids', 'bcc_mail_ids', 'subject', 'body'}
+    cleaned = {key: payload[key] for key in allowed if key in payload}
+    recipients = cleaned.get('to_mail_ids')
+    if not isinstance(recipients, list) or not recipients or not all(isinstance(item, str) and item.strip() for item in recipients):
+        raise HTTPException(422, 'At least one recipient email is required')
+    if 'subject' in cleaned and not isinstance(cleaned['subject'], str):
+        raise HTTPException(422, 'Email subject must be text')
+    if 'body' in cleaned and not isinstance(cleaned['body'], str):
+        raise HTTPException(422, 'Email message must be text')
+    return cleaned
+
+
 @app.post('/api/quotes/{estimate_id}/email')
 async def email_quote(estimate_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_estimate(org, estimate_id, payload)
+        return await zoho.email_estimate(org, estimate_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books quote')
 @app.get('/api/orders')
@@ -955,7 +1086,7 @@ async def email_order(salesorder_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_sales_order(org, salesorder_id, payload)
+        return await zoho.email_sales_order(org, salesorder_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books sales order')
 @app.get('/api/purchase-orders')
@@ -1000,7 +1131,7 @@ async def email_purchase_order(purchaseorder_id: str, payload: dict | None = Non
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_purchase_order(org, purchaseorder_id, payload)
+        return await zoho.email_purchase_order(org, purchaseorder_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books purchase order')
 @app.get('/api/invoices')
@@ -1045,7 +1176,7 @@ async def email_invoice(invoice_id: str, payload: dict | None = None):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.email_invoice(org, invoice_id, payload)
+        return await zoho.email_invoice(org, invoice_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books invoice')
 @app.get('/api/contacts')
@@ -1360,14 +1491,27 @@ async def session_contacts(search: str = ''):
         if source not in item['sources']: item['sources'].append(source)
         if external_id: item['records'][source] = str(external_id)
         if session_id: item['session_id'] = str(session_id)
+        if row.get('capture_state') is not None:
+            item['recording_status'] = _recording_status_label(row)
     errors = []
     try:
         with require_db() as db:
-            rows = db.execute(text("select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id from chat_sessions s join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null order by s.updated_at desc limit 50"), scope_parameters()).all()
+            rows = db.execute(text("""select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id,
+                r.capture_state,r.upload_state,r.transcription_state,r.english_state,r.final_state
+                from chat_sessions s
+                join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id
+                left join conversations r on r.id=s.conversation_id and r.organisation_id=s.organisation_id and r.owner_id=s.member_id and r.deleted_at is null
+                where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null
+                order by s.updated_at desc limit 50"""), scope_parameters()).all()
             for raw in rows:
                 row = row_dict(raw)
                 add(row, 'session', session_id=row['session_id'])
-            rows = db.execute(text("select id as enquiry_id, customer_name as name,phone, payload->>'email' as email, stage as enquiry_stage, bigin_contact_id, books_contact_id from guruconnect_enquiries where organisation_id=cast(:org as uuid) and assigned_to=cast(:member as uuid) order by created_at desc limit 50"), scope_parameters()).all()
+            rows = db.execute(text("""select e.id as enquiry_id,e.customer_name as name,e.phone,e.payload->>'email' as email,e.stage as enquiry_stage,e.bigin_contact_id,e.books_contact_id,
+                r.capture_state,r.upload_state,r.transcription_state,r.english_state,r.final_state
+                from guruconnect_enquiries e
+                left join conversations r on r.id=e.conversation_id and r.organisation_id=e.organisation_id and r.owner_id=e.owner_id and r.deleted_at is null
+                where e.organisation_id=cast(:org as uuid) and e.assigned_to=cast(:member as uuid)
+                order by e.created_at desc limit 50"""), scope_parameters()).all()
             for raw in rows:
                 row = row_dict(raw)
                 add(row, 'enquiry', external_id=row['books_contact_id'] or row['bigin_contact_id'])

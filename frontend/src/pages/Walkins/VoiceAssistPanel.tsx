@@ -78,7 +78,7 @@ export default function VoiceAssistPanel({ customerName, customerPhone, customer
   }, [segments, automatic, threshold])
   return <section className="walkin-card voice-assist" aria-labelledby="voice-assist-title">
     <div className="walkin-section-heading"><span><Sparkles size={16} /></span><div><h2 id="voice-assist-title">Voice assist</h2><p>Record the visitor conversation. Optional browser captions can suggest form fields; review them before registering.</p></div></div>
-    <div className="voice-simple-recorder"><Mic2 size={30} aria-hidden /><ConversationRecorder customerName={customerName.trim() || 'Walk-in visitor'} customerPhone={customerPhone} customerEmail={customerEmail} title="Walk-in registration" onConversationChange={onConversationChange} onBusyChange={onBusyChange} onCaptureChange={setCapture} chunkSeconds={10} audioBucket="walkin-audio" compact /></div>
+    <div className="voice-simple-recorder"><Mic2 size={30} aria-hidden /><ConversationRecorder customerName={customerName.trim() || 'Walk-in visitor'} customerPhone={customerPhone} customerEmail={customerEmail} title="Walk-in registration" onConversationChange={onConversationChange} onBusyChange={onBusyChange} onCaptureChange={setCapture} chunkSeconds={30} audioBucket="walkin-audio" compact registrationOnly /></div>
     <label><input type="checkbox" checked={captions} disabled={!supported} onChange={event => setCaptions(event.target.checked)} />Live captions</label>
     {!supported && <p>Live captions are not available in this browser. Saved audio still uses the managed transcription service.</p>}
     {capture?.capture === 'paused' && <p>Paused. Live captions resume with recording.</p>}

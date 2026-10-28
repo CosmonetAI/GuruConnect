@@ -4,6 +4,7 @@ import { useScopedResource } from '../../hooks/useScopedResource'
 import { OfficeNotice, OfficeStatus } from '../../components/OfficeUi'
 import ConversationTranscript from '../../components/ConversationTranscript'
 import type { Enquiry } from '../../types/enquiry'
+import { recordingStatusFromEnquiry } from '../../recording/status'
 import './NewEnquiry.css'
 
 function Details({ entries }: { entries: [string, string | number | undefined][] }) {
@@ -75,7 +76,7 @@ export default function EnquiryDetail() {
           ['Priority', enquiry.priority || 'Normal'], ['Follow-up date', enquiry.followUpDate], ['Follow-up owner', enquiry.followUpOwner],
         ]} /></section>
         <section className="enquiry-card side-card"><div className="side-card-title"><span className="side-icon purple-side-icon"><FileAudio2 size={16} /></span><h2>Conversation</h2></div>
-          {enquiry.conversationId ? <><p>The original audio is linked to this enquiry. Follow the actual transcription and English translation below.</p><OfficeStatus value={enquiry.recording?.uploadState} /><Link to={`/recordings/${enquiry.conversationId}`}>Open recording and transcript</Link><p>Audio → original speech and speakers → English transcript.</p></> : <p>No recording was attached to this enquiry. Customer details and requirements are saved.</p>}
+          {enquiry.conversationId ? <><p>The original audio is linked to this enquiry. Follow the actual transcription and English translation below.</p><span className={`recording-state-pill status-${recordingStatusFromEnquiry(enquiry.recording).key}`}>{recordingStatusFromEnquiry(enquiry.recording).label}</span><OfficeStatus value={enquiry.recording?.uploadState} /><Link to={`/recordings/${enquiry.conversationId}`}>Open recording and transcript</Link><p>Audio → original speech and speakers → English transcript.</p></> : <p>No recording was attached to this enquiry. Customer details and requirements are saved.</p>}
         </section>
       </aside>
     </div>

@@ -12,7 +12,7 @@ import './Walkins.css'
 const registrationSchema = z.object({
   customerName: z.string().trim().min(2, 'Enter the customer’s full name.').max(150, 'Name is too long.'),
   mobileNumber: z.string().trim().regex(/^\+?[0-9().\-\s]{7,20}$/, 'Enter a valid mobile number.').refine((value) => value.replace(/\D/g, '').length >= 7 && value.replace(/\D/g, '').length <= 15, 'Enter a valid mobile number.'),
-  email: z.string().trim().refine((value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
+  email: z.string().trim().min(1, 'Enter the visitor’s email address.').refine((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
   companyName: z.string().trim().max(150, 'Company name is too long.'),
   projectName: z.string().trim().max(150, 'Project or site is too long.'),
   preferredContactMethod: z.string().trim().max(80, 'Preferred contact is too long.'),
@@ -123,7 +123,7 @@ export default function WalkinRegistration() {
           <div className="walkin-form-grid">
             <Field label="Name (customer full name)" name="customerName" required error={errors.customerName} ai={aiFields.includes('customerName')}><input disabled={!!voiceId || voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
             <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber} ai={aiFields.includes('mobileNumber')}><input disabled={!!voiceId || voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
-            <Field label="Email" name="email" error={errors.email}><input disabled={!!voiceId || voiceBusy} id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="Not provided" /></Field>
+            <Field label="Email address" name="email" required error={errors.email} ai={aiFields.includes('email')}><input disabled={!!voiceId || voiceBusy} id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="visitor@example.com" required /></Field>
             <Field label="Source" name="source"><input id="source" value="Retail walk-in" readOnly /></Field>
             <Field label="Branch" name="branch"><input id="branch" value="Walk-in" readOnly /></Field>
             <Field label="Assigned executive" name="assignedExecutive"><input id="assignedExecutive" value="Unassigned" readOnly /></Field>

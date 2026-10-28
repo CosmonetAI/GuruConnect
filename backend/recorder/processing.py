@@ -23,16 +23,26 @@ def contiguous_samples(chunks: list[dict]) -> int:
     return expected
 
 
+def processing_window_seconds(audio_bucket: str | None, configured_seconds: int) -> int:
+    """Keep visitor registration and customer Sessions processing windows distinct."""
+    return 30 if audio_bucket == "walkin-audio" else configured_seconds
+
+
 async def plan_windows(connection, conversation_id: UUID, settings, final: bool = False, run_id: UUID | None = None) -> list[UUID]:
     """Lock conversation before calling. Jobs own new audio; overlap only supplies context."""
     chunks = await many(connection, "select * from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
     coverage = contiguous_samples(chunks)
+    conversation = await one(connection, "select audio_bucket from conversations where id=%s", (conversation_id,))
+    # Visitor registration is intentionally lightweight. Sessions use the
+    # three-minute product window; the bucket keeps the workflows distinct
+    # even though they share the durable recorder implementation.
+    window_seconds = processing_window_seconds(conversation.get("audio_bucket") if conversation else None, settings.window_seconds)
     runs = await many(connection, "select * from processing_runs where conversation_id=%s and cancelled_at is null and (%s::uuid is null or id=%s) and (kind='production' or id=%s) order by created_at", (conversation_id, run_id, run_id, run_id))
     jobs = []
     for run in runs:
         previous = await one(connection, "select coalesce(max(sample_end),0) as covered,coalesce(max(sequence),-1)+1 as sequence from transcription_windows where run_id=%s", (run["id"],))
         start, sequence = previous["covered"], previous["sequence"]
-        window_samples = settings.window_seconds * 16000
+        window_samples = window_seconds * 16000
         while coverage - start >= window_samples or (final and coverage > start):
             end = min(start + window_samples, coverage)
             context_start = max(0, start - settings.context_seconds * 16000)

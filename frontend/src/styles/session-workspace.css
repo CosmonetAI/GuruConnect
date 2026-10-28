@@ -25,6 +25,7 @@
 .voice-sessions-layout .connected-recorder .elapsed-timer { margin-top: 3px; color: #a84640; font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 700; }
 .voice-sessions-layout .connected-recorder .recorder-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .voice-sessions-layout .connected-recorder .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 35px; padding: 0 11px; border: 1px solid #d5e0ec; border-radius: 8px; background: #fff; color: #36516e; font-size: 11px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.voice-sessions-layout .connected-recorder .session-action-button { min-width: 128px; min-height: 38px; font-size: 12px; }
 .voice-sessions-layout .connected-recorder .button-primary { border-color: #2563eb; background: #2563eb; color: #fff; }
 .voice-sessions-layout .connected-recorder .button-stop { border-color: #d9675e; background: #d9675e; color: #fff; }
 .voice-sessions-layout .connected-recorder .button-upload:hover,
@@ -145,3 +146,50 @@ body[data-document-party="customer"] .document-actions button:nth-child(4) { dis
 .document-actions button:nth-child(4)::after { content: 'Create purchase order'; }
 .document-actions button:hover:not(:disabled) { border-color: #2476d9; background: #f1f7ff; transform: translateY(-1px); }
 .document-actions button:disabled { opacity: .5; }
+.document-actions::before { display:none; }
+.document-actions > div { display:grid; flex:1; gap:3px; min-width:0; }
+.document-actions > div strong { color:#17375d; font-size:12px; }
+.document-actions > div small { color:#71839b; font-size:10px; }
+.document-actions button { display:inline-flex !important; align-items:center; gap:6px; font-size:12px; }
+.document-actions button::after { content:none !important; }
+.sales-document-modal { width:min(820px,100%); max-height:92vh; display:flex; flex-direction:column; overflow:hidden; border-radius:16px; background:#fff; box-shadow:0 25px 80px rgba(9,35,65,.3); }
+.sales-document-heading { display:flex; justify-content:space-between; gap:20px; padding:20px 24px 16px; border-bottom:1px solid #e5edf5; }
+.sales-document-heading small { color:#2476d9; font-size:10px; font-weight:800; letter-spacing:.12em; }
+.sales-document-heading h2 { margin:4px 0; color:#17375d; font-size:22px; }
+.sales-document-heading p { margin:0; color:#71839b; font-size:12px; }
+.sales-document-heading > button { align-self:flex-start; border:0; background:transparent; color:#71839b; cursor:pointer; }
+.sales-document-body { overflow:auto; padding:16px 24px; }
+.sales-document-contact { display:flex; align-items:center; gap:11px; padding:12px; border:1px solid #dce8f2; border-radius:11px; background:#fbfdff; }
+.sales-document-avatar { display:grid; width:42px; height:42px; place-items:center; border-radius:50%; background:#e5f1ff; color:#2476d9; font-weight:800; }
+.sales-document-contact > div:nth-child(2) { display:grid; gap:3px; flex:1; }
+.sales-document-contact strong { color:#17375d; font-size:14px; }
+.sales-document-contact span:not(.session-status-pill) { color:#71839b; font-size:11px; }
+.sales-document-section-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:15px 0 8px; color:#17375d; font-size:13px; }
+.sales-order-summary { padding:0 12px 10px; border:1px solid #dce8f2; border-radius:11px; }
+.sales-summary-table { overflow:hidden; border:1px solid #e4edf4; border-radius:8px; }
+.sales-summary-header,.sales-summary-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(76px,1fr) minmax(65px,.8fr) 44px minmax(75px,.9fr); gap:8px; align-items:center; padding:9px 10px; }
+.sales-summary-header { background:#f4f8fc; color:#71839b; font-size:10px; font-weight:800; }
+.sales-summary-row { border-top:1px solid #edf2f6; color:#526f8e; font-size:11px; }
+.sales-summary-row > span:first-child { color:#284c70; font-weight:650; }
+.sales-summary-row strong { color:#17375d; text-align:right; }
+.sales-summary-totals { display:grid; grid-template-columns:1fr auto; gap:6px; max-width:260px; margin:10px 0 0 auto; color:#526f8e; font-size:11px; }
+.sales-summary-totals strong { color:#17375d; text-align:right; }
+.sales-summary-totals .discount-value { color:#17816e; }
+.sales-summary-totals .final-label,.sales-summary-totals .final-total { margin-top:3px; padding-top:7px; border-top:1px solid #dce8f2; font-size:14px; }
+.document-type-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
+.document-type-grid.is-vendor { grid-template-columns:minmax(0,1fr); }
+.document-type-card { display:flex; align-items:flex-start; gap:9px; min-height:76px; padding:12px; border:1px solid #d7e3ee; border-radius:9px; background:#fff; color:#17375d; text-align:left; cursor:pointer; }
+.document-type-card.selected { border-color:#2476d9; box-shadow:0 0 0 2px rgba(36,118,217,.12); background:#f7fbff; }
+.document-type-radio { width:14px; height:14px; flex:0 0 auto; margin-top:2px; border:1px solid #aabed2; border-radius:50%; }
+.document-type-card.selected .document-type-radio { border:4px solid #2476d9; }
+.document-type-card span:last-child { display:grid; gap:5px; }
+.document-type-card strong { font-size:12px; }
+.document-type-card small { color:#71839b; font-size:10px; line-height:1.35; }
+.sales-email-section label { display:grid; gap:5px; color:#526f8e; font-size:10px; font-weight:700; }
+.sales-email-section input,.sales-email-section textarea { width:100%; min-width:0; border:1px solid #d5dfeb; border-radius:8px; padding:9px; color:#284c70; font:inherit; font-size:11px; }
+.sales-email-section textarea { min-height:88px; resize:vertical; }
+.document-email-warning { display:block; margin-top:5px; color:#a85d19; font-size:10px; font-weight:600; line-height:1.4; }
+.sales-email-grid { display:grid; grid-template-columns:1fr 1.25fr; gap:10px; margin-top:9px; }
+.sales-document-footer { display:flex; justify-content:flex-end; gap:9px; padding:14px 24px; border-top:1px solid #e5edf5; background:#fbfdff; }
+.sales-document-footer button { min-height:38px; padding:0 15px; }
+@media(max-width:680px){.sales-document-heading,.sales-document-body,.sales-document-footer{padding-left:15px;padding-right:15px}.document-type-grid,.sales-email-grid{grid-template-columns:1fr}.sales-summary-header,.sales-summary-row{grid-template-columns:minmax(0,1.8fr) 65px 36px 75px}.sales-summary-header span:nth-child(2),.sales-summary-row span:nth-child(2){display:none}}

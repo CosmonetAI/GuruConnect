@@ -8,6 +8,8 @@ import {
   Mic2,
   Plus,
   Search,
+  ShoppingCart,
+  Download,
   Trash2,
   UserRound,
   X,
@@ -19,6 +21,8 @@ import ProgressivePlayback from "../components/ProgressivePlayback";
 import PageLoader from "../components/PageLoader";
 import { request as recorderRequest } from "../services/officeApi";
 import { useOffice } from "../contexts/OfficeContext";
+import { supabase } from "../services/officeApi";
+import { recordingStatus } from "../recording/status";
 import "../zoho/styles.css";
 import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
@@ -88,6 +92,84 @@ function CustomerModal({ contact, onClose }) {
             </div>
           ))}
         </div>
+      </section>
+    </div>
+  );
+}
+
+function SalesDocumentModal({
+  open,
+  contact,
+  customerType,
+  cart,
+  subtotal,
+  discount,
+  documentType,
+  setDocumentType,
+  email,
+  setEmail,
+  subject,
+  setSubject,
+  message,
+  setMessage,
+  busy,
+  onClose,
+  onBack,
+  onSubmit,
+}) {
+  if (!open || !contact) return null;
+  const isVendor = customerType === "dealer";
+  const availableTypes = isVendor
+    ? [{ value: "purchase-order", title: "Create purchase order", copy: "Create a purchase order in Zoho Books" }]
+    : [
+        { value: "invoice", title: "Send invoice", copy: "Create invoice in Zoho Books and email customer" },
+        { value: "quote", title: "Send quote", copy: "Create estimate / quotation and email customer" },
+        { value: "sales-order", title: "Create sales order", copy: "Create sales order in Zoho Books" },
+      ];
+  const selected = availableTypes.find((item) => item.value === documentType) || availableTypes[0];
+  const total = Math.max(0, subtotal - discount);
+  return (
+    <div className="session-modal-backdrop" onClick={onClose}>
+      <section className="sales-document-modal" role="dialog" aria-modal="true" aria-labelledby="sales-document-title" onClick={(event) => event.stopPropagation()}>
+        <header className="sales-document-heading">
+          <div>
+            <small>ZOHO BOOKS</small>
+            <h2 id="sales-document-title">Create sales document</h2>
+            <p>Create and send a document to the {isVendor ? "vendor" : "customer"} without leaving this session.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close document modal"><X size={20} /></button>
+        </header>
+        <div className="sales-document-body">
+          <div className="sales-document-contact">
+            <div className="sales-document-avatar">{(contact.name || "C").slice(0, 2).toUpperCase()}</div>
+            <div><strong>{contact.name}</strong><span>{contact.phone || "Phone not provided"}</span><span>{contact.email || "Email not provided"}</span></div>
+            <span className="session-status-pill">{isVendor ? "Vendor" : "Customer"}</span>
+          </div>
+          <section className="sales-order-summary">
+            <div className="sales-document-section-heading"><strong>Order summary ({cart.length} {cart.length === 1 ? "product" : "products"})</strong><button type="button" className="link-button" onClick={onBack}>Edit cart</button></div>
+            <div className="sales-summary-table">
+              <div className="sales-summary-header"><span>Product</span><span>SKU</span><span>Price</span><span>Qty</span><span>Total</span></div>
+              {cart.map((line, index) => {
+                const lineSubtotal = Number(line.rate || 0) * Number(line.quantity || 0);
+                const lineDiscount = line.discount_type === "fixed" ? Number(line.discount || 0) : lineSubtotal * Number(line.discount || 0) / 100;
+                return <div className="sales-summary-row" key={line.item_id || line.sku || index}><span>{line.product || line.name}</span><span>{line.sku || "—"}</span><span>₹{Number(line.rate || 0).toLocaleString("en-IN")}</span><span>{line.quantity}</span><strong>₹{Math.max(0, lineSubtotal - lineDiscount).toLocaleString("en-IN")}</strong></div>;
+              })}
+            </div>
+            <div className="sales-summary-totals"><span>Subtotal</span><strong>₹{subtotal.toLocaleString("en-IN")}</strong><span>Discount</span><strong className="discount-value">- ₹{discount.toLocaleString("en-IN")}</strong><span className="final-label">Total amount</span><strong className="final-total">₹{total.toLocaleString("en-IN")}</strong></div>
+          </section>
+          <section>
+            <div className="sales-document-section-heading"><strong>Select document to create</strong></div>
+            <div className={`document-type-grid ${isVendor ? "is-vendor" : ""}`}>
+              {availableTypes.map((item) => <button type="button" key={item.value} className={`document-type-card ${selected.value === item.value ? "selected" : ""}`} onClick={() => setDocumentType(item.value)}><span className="document-type-radio" /> <span><strong>{item.title}</strong><small>{item.copy}</small></span></button>)}
+            </div>
+          </section>
+          <section className="sales-email-section">
+            <div className="sales-document-section-heading"><strong>Email details</strong><small className="zoho-sender-note">Sent through the connected Zoho Books account</small></div>
+            <label>To ({isVendor ? "vendor" : "customer"} email)<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" type="email" />{!email.trim() && <small className="document-email-warning">No email is present for this contact. Add one to the Zoho contact to send the document, or download it from GuruConnect after creation.</small>}</label>
+            <div className="sales-email-grid"><label>Email subject<input value={subject} onChange={(event) => setSubject(event.target.value)} /></label><label>Email message<textarea value={message} onChange={(event) => setMessage(event.target.value)} /></label></div>
+          </section>
+        </div>
+        <footer className="sales-document-footer"><button type="button" className="button button-quiet" onClick={onBack}>Back to cart</button><button type="button" className="primary" onClick={() => onSubmit(selected.value)} disabled={busy || !cart.length}>{busy ? "Creating…" : email.trim() ? "Create & send" : "Create & download"}</button></footer>
       </section>
     </div>
   );
@@ -266,13 +348,25 @@ export default function VoiceSessions() {
   const [notes, setNotes] = useState([]),
     [noteText, setNoteText] = useState(""),
     [products, setProducts] = useState([]),
+    [recommendations, setRecommendations] = useState([]),
+    [transcriptPreview, setTranscriptPreview] = useState([]),
+    [insights, setInsights] = useState([]),
+    [cart, setCart] = useState([]),
+    [cartOpen, setCartOpen] = useState(false),
     [productRequirements, setProductRequirements] = useState([newProduct()]),
     [customerType, setCustomerType] = useState("unknown"),
     [documentContact, setDocumentContact] = useState(null),
     [customerOpen, setCustomerOpen] = useState(false),
-    [documentBusy, setDocumentBusy] = useState("");
+    [documentBusy, setDocumentBusy] = useState(""),
+    [documentModalOpen, setDocumentModalOpen] = useState(false),
+    [documentType, setDocumentType] = useState("invoice"),
+    [documentEmail, setDocumentEmail] = useState(""),
+    [documentSubject, setDocumentSubject] = useState(""),
+    [documentMessage, setDocumentMessage] = useState("");
   const [recorderGeneration, setRecorderGeneration] = useState(0);
   const [captureBusy, setRecorderBusy] = useState(false);
+  const [captureState, setCaptureState] = useState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
+  const [recordingSnapshot, setRecordingSnapshot] = useState(null);
   const busy = sessionBusy || captureBusy;
   const busyRef = useRef(false); busyRef.current = busy;
   const alive = useRef(true);
@@ -307,6 +401,16 @@ export default function VoiceSessions() {
     if (!alive.current || ticket !== selection.current) return;
     setNotes(noteData.notes || []);
     setProductRequirements(contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()]);
+    setCart(contextData.cart || []);
+  };
+  const refreshRecordingStatus = async (id = conversationId) => {
+    if (!id || !workspace) return;
+    try {
+      const data = await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, {}, workspace.member_id);
+      if (alive.current && id === sessionRef.current || id === conversationId) setRecordingSnapshot(data);
+    } catch (e) {
+      if (alive.current && e?.name !== "AbortError") setError((current) => current || e.message);
+    }
   };
   useEffect(() => {
     load();
@@ -320,7 +424,9 @@ export default function VoiceSessions() {
       if (!alive.current || ticket !== selection.current) return;
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
+      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
       setConversationId(data.conversation_id || null);
+      setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
       setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', sources: ['Session'], enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
       await loadSessionExtras(id, ticket);
@@ -337,8 +443,8 @@ export default function VoiceSessions() {
           email: contact.email || "",
         }
       : identity;
-    if (!next.name.trim() || (!next.phone.trim() && !next.email.trim())) {
-      setError("Enter a customer name and phone number or email first.");
+    if (!next.name.trim() || !next.phone.trim() || !next.email.trim()) {
+      setError("Enter the customer’s name, phone number, and email address before starting the session.");
       return;
     }
     busyRef.current = true; setBusy(true);
@@ -347,6 +453,8 @@ export default function VoiceSessions() {
     // Do not let the previous contact's failed/pending recording block this
     // contact while the phone-based session lookup is in flight.
     setConversationId(null);
+    setRecordingSnapshot(null);
+    setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
     try {
       const data = await sessionCall("/voice-sessions", {
         method: "POST",
@@ -366,7 +474,9 @@ export default function VoiceSessions() {
       setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
       setRecorderSessions(data.recorder_sessions || []);
+      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
       setConversationId(data.conversation_id || null);
+      setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       await load();
       await loadContacts(contactSearch);
       await loadSessionExtras(data.session.id, ticket);
@@ -408,6 +518,7 @@ export default function VoiceSessions() {
     setDocumentContact(null);
     setIdentity({ name: "", phone: "", email: "" });
     setNotes([]);
+    setTranscriptPreview([]); setInsights([]); setRecommendations([]); setCart([]); setCartOpen(false);
     setProductRequirements([newProduct()]);
     setError("");
   };
@@ -421,7 +532,7 @@ export default function VoiceSessions() {
     const id = sessionRef.current; const ticket = selection.current;
     try {
       const data = await sessionCall(`/voice-sessions/${id}/history`);
-      if (alive.current && ticket === selection.current && id === sessionRef.current) setRecorderSessions(data.recorder_sessions || []);
+      if (alive.current && ticket === selection.current && id === sessionRef.current) { setRecorderSessions(data.recorder_sessions || []); setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); void refreshRecordingStatus(data.conversation_id || conversationId); }
     } catch (e) { if (alive.current && e.name !== 'AbortError') setError(e.message); }
   };
   const deleteRecorderSession = async (id) => {
@@ -449,7 +560,7 @@ export default function VoiceSessions() {
     if (session)
       void sessionCall(`/voice-sessions/${session}/context`, {
         method: "PUT",
-        body: JSON.stringify({ product_requirements: next }),
+        body: JSON.stringify({ product_requirements: next, cart }),
       }).catch((e) => setError(e.message));
   };
   const searchProducts = async (value) => {
@@ -510,11 +621,71 @@ export default function VoiceSessions() {
   useEffect(() => {
     if (session) void resolveDocumentContact();
   }, [session, identity.phone, identity.email]);
+  useEffect(() => {
+    if (!session || !conversationId || !supabase) return;
+    const channel = supabase.channel(`voice-extraction-${conversationId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_extractions', filter: `conversation_id=eq.${conversationId}` }, () => {
+        void sessionCall(`/voice-sessions/${session}/history`).then((data) => {
+          if (sessionRef.current !== session) return;
+          setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
+          const names = (data.insights || []).flatMap((item) => item.data?.products || []).map((item) => typeof item === 'string' ? item : item.name || item.product || '').filter(Boolean).slice(-3);
+          if (names.length) void Promise.all(names.map((name) => sessionCall(`/products?search=${encodeURIComponent(name)}`))).then((rows) => setRecommendations(rows.flatMap((row) => row.items || []).slice(0, 8))).catch(() => {});
+        }).catch(() => {});
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `id=eq.${conversationId}` }, () => { void refreshRecordingStatus(conversationId); })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [session, conversationId]);
+  useEffect(() => { if (conversationId) void refreshRecordingStatus(conversationId); }, [conversationId, workspace?.id]);
+  useEffect(() => {
+    if (!session) return;
+    const timer = window.setTimeout(() => { void sessionCall(`/voice-sessions/${session}/context`, { method: 'PUT', body: JSON.stringify({ product_requirements: productRequirements, cart }) }).catch(() => {}); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [session, cart]);
   const selectProduct = (index, item) => {
     updateProduct(index, "product", item.name || item.item_name || "");
     updateProduct(index, "sku", item.sku || "");
     updateProduct(index, "item_id", item.item_id || "");
     setProducts([]);
+  };
+  const addToCart = (item) => {
+    const id = item.item_id || item.id || item.sku;
+    setCart((current) => {
+      const found = current.find((line) => (line.item_id || line.id || line.sku) === id);
+      if (found) return current.map((line) => line === found ? { ...line, quantity: Number(line.quantity || 1) + 1 } : line);
+      return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', rate: Number(item.rate ?? item.price ?? 0) }];
+    });
+    setCartOpen(true);
+  };
+  const updateCart = (index, key, value) => setCart((current) => current.map((line, i) => i === index ? { ...line, [key]: key === 'quantity' || key === 'discount' ? Math.max(0, Number(value) || 0) : value } : line));
+  const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
+  const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
+  const openDocumentModal = async () => {
+    if (!cart.length) return;
+    if (customerType === "unknown") { setError("Customer account details are still being checked."); return; }
+    try {
+      const zohoStatus = await sessionCall("/zoho/status");
+      if (!zohoStatus?.connected || !zohoStatus?.organization_id) {
+        setError("Connect the salesperson's Zoho Books account and select an organization before sending a document.");
+        return;
+      }
+    } catch (e) {
+      setError(e.message);
+      return;
+    }
+    const vendor = customerType === "dealer";
+    setDocumentType(vendor ? "purchase-order" : "invoice");
+    setDocumentEmail(identity.email || documentContact?.email || documentContact?.Email || "");
+    setDocumentSubject(`Your ${vendor ? "purchase order" : "invoice"} from GuruConnect`);
+    setDocumentMessage(`Hi ${identity.name || "there"},\n\nPlease find your ${vendor ? "purchase order" : "document"} for the selected items. Let me know if you have any questions.`);
+    setDocumentModalOpen(true);
+  };
+  const downloadTranscript = () => {
+    if (!transcriptPreview.length) return;
+    const safe = (identity.name || 'contact').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'contact';
+    const stamp = new Date(recorderSessions[0]?.created_at || Date.now()).toISOString().replace('T', '_').replace(/:/g, '-').slice(0, 19);
+    const content = transcriptPreview.map((turn) => `[${turn.start_seconds ?? 0}] ${turn.english_text || turn.source_text || ''}`).join('\n');
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = `${safe}_${stamp}_transcript.txt`; a.click(); URL.revokeObjectURL(url);
   };
   const addNote = async () => {
     if (!session || !noteText.trim()) return;
@@ -542,7 +713,28 @@ export default function VoiceSessions() {
     selectedContact?.records?.bigin ||
     selectedContact?.bigin_contact_id ||
     null;
-  const createDocument = async (type) => {
+  const downloadSalesDocument = (type, lines, result) => {
+    const record = result?.quote || result?.order || result?.invoice || result?.purchase_order || result?.response?.estimate || result?.response?.salesorder || result?.response?.invoice || result?.response?.purchaseorder || {};
+    const documentNumber = record.estimate_number || record.salesorder_number || record.invoice_number || record.purchaseorder_number || record.document_number || 'Created in Zoho Books';
+    const content = [
+      `${type.replace('-', ' ').toUpperCase()}`,
+      `Contact: ${identity.name}`,
+      `Phone: ${identity.phone}`,
+      `Email: No email present for this contact`,
+      `Document: ${documentNumber}`,
+      '',
+      ...lines.map((line) => `${line.product || line.name || 'Product'} | SKU: ${line.sku || '—'} | Qty: ${line.quantity} | Unit price: ₹${Number(line.rate || 0).toLocaleString('en-IN')}`),
+      '',
+      `Subtotal: ₹${cartSubtotal.toLocaleString('en-IN')}`,
+      `Discount: ₹${cartDiscount.toLocaleString('en-IN')}`,
+      `Total: ₹${Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}`,
+    ].join('\n');
+    const safe = (identity.name || 'contact').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'contact';
+    const stamp = new Date().toISOString().replace('T', '_').replace(/:/g, '-').slice(0, 19);
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safe}_${stamp}_${type.replace(/-/g, '_')}.txt`; anchor.click(); URL.revokeObjectURL(url);
+  };
+  const createDocument = async (type, emailDetails = {}) => {
     if (customerType === "unknown") {
       setError("Customer account details are still being checked.");
       return;
@@ -557,7 +749,13 @@ export default function VoiceSessions() {
       setError("Purchase orders can only be created for vendors.");
       return;
     }
-    const lines = productRequirements.filter(
+    const recipient = (emailDetails.email || identity.email || "").trim();
+    const hasRecipient = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient);
+    if (!hasRecipient && emailDetails.downloadOnly !== true) {
+      setError("No email is present for this contact. Add an email to the Zoho contact to send this document, or choose Create & download.");
+      return;
+    }
+    const lines = (cart.length ? cart : productRequirements).filter(
       (line) => line.item_id && Number(line.quantity) > 0,
     );
     if (!lines.length) {
@@ -588,7 +786,7 @@ export default function VoiceSessions() {
     setDocumentBusy(type);
     setError("");
     try {
-      await sessionCall(path, {
+      const result = await sessionCall(path, {
         method: "POST",
         body: JSON.stringify({
           [key]: contactId,
@@ -603,15 +801,23 @@ export default function VoiceSessions() {
               : null,
           date: new Date().toISOString().slice(0, 10),
           line_items: lines.map((line) => ({
-            item_id: line.item_id,
+            item_id: line.item_id || line.id,
             quantity: Number(line.quantity),
             rate: Number(line.rate || 0),
+            ...(line.discount ? { discount: Number(line.discount), discount_type: line.discount_type || 'percentage' } : {}),
             description: line.notes || line.product,
           })),
           notes: "Generated from GuruConnect voice session",
         }),
       });
-      setError(`${type.replace("-", " ")} generated successfully.`);
+      if (type !== 'purchase-order' && result && hasRecipient) {
+        const record = result.quote || result.order || result.invoice || result.purchase_order || result.response?.estimate || result.response?.salesorder || result.response?.invoice || result.response?.purchaseorder;
+        const recordId = record?.estimate_id || record?.salesorder_id || record?.invoice_id || record?.purchaseorder_id || record?.id;
+        if (recordId) await sessionCall(`${path}/${recordId}/email`, { method: 'POST', body: JSON.stringify({ to_mail_ids: [recipient], subject: emailDetails.subject || `Your ${type.replace('-', ' ')} from GuruConnect`, body: emailDetails.message || `Please find your ${type.replace('-', ' ')} attached.` }) });
+      }
+      if (!hasRecipient) downloadSalesDocument(type, lines, result);
+      setDocumentModalOpen(false);
+      setError(hasRecipient ? `${type.replace("-", " ")} created and sent through the connected Zoho Books account.` : `${type.replace("-", " ")} created. No email is present for this contact, so the document was downloaded from GuruConnect.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -648,6 +854,31 @@ export default function VoiceSessions() {
     } finally {
       setStageBusy(false);
     }
+  };
+  const currentRecordingSnapshot = recordingSnapshot || (recorderSessions.find((item) => item.id === conversationId) || null);
+  const recordingUiStatus = captureState.capture === "recording" || captureState.capture === "paused"
+    ? recordingStatus({ capture_state: captureState.capture })
+    : recordingStatus(currentRecordingSnapshot);
+  const transcriptionUiStatus = currentRecordingSnapshot
+    ? recordingStatus(currentRecordingSnapshot)
+    : captureBusy
+      ? { key: "ready", label: "Waiting for first window", detail: "Recording continues while the first processing window is assembled." }
+      : recordingStatus(null);
+  const aiInsightStatus = insights.some((item) => item.status === "failed")
+    ? { key: "failed", label: "AI analysis failed", detail: "Previously completed transcript content is preserved." }
+    : insights.some((item) => item.status === "running" || item.status === "pending")
+      ? { key: "translating", label: "Updating recommendations", detail: "New translated content is being analyzed." }
+      : transcriptPreview.length
+        ? { key: "complete", label: "Insights available", detail: "Requirements and recommendations reflect completed chunks." }
+        : { key: "ready", label: "Waiting for translated chunk", detail: "AI insights begin only after usable translated text arrives." };
+  const retryRecordingStage = async () => {
+    if (!conversationId || !workspace) return;
+    const stage = currentRecordingSnapshot?.transcription_state && ["failed", "blocked", "uncertain"].includes(currentRecordingSnapshot.transcription_state) ? "transcription" : "translation";
+    try {
+      await recorderRequest(`/conversations/${encodeURIComponent(conversationId)}/retry`, workspace.id, { method: "POST", body: JSON.stringify({ stage }) }, workspace.member_id);
+      setError("");
+      await refreshRecordingStatus(conversationId);
+    } catch (e) { setError(e.message); }
   };
   return (
     <section className="voice-sessions-page">
@@ -692,6 +923,7 @@ export default function VoiceSessions() {
                 {contact.phone || contact.email || "No phone or email"}
               </small>
               <em>{contact.sources.join(" · ")}</em>
+              {contact.recording_status && <span className="contact-status-pill">{contact.recording_status}</span>}
             </button>
           ))}
           <div className="contact-heading session-heading">
@@ -726,6 +958,11 @@ export default function VoiceSessions() {
                   </button>
                 )}
               </div>
+              <div className="session-status-strip" aria-label="Conversation processing status">
+                <span className={`status-indicator status-${recordingUiStatus.key}`}><i />Recording <b>{recordingUiStatus.label}</b>{captureState.capture === "recording" && <em>· {new Date(captureState.elapsedSeconds * 1000).toISOString().slice(11, 19)}</em>}</span>
+                <span className={`status-indicator status-${transcriptionUiStatus.key}`}><i />Transcription &amp; translation <b>{transcriptionUiStatus.label}</b></span>
+                <span className={`status-indicator status-${aiInsightStatus.key}`}><i />AI insights <b>{aiInsightStatus.label}</b></span>
+              </div>
               {selectedContact.enquiry_id && (
                 <label className="session-stage-control">
                   <span>Enquiry stage</span>
@@ -750,8 +987,8 @@ export default function VoiceSessions() {
                 <h2>Start a voice session</h2>
                 <p>
                   Select a contact from Bigin, Books, enquiries, or recent
-                  sessions. Audio uses GuruConnect’s managed WAV pipeline for
-                  ElevenLabs transcription and English translation.
+                  sessions. Start the session when you are ready to speak with
+                  the customer; processing continues in the background.
                 </p>
                 <div className="identity">
                   <input
@@ -777,7 +1014,7 @@ export default function VoiceSessions() {
                   />
                   <input
                     type="email"
-                    placeholder="Email fallback"
+                    placeholder="Email address (optional)"
                     value={identity.email}
                     onChange={(event) =>
                       setIdentity({ ...identity, email: event.target.value })
@@ -789,7 +1026,7 @@ export default function VoiceSessions() {
                     onClick={() => void prepareSession()}
                     disabled={busy}
                   >
-                    {busy ? "Opening…" : "Open recorder"}
+                    {busy ? "Opening…" : "Open session"}
                   </button>
                 </div>
               </div>
@@ -806,11 +1043,8 @@ export default function VoiceSessions() {
             {session && (
               <div className="voice-processing-note">
                 <Mic2 size={15} />
-                <span>
-                  Saved audio is sent to ElevenLabs Scribe v2. Non-English
-                  source turns are translated to English by the configured
-                  OpenAI Luna path.
-                </span>
+                <span>{transcriptionUiStatus.detail} {aiInsightStatus.detail}</span>
+                {recordingUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
               </div>
             )}
             {session && recorderSessions.length > 0 && (
@@ -846,125 +1080,16 @@ export default function VoiceSessions() {
             <div className="voice-composer">
               <div className="session-workspace">
                 <div className="session-workspace-left">
-                  <section
-                    className={`needs-panel${needsCollapsed ? " is-collapsed" : ""}`}
-                  >
-                    <div className="needs-heading">
-                      <button
-                        type="button"
-                        className="session-panel-toggle"
-                        title={needsCollapsed ? "Expand product requirements" : "Collapse product requirements to show more history"}
-                        aria-expanded={!needsCollapsed}
-                        aria-controls="session-needs-content"
-                        onClick={() =>
-                          setNeedsCollapsed((collapsed) => !collapsed)
-                        }
-                      >
-                        <div>
-                          <small>WHAT THEY NEED</small>
-                          <h3>Product requirements</h3>
-                          <p>
-                            Add one or more products the customer is interested
-                            in.
-                          </p>
-                        </div>
-                        <span>03</span>
-                        {needsCollapsed ? (
-                          <ChevronRight size={18} aria-hidden="true" />
-                        ) : (
-                          <ChevronDown size={18} aria-hidden="true" />
-                        )}
-                      </button>
+                  <section className="session-insights-panel">
+                    <div className="session-section-heading"><div><small>LIVE CONVERSATION WORKSPACE</small><h3>Transcript & recommendations</h3></div><span className="session-status-pill">{transcriptPreview.length ? 'Processing updates' : 'Ready to record'}</span></div>
+                    <div className="compact-transcript" aria-label="Latest transcript">
+                      <div className="compact-transcript-heading"><strong>Latest transcript</strong><button type="button" className="button button-quiet" onClick={downloadTranscript} disabled={!transcriptPreview.length}><Download size={14} /> Download transcript</button></div>
+                      {transcriptPreview.length ? transcriptPreview.map((turn) => <p key={turn.id}><time>{new Date((recorderSessions[0]?.created_at || Date.now())).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><strong>{turn.speaker_ref || 'Conversation'}:</strong> {turn.english_text || turn.source_text}</p>) : <p className="notes-empty">Transcript will appear here after each completed audio chunk.</p>}
                     </div>
-                    <div
-                      id="session-needs-content"
-                      className="session-panel-content"
-                      hidden={needsCollapsed}
-                    >
-                      <p className="catalogue-note">
-                        Search the product catalogue, then capture the
-                        requested quantity, pricing context, and stock needs.
-                      </p>
-                      {productRequirements.map((line, index) => (
-                        <ProductRequirement
-                          key={index}
-                          line={line}
-                          index={index}
-                          products={products}
-                          onChange={(key, value) =>
-                            updateProduct(index, key, value)
-                          }
-                          onSearch={searchProducts}
-                          onSelect={(item) => selectProduct(index, item)}
-                          onRemove={() =>
-                            setProductRequirements((current) =>
-                              current.filter(
-                                (_, itemIndex) => itemIndex !== index,
-                              ),
-                            )
-                          }
-                        />
-                      ))}
-                      <button
-                        type="button"
-                        className="add-product-button"
-                        onClick={() =>
-                          setProductRequirements((current) => [
-                            ...current,
-                            newProduct(),
-                          ])
-                        }
-                      >
-                        + Add another product
-                      </button>
-                      <label className="customer-type-select">
-                        Document party
-                        <select
-                          value={customerType}
-                          onChange={(event) =>
-                            setCustomerType(event.target.value)
-                          }
-                        >
-                          <option value="customer">Customer</option>
-                          <option value="dealer">Dealer</option>
-                        </select>
-                      </label>
-                      <div className="document-actions">
-                        <button
-                          type="button"
-                          onClick={() => void createDocument("quote")}
-                          disabled={!!documentBusy}
-                        >
-                          Generate quote
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void createDocument("invoice")}
-                          disabled={!!documentBusy}
-                        >
-                          Generate invoice
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void createDocument("sales-order")}
-                          disabled={!!documentBusy}
-                        >
-                          Generate sales order
-                        </button>
-                        {customerType === "dealer" && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void createDocument("purchase-order")
-                            }
-                            disabled={!!documentBusy}
-                          >
-                            Generate purchase order
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </section>{" "}
+                    <div className="recommendations-heading"><strong><ShoppingCart size={15} /> Recommended products</strong><button type="button" className="link-button" onClick={() => setCartOpen(true)}>Cart ({cart.length})</button></div>
+                    <div className="recommendations-row">{(recommendations.length ? recommendations : products).slice(0, 6).map((item) => <article className="recommendation-card" key={item.item_id || item.id || item.sku}><div className="recommendation-image">{item.image_url ? <img src={item.image_url} alt="" /> : <ShoppingCart size={22} />}</div><strong>{item.name || item.item_name}</strong><small>SKU: {item.sku || 'Not provided'}</small><b>{item.rate != null ? `₹${Number(item.rate).toLocaleString('en-IN')}` : 'Price on request'}</b><button type="button" className="primary" onClick={() => addToCart(item)} disabled={!item.item_id && !item.id}>Add to cart</button></article>)}{!recommendations.length && !products.length && <p className="notes-empty">Recommendations will appear when the conversation identifies a catalogue match.</p>}</div>
+                    {cartOpen && <section className="session-cart"><div className="session-section-heading"><h3>Cart · {cart.length} item{cart.length === 1 ? '' : 's'}</h3><button type="button" className="link-button" onClick={() => setCartOpen(false)}>Hide</button></div>{cart.map((line, index) => <div className="cart-line" key={line.item_id || line.sku || index}><div><strong>{line.product || line.name}</strong><small>{line.sku || 'No SKU'} · ₹{Number(line.rate || 0).toLocaleString('en-IN')}</small></div><input aria-label="Quantity" type="number" min="1" value={line.quantity} onChange={(event) => updateCart(index, 'quantity', event.target.value)} /><input aria-label="Discount" type="number" min="0" value={line.discount} onChange={(event) => updateCart(index, 'discount', event.target.value)} /><select aria-label="Discount type" value={line.discount_type} onChange={(event) => updateCart(index, 'discount_type', event.target.value)}><option value="percentage">%</option><option value="fixed">₹</option></select><b>₹{Math.max(0, Number(line.rate || 0) * Number(line.quantity || 0) - (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100)).toLocaleString('en-IN')}</b><button type="button" className="link-button" onClick={() => setCart((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}<div className="cart-total"><span>Subtotal</span><b>₹{cartSubtotal.toLocaleString('en-IN')}</b><span>Discount</span><b>- ₹{cartDiscount.toLocaleString('en-IN')}</b><span>Final total</span><strong>₹{Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}</strong></div><button type="button" className="primary complete-cart" onClick={() => document.getElementById('voice-document-actions')?.scrollIntoView({ behavior: 'smooth' })} disabled={!cart.length}>Complete cart →</button></section>}
+                  </section>
                   <ConversationRecorder
                     key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`}
                     customerName={identity.name}
@@ -974,8 +1099,10 @@ export default function VoiceSessions() {
                     initialConversationId={conversationId}
                     onConversationChange={linkConversation}
                     onBusyChange={setRecorderBusy}
+                    onCaptureChange={setCaptureState}
                     onSaved={() => void recordingSaved()}
                     grouped
+                    sessionOnly
                   />
                 </div>
                 <aside
@@ -1039,6 +1166,10 @@ export default function VoiceSessions() {
                   </div>
                 </aside>
               </div>
+              <div id="voice-document-actions" className="document-actions session-document-actions">
+                <div><strong>Ready to create a Zoho document?</strong><small>{cart.length ? `${cart.length} item${cart.length === 1 ? "" : "s"} in cart · ₹${Math.max(0, cartSubtotal - cartDiscount).toLocaleString("en-IN")}` : "Add products to the cart first."}</small></div>
+                <button type="button" className="primary" onClick={() => void openDocumentModal()} disabled={!!documentBusy || !cart.length}>Complete cart <ChevronRight size={15} /></button>
+              </div>
               {conversationId && (
                 <div className="session-transcript">
                   <ConversationTranscript conversationId={conversationId} />
@@ -1051,6 +1182,26 @@ export default function VoiceSessions() {
       <CustomerModal
         contact={customerOpen ? selectedContact : null}
         onClose={() => setCustomerOpen(false)}
+      />
+      <SalesDocumentModal
+        open={documentModalOpen}
+        contact={selectedContact}
+        customerType={customerType}
+        cart={cart}
+        subtotal={cartSubtotal}
+        discount={cartDiscount}
+        documentType={documentType}
+        setDocumentType={setDocumentType}
+        email={documentEmail}
+        setEmail={setDocumentEmail}
+        subject={documentSubject}
+        setSubject={setDocumentSubject}
+        message={documentMessage}
+        setMessage={setDocumentMessage}
+        busy={!!documentBusy}
+        onClose={() => setDocumentModalOpen(false)}
+        onBack={() => setDocumentModalOpen(false)}
+        onSubmit={(type) => void createDocument(type, { email: documentEmail, subject: documentSubject, message: documentMessage, downloadOnly: !documentEmail.trim() })}
       />
     </section>
   );

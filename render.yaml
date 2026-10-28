@@ -104,6 +104,8 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4o-mini
+      - key: VOICE_EXTRACTION_WEBHOOK_SECRET
+        sync: false
       - key: APP_TIMEZONE
         value: Asia/Kolkata
       - key: ZOHO_REFRESH_CRON_SECRET
