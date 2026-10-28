@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -21,7 +20,7 @@ class ConversationMonitorAgent:
                   'contact_details, buying_signals, entities, focal_product, focal_product_sku, budget, intent. '
                   f'Current durable context: {json.dumps(context, ensure_ascii=False, default=str)[:9000]} '
                   f'Route: {json.dumps(route, ensure_ascii=False)} Chunk: {json.dumps(chunk, ensure_ascii=False, default=str)}')
-        response = await _invoke_with_retry(client, model=settings.openai_model, temperature=0, max_tokens=1200,
+        response = await _invoke_with_retry(client, model=settings.voice_extraction_model, temperature=0, max_tokens=1200,
             messages=[{'role': 'system', 'content': prompt}, {'role': 'user', 'content': chunk.get('english_text') or chunk.get('source_text') or ''}])
         parsed = parse_json(response.choices[0].message.content or '')
         parsed.setdefault('intent', route['intent'])

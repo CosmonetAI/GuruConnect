@@ -4,8 +4,10 @@ import {
   BookUser,
   ChevronDown,
   ChevronRight,
+  Copy,
   Headphones,
   Mic2,
+  MessageSquare,
   Plus,
   Search,
   ShoppingCart,
@@ -332,7 +334,8 @@ export default function VoiceSessions() {
     : initialIdentity;
   const [chats, setChats] = useState([]),
     [contacts, setContacts] = useState([]),
-    [contactSearch, setContactSearch] = useState("");
+    [contactSearch, setContactSearch] = useState(""),
+    [contactFilter, setContactFilter] = useState("all");
   const [session, setSession] = useState(null),
     [messages, setMessages] = useState([]),
     [recorderSessions, setRecorderSessions] = useState([]),
@@ -353,6 +356,9 @@ export default function VoiceSessions() {
     [insights, setInsights] = useState([]),
     [cart, setCart] = useState([]),
     [cartOpen, setCartOpen] = useState(false),
+    [cartProductSearchOpen, setCartProductSearchOpen] = useState(false),
+    [cartSearch, setCartSearch] = useState(""),
+    [cartSearchResults, setCartSearchResults] = useState([]),
     [productRequirements, setProductRequirements] = useState([newProduct()]),
     [customerType, setCustomerType] = useState("unknown"),
     [documentContact, setDocumentContact] = useState(null),
@@ -574,6 +580,13 @@ export default function VoiceSessions() {
       setError(e.message);
     }
   };
+  const searchCartProducts = async () => {
+    if (!cartSearch.trim()) return;
+    try {
+      const data = await sessionCall(`/products?search=${encodeURIComponent(cartSearch.trim())}`);
+      setCartSearchResults(data.items || []);
+    } catch (e) { setError(e.message); }
+  };
   const resolveDocumentContact = async () => {
     const ticket = selection.current;
     const query = (identity.phone || identity.email || "").trim();
@@ -656,6 +669,7 @@ export default function VoiceSessions() {
       return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', rate: Number(item.rate ?? item.price ?? 0) }];
     });
     setCartOpen(true);
+    setCartProductSearchOpen(false);
   };
   const updateCart = (index, key, value) => setCart((current) => current.map((line, i) => i === index ? { ...line, [key]: key === 'quantity' || key === 'discount' ? Math.max(0, Number(value) || 0) : value } : line));
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
@@ -825,6 +839,10 @@ export default function VoiceSessions() {
     }
   };
   const openCustomer = () => setCustomerOpen(true);
+  const copyPhone = async () => {
+    if (!selectedContact?.phone) return;
+    try { await navigator.clipboard?.writeText(selectedContact.phone); } catch { /* Clipboard access is optional. */ }
+  };
   const changeEnquiryStage = async (stage) => {
     if (!workspace || !selectedContact?.enquiry_id) return;
     setStageBusy(true);
@@ -871,6 +889,17 @@ export default function VoiceSessions() {
       : transcriptPreview.length
         ? { key: "complete", label: "Insights available", detail: "Requirements and recommendations reflect completed chunks." }
         : { key: "ready", label: "Waiting for translated chunk", detail: "AI insights begin only after usable translated text arrives." };
+  const statusIsClosed = (item) => {
+    const value = String(item.recording_status || item.status || item.enquiry_stage || "").toLowerCase();
+    return value.includes("closed") || value.includes("complete") || value.includes("failed") || value.includes("cancel");
+  };
+  const statusIsActive = (item) => {
+    const value = String(item.recording_status || item.status || item.enquiry_stage || "").toLowerCase();
+    return Boolean(item.session_id || item.sessionId || value.includes("record") || value.includes("process") || value.includes("active") || value.includes("transcrib"));
+  };
+  const matchesContactFilter = (item) => contactFilter === "all" || (contactFilter === "closed" ? statusIsClosed(item) : statusIsActive(item) && !statusIsClosed(item));
+  const visibleContacts = contacts.filter(matchesContactFilter);
+  const visibleChats = chats.filter(matchesContactFilter);
   const retryRecordingStage = async () => {
     if (!conversationId || !workspace) return;
     const stage = currentRecordingSnapshot?.transcription_state && ["failed", "blocked", "uncertain"].includes(currentRecordingSnapshot.transcription_state) ? "transcription" : "translation";
@@ -906,11 +935,25 @@ export default function VoiceSessions() {
               }}
             />
           </div>
+          <div className="session-contact-filters" role="tablist" aria-label="Contact filters">
+            {[['all', `All (${contacts.length + chats.length})`], ['active', 'Active'], ['closed', 'Closed']].map(([value, label]) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={contactFilter === value}
+                className={contactFilter === value ? "selected" : ""}
+                onClick={() => setContactFilter(value)}
+                key={value}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="contact-heading">
             <BookUser size={15} /> Recent contacts
           </div>
           {contactBusy && <PageLoader kind="contacts" label="Loading contacts" detail="Finding recent customer records." compact />}
-          {contacts.map((contact) => (
+          {visibleContacts.map((contact) => (
             <button
               type="button"
               className={`contact-row ${selectedContact?.id === contact.id ? "selected" : ""}`}
@@ -929,7 +972,7 @@ export default function VoiceSessions() {
           <div className="contact-heading session-heading">
             <Headphones size={15} /> Recent sessions
           </div>
-          {chats.map((chat) => (
+          {visibleChats.map((chat) => (
             <button
               type="button"
               className={`chat-row ${session === chat.id ? "selected" : ""}`}
@@ -942,6 +985,9 @@ export default function VoiceSessions() {
               <em>{new Date(chat.updated_at).toLocaleString()}</em>
             </button>
           ))}
+          {!contactBusy && !visibleContacts.length && !visibleChats.length && (
+            <p className="session-list-empty">No {contactFilter === "all" ? "contacts or sessions" : `${contactFilter} contacts`} found.</p>
+          )}
         </section>
         <section className="conversation">
           {selectedContact && (
@@ -957,6 +1003,7 @@ export default function VoiceSessions() {
                     <UserRound size={13} /> {selectedContact.phone}
                   </button>
                 )}
+                {selectedContact.phone && <button type="button" className="copy-phone-button" onClick={() => void copyPhone()} aria-label="Copy phone number" title="Copy phone number"><Copy size={13} /></button>}
               </div>
               <div className="session-status-strip" aria-label="Conversation processing status">
                 <span className={`status-indicator status-${recordingUiStatus.key}`}><i />Recording <b>{recordingUiStatus.label}</b>{captureState.capture === "recording" && <em>· {new Date(captureState.elapsedSeconds * 1000).toISOString().slice(11, 19)}</em>}</span>
@@ -981,6 +1028,15 @@ export default function VoiceSessions() {
             </div>
           )}
           <div className="messages">
+            {session && (
+              <div className="conversation-panel-heading">
+                <div>
+                  <strong>Conversation</strong>
+                  <small>{messages.length ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "Live customer conversation"}</small>
+                </div>
+                {selectedContact?.enquiry_stage && <span>{String(selectedContact.enquiry_stage).replaceAll("_", " ")}</span>}
+              </div>
+            )}
             {!session && (
               <div className="welcome">
                 <Headphones size={34} />
@@ -1040,6 +1096,13 @@ export default function VoiceSessions() {
                   )}
                 </div>
               ))}
+            {session && !messages.length && (
+              <div className="conversation-empty-state">
+                <MessageSquare size={22} />
+                <strong>No conversation messages yet</strong>
+                <p>Start the session when you are ready. Customer and salesperson messages will appear here as they are captured.</p>
+              </div>
+            )}
             {session && (
               <div className="voice-processing-note">
                 <Mic2 size={15} />
@@ -1088,7 +1151,8 @@ export default function VoiceSessions() {
                     </div>
                     <div className="recommendations-heading"><strong><ShoppingCart size={15} /> Recommended products</strong><button type="button" className="link-button" onClick={() => setCartOpen(true)}>Cart ({cart.length})</button></div>
                     <div className="recommendations-row">{(recommendations.length ? recommendations : products).slice(0, 6).map((item) => <article className="recommendation-card" key={item.item_id || item.id || item.sku}><div className="recommendation-image">{item.image_url ? <img src={item.image_url} alt="" /> : <ShoppingCart size={22} />}</div><strong>{item.name || item.item_name}</strong><small>SKU: {item.sku || 'Not provided'}</small><b>{item.rate != null ? `₹${Number(item.rate).toLocaleString('en-IN')}` : 'Price on request'}</b><button type="button" className="primary" onClick={() => addToCart(item)} disabled={!item.item_id && !item.id}>Add to cart</button></article>)}{!recommendations.length && !products.length && <p className="notes-empty">Recommendations will appear when the conversation identifies a catalogue match.</p>}</div>
-                    {cartOpen && <section className="session-cart"><div className="session-section-heading"><h3>Cart · {cart.length} item{cart.length === 1 ? '' : 's'}</h3><button type="button" className="link-button" onClick={() => setCartOpen(false)}>Hide cart</button></div>{cart.map((line, index) => <div className="cart-line" key={line.item_id || line.sku || index}><div><strong>{line.product || line.name}</strong><small>{line.sku || 'No SKU'} · ₹{Number(line.rate || 0).toLocaleString('en-IN')}</small></div><input aria-label="Quantity" type="number" min="1" value={line.quantity} onChange={(event) => updateCart(index, 'quantity', event.target.value)} /><input aria-label="Discount" type="number" min="0" value={line.discount} onChange={(event) => updateCart(index, 'discount', event.target.value)} /><select aria-label="Discount type" value={line.discount_type} onChange={(event) => updateCart(index, 'discount_type', event.target.value)}><option value="percentage">%</option><option value="fixed">₹</option></select><b>₹{Math.max(0, Number(line.rate || 0) * Number(line.quantity || 0) - (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100)).toLocaleString('en-IN')}</b><button type="button" className="link-button" onClick={() => setCart((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}<div className="cart-total"><span>Subtotal</span><b>₹{cartSubtotal.toLocaleString('en-IN')}</b><span>Discount</span><b>- ₹{cartDiscount.toLocaleString('en-IN')}</b><span>Final total</span><strong>₹{Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}</strong></div><button type="button" className="primary complete-cart" onClick={() => void openDocumentModal()} disabled={!cart.length}>Complete cart <ChevronRight size={15} /></button></section>}
+                    {cartOpen && <section className="session-cart"><div className="session-section-heading"><h3><ShoppingCart size={15} /> Cart · {cart.length} item{cart.length === 1 ? '' : 's'}</h3><div className="cart-heading-actions"><button type="button" className="button button-quiet" onClick={() => setCartProductSearchOpen(true)}>+ Add another product</button><button type="button" className="link-button" onClick={() => setCartOpen(false)}>Hide cart</button></div></div>{cart.map((line, index) => <div className="cart-line" key={line.item_id || line.sku || index}><div><strong>{line.product || line.name}</strong><small>{line.sku || 'No SKU'} · ₹{Number(line.rate || 0).toLocaleString('en-IN')}</small></div><input aria-label="Quantity" type="number" min="1" value={line.quantity} onChange={(event) => updateCart(index, 'quantity', event.target.value)} /><input aria-label="Discount" type="number" min="0" value={line.discount} onChange={(event) => updateCart(index, 'discount', event.target.value)} /><select aria-label="Discount type" value={line.discount_type} onChange={(event) => updateCart(index, 'discount_type', event.target.value)}><option value="percentage">%</option><option value="fixed">₹</option></select><b>₹{Math.max(0, Number(line.rate || 0) * Number(line.quantity || 0) - (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100)).toLocaleString('en-IN')}</b><button type="button" className="link-button" onClick={() => setCart((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}<div className="cart-total"><span>Subtotal</span><b>₹{cartSubtotal.toLocaleString('en-IN')}</b><span>Discount</span><b>- ₹{cartDiscount.toLocaleString('en-IN')}</b><span>Final total</span><strong>₹{Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}</strong></div><button type="button" className="primary complete-cart" onClick={() => void openDocumentModal()} disabled={!cart.length}>Complete cart <ChevronRight size={15} /></button></section>}
+                    {cartProductSearchOpen && <div className="session-modal-backdrop cart-search-backdrop" onClick={() => setCartProductSearchOpen(false)}><section className="product-search-modal" role="dialog" aria-modal="true" aria-labelledby="cart-product-search-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>PRODUCT CATALOGUE</small><h2 id="cart-product-search-title">Add another product</h2></div><button type="button" onClick={() => setCartProductSearchOpen(false)} aria-label="Close product search"><X size={20} /></button></div><div className="cart-product-search-form"><input autoFocus placeholder="Search by product name or SKU" value={cartSearch} onChange={(event) => setCartSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchCartProducts(); } }} /><button type="button" className="primary" onClick={() => void searchCartProducts()} disabled={!cartSearch.trim()}>Search</button></div><div className="cart-product-results">{cartSearchResults.map((item) => <button type="button" className="cart-product-result" key={item.item_id || item.id || item.sku} onClick={() => addToCart(item)}><span className="cart-product-result-image">{item.image_url ? <img src={item.image_url} alt="" /> : <ShoppingCart size={18} />}</span><span><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {item.rate != null ? `₹${Number(item.rate).toLocaleString("en-IN")}` : "Price on request"}</small></span><b>Add</b></button>)}{cartSearch && !cartSearchResults.length && <p className="notes-empty">No catalogue products found.</p>}</div></section></div>}
                   </section>
                   <ConversationRecorder
                     key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`}

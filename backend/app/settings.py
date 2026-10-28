@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     zoho_api_domain: str = 'https://www.zohoapis.com'
     openai_api_key: str = ''
     openai_model: str = 'gpt-4o-mini'
+    voice_extraction_model: str = 'gpt-5.6-luna'
     voice_extraction_webhook_secret: str = ''
     app_timezone: str = 'Asia/Kolkata'
     zoho_refresh_cron_secret: str = ''
