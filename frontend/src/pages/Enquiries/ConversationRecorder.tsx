@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Check, FileAudio2, Mic2, Square, Upload } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { duration, json, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
@@ -24,6 +24,11 @@ export interface ConversationRecorderProps {
   grouped?: boolean
   sessionOnly?: boolean
   registrationOnly?: boolean
+  onConsentChange?: (consent: boolean) => void
+}
+export interface ConversationRecorderHandle {
+  start: () => Promise<void>
+  stop: () => Promise<void>
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
@@ -39,14 +44,16 @@ function recordingTabId(userId?: string, workspaceId?: string, memberId?: string
   } catch { return crypto.randomUUID() }
 }
 
-export default function ConversationRecorder(props: ConversationRecorderProps) {
+const ConversationRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ConversationRecorder(props, ref) {
   const { user, workspace } = useOffice()
   // Recording state must never cross account/workspace boundaries. The conversation ID
   // is deliberately not a key: creating a conversation must not unmount its microphone.
-  return <ScopedRecorder key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} {...props} />
-}
+  return <ScopedRecorder ref={ref} key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} {...props} />
+})
 
-function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps) {
+export default ConversationRecorder
+
+const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, onConsentChange, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
   const { user, workspace, loading, localMode, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -78,6 +85,11 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
   const busy = operation || captureActive || capture.saving || (!anotherMemberView && (unfinished || (!!file && !saved)))
   const blocked = loading || !user || !workspace || anotherMemberView
   const meterLevel = Math.min(1, Math.max(0, capture.level * 8))
+
+  useImperativeHandle(ref, () => ({
+    start: () => startMicrophone(true),
+    stop: () => changeCapture('stop'),
+  }))
 
   function isCurrent(epoch: number, controller: AbortController) { return mounted.current && epoch === generation.current && !controller.signal.aborted }
   async function notify(id: string | null) { await callbacks.current.onConversationChange(id) }
@@ -137,7 +149,9 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
     if (!consent) throw new Error('Confirm participant consent before recording or uploading audio.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
-    if (!customerPhone?.trim() && !customerEmail?.trim()) throw new Error('Enter a phone number or email before adding audio.')
+    if (sessionOnly || registrationOnly) {
+      if (!customerPhone?.trim() || !customerEmail?.trim()) throw new Error('Enter the customer name, phone number, and email address before starting.')
+    } else if (!customerPhone?.trim() && !customerEmail?.trim()) throw new Error('Enter a phone number or email before adding audio.')
   }
   async function createConversation(signal: AbortSignal, reuseExisting = false) {
     if (reuseExisting && idRef.current) return idRef.current
@@ -165,7 +179,7 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
   async function startMicrophone(startNew = false) {
     if (operationRef.current || captureActive || (!startNew && (saved || unfinished))) return
     try { validateStart() } catch (reason) { setError(message(reason)); return }
-    if (startNew && saved) {
+    if (startNew && (saved || unfinished)) {
       idRef.current = null; creation.current = null; notifiedSaved.current = null
       setConversationId(null); setSaved(false); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setPhase('idle')
       await notify(null)
@@ -270,20 +284,20 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
         {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
         <div className="recorder-copy"><span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span><h3>{saved ? (registrationOnly ? 'Registration ended' : sessionOnly ? 'Session ended' : 'Audio saved in your workspace') : registrationOnly ? 'Start visitor registration' : sessionOnly ? 'Start a customer session' : 'Record or upload the conversation'}</h3><p>{saved ? 'Your conversation is saved. Processing continues in the background.' : registrationOnly ? 'Start registration to record the visitor conversation.' : sessionOnly ? 'Start the session to record and process the customer conversation.' : 'Consented audio is transcribed and translated where needed.'}</p>{(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}</div>
         <div className="recorder-controls">
-          {sessionOnly && !captureActive && !operation && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(saved)}><Mic2 size={16} />Start session</button>}
-          {registrationOnly && !captureActive && !operation && !unfinished && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(saved)}><Mic2 size={16} />Start registration</button>}
+          {sessionOnly && !captureActive && !operation && !saved && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start session</button>}
+          {registrationOnly && !captureActive && !operation && !saved && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start registration</button>}
           {!singleAction && !captureActive && !operation && !saved && !unfinished && !file && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void startMicrophone()}><Mic2 size={16} />Start recording</button>}
           {!singleAction && !operation && !captureActive && !capture.saving && !saved && !unfinished && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" disabled={blocked} onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
           {!singleAction && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}>{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
           {!singleAction && file && !operation && !unfinished && <button type="button" className="button button-quiet" onClick={() => { setFile(null); setError(''); setProgress(null) }}>Remove selected file</button>}
-          {captureActive && <><button type="button" className={`button ${singleAction ? 'button-stop session-action-button' : 'button-secondary'}`} disabled={operation} onClick={() => void changeCapture(singleAction ? 'stop' : capture.capture === 'paused' ? 'resume' : 'pause')}><Square size={14} />{registrationOnly ? 'End registration' : sessionOnly ? 'End session' : capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>{!singleAction && <><button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button><div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div></>}{singleAction && <div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div>}</>}
+          {captureActive && <><div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div><button type="button" className={`button ${singleAction ? 'button-stop session-action-button' : 'button-secondary'}`} disabled={operation} onClick={() => void changeCapture(singleAction ? 'stop' : capture.capture === 'paused' ? 'resume' : 'pause')}><Square size={14} />{registrationOnly ? 'End registration' : sessionOnly ? 'End session' : capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>{!singleAction && <button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button>}</>}
           {!singleAction && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary" onClick={() => void resetRecording()}>Record another conversation</button>}
           {!singleAction && conversationId && !anotherMemberView && !captureActive && !operation && !capture.saving && <button type="button" className="button button-quiet" onClick={() => void resetRecording()}>Detach audio</button>}
           {!singleAction && unfinished && !anotherMemberView && !captureActive && !operation && <button type="button" className="button button-danger-quiet" onClick={() => void resetRecording(true)}>Discard recording</button>}
           {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
         </div>
       </div>
-      <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record and process this conversation.</span></label></div>
+      <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => { setConsent(event.target.checked); onConsentChange?.(event.target.checked) }} /><span>I have permission from all intended participants to record and process this conversation.</span></label></div>
       {anotherMemberView && <p role="status">Switch to your own account view to record.</p>}
       {loading && <p role="status">Loading workspace…</p>}
       {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
@@ -296,4 +310,4 @@ function ScopedRecorder({ customerName, customerPhone, customerEmail, title, ini
       {!singleAction && progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span></div>}
     </div>
   </div>
-}
+})

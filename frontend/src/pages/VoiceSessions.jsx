@@ -350,6 +350,8 @@ export default function VoiceSessions() {
     [notesCollapsed, setNotesCollapsed] = useState(false);
   const [notes, setNotes] = useState([]),
     [noteText, setNoteText] = useState(""),
+    [noteBusy, setNoteBusy] = useState(false),
+    [noteError, setNoteError] = useState(""),
     [products, setProducts] = useState([]),
     [recommendations, setRecommendations] = useState([]),
     [transcriptPreview, setTranscriptPreview] = useState([]),
@@ -431,6 +433,7 @@ export default function VoiceSessions() {
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
       setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
+      setNoteText(""); setNoteError("");
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
@@ -456,6 +459,7 @@ export default function VoiceSessions() {
     busyRef.current = true; setBusy(true);
     setError("");
     setIdentity(next);
+    setNoteText(""); setNoteError("");
     // Do not let the previous contact's failed/pending recording block this
     // contact while the phone-based session lookup is in flight.
     setConversationId(null);
@@ -524,6 +528,7 @@ export default function VoiceSessions() {
     setDocumentContact(null);
     setIdentity({ name: "", phone: "", email: "" });
     setNotes([]);
+    setNoteText(""); setNoteError("");
     setTranscriptPreview([]); setInsights([]); setRecommendations([]); setCart([]); setCartOpen(false);
     setProductRequirements([newProduct()]);
     setError("");
@@ -702,19 +707,21 @@ export default function VoiceSessions() {
     const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = `${safe}_${stamp}_transcript.txt`; a.click(); URL.revokeObjectURL(url);
   };
   const addNote = async () => {
-    if (!session || !noteText.trim()) return;
-    setBusy(true);
+    if (!session || !noteText.trim() || noteBusy) return;
+    setNoteBusy(true);
+    setNoteError("");
     try {
       const data = await sessionCall(`/voice-sessions/${session}/notes`, {
         method: "POST",
         body: JSON.stringify({ content: noteText.trim() }),
       });
+      if (!data?.note) throw new Error("The note could not be saved.");
       setNotes((current) => [...current, data.note]);
       setNoteText("");
     } catch (e) {
-      setError(e.message);
+      setNoteError(e?.message || "The note could not be saved. Please try again.");
     } finally {
-      setBusy(false);
+      setNoteBusy(false);
     }
   };
   const booksContactId =
@@ -1004,6 +1011,7 @@ export default function VoiceSessions() {
                   </button>
                 )}
                 {selectedContact.phone && <button type="button" className="copy-phone-button" onClick={() => void copyPhone()} aria-label="Copy phone number" title="Copy phone number"><Copy size={13} /></button>}
+                {!identity.email && !captureState.capture.startsWith("record") && !captureState.capture.startsWith("paused") && <input className="contact-email-entry" type="email" aria-label="Customer email address" placeholder="Customer email *" value={identity.email} onChange={(event) => { const email = event.target.value; setIdentity((current) => ({ ...current, email })); setSelectedContact((current) => current ? { ...current, email } : current); }} />}
               </div>
               <div className="session-status-strip" aria-label="Conversation processing status">
                 <span className={`status-indicator status-${recordingUiStatus.key}`}><i />Recording <b>{recordingUiStatus.label}</b>{captureState.capture === "recording" && <em>· {new Date(captureState.elapsedSeconds * 1000).toISOString().slice(11, 19)}</em>}</span>
@@ -1070,7 +1078,8 @@ export default function VoiceSessions() {
                   />
                   <input
                     type="email"
-                    placeholder="Email address (optional)"
+                    placeholder="Email address *"
+                    required
                     value={identity.email}
                     onChange={(event) =>
                       setIdentity({ ...identity, email: event.target.value })
@@ -1080,9 +1089,9 @@ export default function VoiceSessions() {
                     type="button"
                     className="primary voice-open-button"
                     onClick={() => void prepareSession()}
-                    disabled={busy}
+                    disabled={busy || !identity.name.trim() || !identity.phone.trim() || !identity.email.trim()}
                   >
-                    {busy ? "Opening…" : "Open session"}
+                    {busy ? "Starting…" : "Start session"}
                   </button>
                 </div>
               </div>
@@ -1165,6 +1174,7 @@ export default function VoiceSessions() {
                     onBusyChange={setRecorderBusy}
                     onCaptureChange={setCaptureState}
                     onSaved={() => void recordingSaved()}
+                    chunkSeconds={180}
                     grouped
                     sessionOnly
                   />
@@ -1183,7 +1193,7 @@ export default function VoiceSessions() {
                         setNotesCollapsed((collapsed) => !collapsed)
                       }
                     >
-                      <h3>Executive notes</h3>
+                      <h3>Internal notes</h3>
                       <span>{notes.length}</span>
                       {notesCollapsed ? (
                         <ChevronRight size={18} aria-hidden="true" />
@@ -1197,19 +1207,19 @@ export default function VoiceSessions() {
                     className="session-panel-content"
                     hidden={notesCollapsed}
                   >
-                    <div className="notes-list" aria-label="Timestamped executive notes">
+                    <div className="notes-list" aria-label="Timestamped internal notes">
                       {notes.length ? notes.map((note) => (
                         <article key={note.id}>
+                          <div className="note-meta"><span className="note-avatar">You</span><strong>You</strong><time>{new Date(note.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div>
                           <p>{note.content}</p>
-                          <time>{new Date(note.created_at).toLocaleString()}</time>
                         </article>
-                      )) : <p className="notes-empty">No executive notes yet.</p>}
+                      )) : <p className="notes-empty">No internal notes yet.</p>}
                     </div>
                     <div className="note-editor">
                       <textarea
                         value={noteText}
                         onChange={(event) => setNoteText(event.target.value)}
-                        placeholder="Write a timestamped note…"
+                        placeholder="Add an internal note…"
                         onKeyDown={(event) => {
                           if (
                             (event.ctrlKey || event.metaKey) &&
@@ -1222,10 +1232,11 @@ export default function VoiceSessions() {
                         type="button"
                         className="primary"
                         onClick={() => void addNote()}
-                        disabled={!noteText.trim() || busy}
+                        disabled={!noteText.trim() || noteBusy}
                       >
-                        Save note
+                        {noteBusy ? "Saving…" : "Add note"}
                       </button>
+                      {noteError && <p className="note-editor-error" role="alert">{noteError}</p>}
                     </div>
                   </div>
                 </aside>
