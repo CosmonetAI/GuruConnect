@@ -116,6 +116,8 @@ def create_local_app(settings) -> FastAPI:
         try:
             yield
         finally:
+            if hasattr(app.state, 'local_voice_analysis'):
+                await app.state.local_voice_analysis.stop()
             await app.state.processing.stop()
 
     app = FastAPI(title="GuruConnect local development API", lifespan=lifespan)
@@ -178,16 +180,22 @@ def create_local_app(settings) -> FastAPI:
 
     @app.get("/api/v1/connections")
     async def connections():
+        # Reconcile stale missing-key startup metadata with the current runtime
+        # settings. Unchanged keys retain real provider failures; no paid probe.
+        bootstrap_local_managed_providers(settings, store)
         items = []
         for engine in ("elevenlabs", "openai-translator"):
             row = store.connection(engine)
             if row:
-                kinds = {"transcribe"} if engine == "elevenlabs" else {"translate"}
+                kinds = {"transcribe", "live_transcribe"} if engine == "elevenlabs" else {"translate", "live_translate"}
                 jobs = [job for job in store.list("jobs") if job["kind"] in kinds]
                 row.update(queued_jobs=sum(job["state"] in {"queued", "blocked"} for job in jobs), inflight_jobs=sum(job["state"] == "running" for job in jobs))
-                items.append(safe_connection(row))
+                value = safe_connection(row)
+                value['runtime_configured'] = bool(server_credentials(settings, engine) or store.secrets(engine).get('api_key'))
+                value['configuration_source'] = 'server_environment' if server_credentials(settings, engine) else 'local_connection'
+                items.append(value)
             else:
-                items.append({"id": None, "engine_id": engine, "state": "disconnected", "generation": None, "config": {}, "tested_at": None, "last_error_code": "not_configured"})
+                items.append({"id": None, "engine_id": engine, "state": "disconnected", "generation": None, "config": {}, "tested_at": None, "last_error_code": "not_configured", "runtime_configured": False})
         return {"items": items, "next_cursor": None}
 
     @app.post("/api/v1/connections", status_code=201)
@@ -402,7 +410,9 @@ def create_local_app(settings) -> FastAPI:
         value = body.model_dump(mode="json", exclude={"lease_token", "conversation_id"})
         prior = next((item for item in store.chunks(str(conversation_id), False) if item["part_id"] == str(body.part_id) and item["sequence"] == body.sequence), None)
         if not prior or any(prior.get(key) != value[key] for key in value): fail("chunk_conflict", 409)
-        if prior["confirmed"]: return {"confirmed": True}
+        if prior["confirmed"]:
+            store.plan_live_windows(str(conversation_id), settings.live_window_seconds, settings.context_seconds)
+            return {"confirmed": True}
         lease(row, body.lease_token, body.part_id)
         path = store.chunk_path(str(conversation_id), str(body.part_id), body.sequence)
         if not path.is_file() or path.is_symlink(): fail("chunk_upload_missing", 409)
@@ -410,6 +420,7 @@ def create_local_app(settings) -> FastAPI:
         if len(data) != body.bytes or hashlib.sha256(data).hexdigest() != body.sha256: fail("input_hash_mismatch", 409)
         try: store.mark_chunk(str(conversation_id), str(body.part_id), body.sequence, confirmed=True, lease_token=str(body.lease_token))
         except ValueError as error: conflict(error)
+        store.plan_live_windows(str(conversation_id), settings.live_window_seconds, settings.context_seconds)
         return {"confirmed": True, "saved_samples": sum(item["sample_count"] for item in store.chunks(str(conversation_id)))}
 
     @app.post("/api/v1/conversations/{conversation_id}/finalize")
@@ -548,7 +559,7 @@ def create_local_app(settings) -> FastAPI:
 
     def amend(conversation_id, version_id, operation):
         with store.transaction() as db:
-            if db.execute("select 1 from jobs where conversation_id=? and kind in ('transcribe','translate') and state in ('queued','running')", (str(conversation_id),)).fetchone(): fail("processing_revision_conflict", 409, "Wait for processing to finish or become blocked before editing this result.")
+            if db.execute("select 1 from jobs where conversation_id=? and kind in ('transcribe','translate','live_transcribe','live_translate') and state in ('queued','running')", (str(conversation_id),)).fetchone(): fail("processing_revision_conflict", 409, "Wait for processing to finish or become blocked before editing this result.")
             row = db.execute("select data from records where table_name='transcripts' and id=?", (str(conversation_id),)).fetchone()
             value = json.loads(row["data"]) if row else None
             if not value or (value.get("version") or {}).get("id") != str(version_id): fail("version_not_found", 404)
@@ -611,5 +622,8 @@ def create_local_app(settings) -> FastAPI:
             if job["state"] not in {"succeeded", "cancelled"}: store.patch("jobs", job["id"], {"state": "cancelled", "lease_token": None, "lease_until": None})
         store.patch("conversations", str(conversation_id), {"final_state": "cancelled"})
         return {"cancelled": True, "audio_preserved": True}
+
+    from .local_sales import install_local_sales_routes
+    install_local_sales_routes(app, store, settings)
 
     return app

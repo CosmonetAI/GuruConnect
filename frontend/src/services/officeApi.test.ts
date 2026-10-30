@@ -74,6 +74,18 @@ describe('local and authenticated request boundaries', () => {
     await expect(api.request('/enquiries', 'workspace-a')).rejects.toMatchObject({ status: 401, code: 'session_expired' })
     expect(fetch).not.toHaveBeenCalled()
   })
+  it('retains final transcript coverage and window identity for processing recovery', async () => {
+    cloud()
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: { id: 'final-version', run_id: 'run-a', kind: 'final', english_state: 'complete', coverage_samples: 1322608 }, turns: [], speakers: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversation: { id: 'conversation-a', active_version_id: 'final-version' }, jobs: [{ id: 'old-window', run_id: 'run-a', window_id: 'window-a', kind: 'translate', state: 'blocked' }] })))
+    const api = await load()
+    const transcript = await api.request<import('./officeApi').Transcript>('/conversations/conversation-a/transcript', 'workspace-a')
+    const progress = await api.request<import('./officeApi').Progress>('/conversations/conversation-a/progress', 'workspace-a')
+    expect(transcript).toMatchObject({ version_id: 'final-version', run_id: 'run-a', kind: 'final', status: 'complete', covered_seconds: 82.663 })
+    expect(progress.conversation.active_transcript_version_id).toBe('final-version')
+    expect(progress.jobs?.[0]).toMatchObject({ window_id: 'window-a', job_type: 'translate', status: 'blocked' })
+  })
   it('uses safe provider error messages without displaying submitted credential text', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: { code: 'invalid_credentials', message: 'fixture-private-provider-key' } }), { status: 401 }))
     const api = await load()

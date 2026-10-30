@@ -17,7 +17,8 @@
     "test:backend": "node scripts/check-backend.mjs",
     "contracts": "node scripts/generate-contracts.mjs",
     "dev:web": "vite --host 127.0.0.1 --port 5176 --strictPort",
-    "setup": "node scripts/setup-backend.mjs"
+    "setup": "node scripts/setup-backend.mjs",
+    "test:live-workspace": "node tests/browser/live-workspace.qa.mjs"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

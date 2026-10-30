@@ -18,6 +18,8 @@ def server_credentials(settings, engine: str) -> dict:
     name = {"elevenlabs": "elevenlabs_api_key", "openai-translator": "openai_api_key"}.get(engine)
     value = getattr(settings, name, None) if name else None
     key = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+    if isinstance(key, str):
+        key = key.strip()
     return {"api_key": key} if key else {}
 
 

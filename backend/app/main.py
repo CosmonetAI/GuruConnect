@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from copy import deepcopy
 import asyncio, json
 import hashlib
 import hmac
@@ -6,7 +7,7 @@ import secrets
 import re
 import logging
 from uuid import UUID
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -17,6 +18,25 @@ from .db import require_db, row_dict, now, sales_workspace, scope_parameters
 from .zoho import zoho, refresh_loop, refresh_all, set_organisation_id, set_member_id, get_organisation_id, get_member_id
 from .chat import get_or_create_customer, get_or_create_customer_sync, run_graph
 from .voice_ai import VoiceConversationOrchestrator
+from .voice_ai.live import analysis_turns, batch_fingerprint, catalogue_queries, intent_keywords, pending_turns, search_catalogue, turn_fingerprint
+from .voice_ai.workspace import (analysis_outcome, catalogue_due, failed_analysis_data, retain_catalogue_recommendations,
+                                requirement_signature, retry_failure, row_analysis_error, workspace_fields)
+
+# At most two live analyses hold database/provider resources in this process.
+# PostgreSQL advisory locks also serialize a conversation across API instances
+# and the optional database webhook, so repeated polls never duplicate paid work.
+_voice_live_tasks: dict[tuple[str, str, str], asyncio.Task] = {}
+
+async def stop_voice_live_tasks():
+    from .catalogue_index import close_catalogue_tasks
+    from .catalogue_embeddings import close_embedding_clients
+    tasks = list(_voice_live_tasks.values())
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _voice_live_tasks.clear()
+    await close_catalogue_tasks()
+    await close_embedding_clients()
 
 @asynccontextmanager
 async def lifespan(app):
@@ -25,6 +45,7 @@ async def lifespan(app):
         yield
     finally:
         task.cancel()
+        await stop_voice_live_tasks()
         await asyncio.gather(task, return_exceptions=True)
 app=FastAPI(title='Guru Group AI Sales API',version='0.1.0',lifespan=lifespan,
             docs_url=None, redoc_url=None, openapi_url=None)
@@ -197,7 +218,7 @@ class ContactIn(BaseModel):
 class VoiceSessionIn(BaseModel):
     name: str = Field(min_length=2)
     phone: str = Field(min_length=7)
-    email: str = Field(min_length=3)
+    email: str = Field(default='', max_length=320)
 class VoiceSessionLinkIn(BaseModel):
     conversation_id: UUID | None = None
 class VoiceSessionNoteIn(BaseModel):
@@ -400,8 +421,10 @@ def _voice_history(db, session):
           order by created_at"""), {**params, 'conversation': str(session['conversation_id'])}).all()]
         transcript_preview = [row_dict(row) for row in db.execute(text("""select t.id,t.ordinal,t.start_seconds,t.end_seconds,t.source_text,
           coalesce(t.english_text,tr.english_text) as english_text,t.speaker_ref,t.created_at
-          from transcript_turns t left join translations tr on tr.source_turn_id=t.id and tr.state='complete'
-          where t.conversation_id=cast(:conversation as uuid) and (t.english_text is not null or tr.id is not null)
+          from transcript_turns t join conversations c on c.id=t.conversation_id and c.active_version_id=t.version_id
+          left join lateral (select english_text from translations where source_turn_id=t.id and state='complete'
+            order by created_at desc limit 1) tr on true
+          where t.conversation_id=cast(:conversation as uuid) and (t.english_text is not null or tr.english_text is not null)
           order by t.start_seconds,t.ordinal"""), {**params, 'conversation': str(session['conversation_id'])}).all()]
     return {'session': session, 'conversation_id': session.get('conversation_id'),
             'messages': _session_messages(db, session['id']), 'recordings': chunks, 'recorder_sessions': recordings,
@@ -414,36 +437,74 @@ def _extract_voice_chunk(db, payload):
     record_id = str(payload.get('record_id') or '')
     if not conversation_id or not record_id:
         raise HTTPException(422, 'Invalid extraction event')
-    row = db.execute(text("""select t.id,t.source_text,coalesce(t.english_text,tr.english_text) as english_text,
+    row = db.execute(text("""select t.id,t.version_id,t.source_text,coalesce(t.english_text,tr.english_text) as english_text,
       t.source_language,t.speaker_ref,t.start_seconds,t.end_seconds,t.created_at
       from transcript_turns t left join translations tr on tr.source_turn_id=t.id and tr.state='complete'
       where t.id=cast(:record as uuid) and t.conversation_id=cast(:conversation as uuid)
+        and exists(select 1 from conversations c where c.id=t.conversation_id and c.active_version_id=t.version_id)
       union all
-      select t.id,t.source_text,coalesce(t.english_text,tr.english_text),t.source_language,t.speaker_ref,t.start_seconds,t.end_seconds,t.created_at
+      select t.id,t.version_id,t.source_text,coalesce(t.english_text,tr.english_text),t.source_language,t.speaker_ref,t.start_seconds,t.end_seconds,t.created_at
       from translations tr join transcript_turns t on t.id=tr.source_turn_id
       where tr.id=cast(:record as uuid) and tr.conversation_id=cast(:conversation as uuid) and tr.state='complete'
+        and exists(select 1 from conversations c where c.id=t.conversation_id and c.active_version_id=t.version_id)
       limit 1"""), {'record': record_id, 'conversation': conversation_id}).first()
     if not row or not row.english_text:
         return {'accepted': True, 'status': 'waiting_for_translation'}
     chunk = row_dict(row)
-    fingerprint = hashlib.sha256(json.dumps({k: chunk.get(k) for k in ('id','source_text','english_text','start_seconds','end_seconds')}, sort_keys=True, default=str).encode()).hexdigest()
+    fingerprint = turn_fingerprint(chunk)
     # Serialize deliveries for one conversation/chunk. This prevents two
     # concurrent database webhook retries from both calling OpenAI or merging
     # the same context update.
-    db.execute(text("select pg_advisory_xact_lock(hashtext(:key))"), {'key': f'{conversation_id}:{fingerprint}'})
+    db.execute(text("select pg_advisory_xact_lock(hashtext(:key))"), {'key': f'voice-live:{conversation_id}'})
+    active = db.execute(text('''select active_version_id,
+      (select coverage_samples from transcript_versions v where v.id=conversations.active_version_id) as analysis_coverage_samples
+      from conversations where id=cast(:conversation as uuid)'''),
+                        {'conversation': conversation_id}).first()
+    if not active or str(active[0]) != str(chunk['version_id']):
+        return {'accepted': True, 'status': 'superseded'}
     existing = db.execute(text("select id,status,data from conversation_extractions where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"), {'conversation': conversation_id, 'fingerprint': fingerprint}).first()
     if existing and existing.status == 'complete':
         return {'accepted': True, 'status': 'duplicate', 'extraction_id': str(existing.id)}
+    covered = db.execute(text("""select id from conversation_extractions
+      where conversation_id=cast(:conversation as uuid) and status='complete'
+        and data->'_live'->'turn_fingerprints' @> cast(:turns as jsonb) limit 1"""),
+      {'conversation': conversation_id, 'turns': json.dumps([fingerprint])}).first()
+    if covered:
+        return {'accepted': True, 'status': 'duplicate', 'extraction_id': str(covered.id)}
+    # Webhooks can arrive out of order. Analyse all unprocessed speech in audio
+    # order under the same lock as live polling, rather than applying an older
+    # isolated turn after a more recent customer correction.
+    dialogue = [row_dict(item) for item in db.execute(text("""select t.id,t.version_id,t.source_text,t.provenance,
+      coalesce(t.english_text,tr.english_text) as english_text,t.source_language,t.speaker_ref,
+      t.start_seconds,t.end_seconds,t.created_at from transcript_turns t
+      left join lateral (select english_text from translations where source_turn_id=t.id and state='complete'
+        order by created_at desc limit 1) tr on true
+      where t.conversation_id=cast(:conversation as uuid) and t.version_id=cast(:version as uuid)
+      order by t.start_seconds,t.ordinal"""), {'conversation': conversation_id, 'version': str(chunk['version_id'])}).all()]
+    dialogue = analysis_turns(dialogue, row_dict(active).get('analysis_coverage_samples'))
+    completed = [row_dict(item) for item in db.execute(text("""select fingerprint,status,data
+      from conversation_extractions where conversation_id=cast(:conversation as uuid) and status='complete'"""),
+      {'conversation': conversation_id}).all()]
+    pending = pending_turns(dialogue, completed)
+    if not pending:
+        return {'accepted': True, 'status': 'waiting_for_translation'}
+    fingerprint = batch_fingerprint(pending)
+    chunk = {**pending[-1], 'english_text': '\n'.join(str(turn['english_text']) for turn in pending),
+             'turn_fingerprints': [turn_fingerprint(turn) for turn in pending],
+             'recent_dialogue': [{key: turn.get(key) for key in ('start_seconds', 'end_seconds', 'english_text', 'speaker_ref')}
+                                 for turn in dialogue if turn.get('analysis_ready') and turn.get('english_text')
+                                 and (turn.get('start_seconds') or 0) <= (pending[-1].get('start_seconds') or 0)][-24:]}
     if not settings.openai_api_key:
         raise HTTPException(503, 'OpenAI extraction is not configured')
     db.execute(text("""insert into conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
       select cast(:conversation as uuid),c.organisation_id,:fingerprint,'running','{}'::jsonb from conversations c where c.id=cast(:conversation as uuid)
       on conflict(conversation_id,fingerprint) do update set status='running',error_message=null,updated_at=now()"""), {'conversation': conversation_id, 'fingerprint': fingerprint})
     context_row = db.execute(text("select context from voice_ai_contexts where conversation_id=cast(:conversation as uuid)"), {'conversation': conversation_id}).first()
+    previous_context = deepcopy(context_row[0] if context_row else {})
     chunk['conversation_id'] = conversation_id
     chunk['fingerprint'] = fingerprint
     try:
-        result = asyncio.run(VoiceConversationOrchestrator().run(chunk=chunk, durable_context=context_row[0] if context_row else {}))
+        result = asyncio.run(asyncio.wait_for(VoiceConversationOrchestrator().run(chunk=chunk, durable_context=context_row[0] if context_row else {}), timeout=45))
     except Exception as error:
         # Commit only this chunk's retry marker. The advisory transaction lock
         # still prevents a concurrent delivery from processing the same
@@ -454,7 +515,19 @@ def _extract_voice_chunk(db, payload):
           {'conversation': conversation_id, 'fingerprint': fingerprint, 'message': type(error).__name__})
         db.commit()
         raise
+    status, error = analysis_outcome(result)
+    if status != 'complete':
+        data = failed_analysis_data(result, {'version_id': str(chunk['version_id']), 'turn_fingerprints': chunk['turn_fingerprints']})
+        db.execute(text("""update conversation_extractions set status='failed',data=cast(:data as jsonb),error_message=:message,updated_at=now()
+          where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"""),
+          {'conversation': conversation_id, 'fingerprint': fingerprint, 'message': error['code'], 'data': json.dumps(data, ensure_ascii=False)})
+        db.commit()
+        return {'accepted': True, 'status': status, 'analysis_error': error}
+    if (not catalogue_queries(result.get('context') or {})
+            or requirement_signature(result.get('context') or {}) != requirement_signature(previous_context)):
+        result.setdefault('context', {})['recent_recommendations'] = []
     data = {**result.get('extraction', {}), '_source': {'conversation_id': conversation_id, 'transcript_chunk_id': str(chunk['id']), 'fingerprint': fingerprint},
+            '_live': {'version_id': str(chunk['version_id']), 'turn_fingerprints': chunk['turn_fingerprints']},
             '_route': result.get('route', {}), '_agent_result': result.get('agent_result', {})}
     db.execute(text("""update conversation_extractions set status='complete',data=cast(:data as jsonb),updated_at=now()
       where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint"""), {'conversation': conversation_id, 'fingerprint': fingerprint, 'data': json.dumps(data, ensure_ascii=False)})
@@ -484,9 +557,9 @@ def voice_extraction_webhook(request: Request, payload: dict, x_voice_extraction
 
 
 @app.post('/api/voice-sessions')
-def open_voice_session(payload: VoiceSessionIn, request: Request):
+def open_voice_session(payload: VoiceSessionIn, request: Request, background_tasks: BackgroundTasks):
     try:
-        if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', payload.email.strip()):
+        if payload.email.strip() and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', payload.email.strip()):
             raise HTTPException(422, 'Enter a valid customer email address before starting the session')
         customer = get_or_create_customer_sync(payload.name, payload.phone, payload.email)
         params = {**scope_parameters(), 'customer': str(customer['id']),
@@ -501,6 +574,7 @@ def open_voice_session(payload: VoiceSessionIn, request: Request):
                   values(cast(:customer as uuid),:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"""), params).first()
             session = row_dict(row)
             db.commit()
+            background_tasks.add_task(_warm_voice_catalogue, sales_workspace.get())
             return {**_voice_history(db, session), 'customer': customer}
     except HTTPException:
         raise
@@ -510,10 +584,253 @@ def open_voice_session(payload: VoiceSessionIn, request: Request):
         raise HTTPException(503, 'Unable to open voice session') from None
 
 
+async def _warm_voice_catalogue(context):
+    """Start due inventory work after session creation, before microphone input."""
+    if context is None or context.role == 'receptionist':
+        return
+    from .catalogue_embeddings import get_embedding_client
+    from .catalogue_index import retrieve_catalogue
+    previous_org, previous_member = get_organisation_id(), get_member_id()
+    token = sales_workspace.set(context)
+    set_organisation_id(str(context.id))
+    set_member_id(str(context.member_id))
+    try:
+        await asyncio.wait_for(retrieve_catalogue(zoho, {}, get_embedding_client()), timeout=5)
+    except Exception as error:
+        log.warning('catalogue_warmup_unavailable exception_type=%s', type(error).__name__)
+    finally:
+        sales_workspace.reset(token)
+        set_organisation_id(previous_org)
+        set_member_id(previous_member)
+
+
 @app.get('/api/voice-sessions/{session_id}/history')
 def voice_session_history(session_id: UUID, request: Request):
     with require_db() as db:
         return _voice_history(db, _session(db, session_id))
+
+
+def _voice_live_snapshot(session_id):
+    """Read the selected recording only; never concatenate historical versions."""
+    with require_db() as db:
+        session = _session(db, session_id)
+        params = {**scope_parameters(), 'conversation': str(session.get('conversation_id') or ''),
+                  'customer': str(session['customer_id'])}
+        recording, turns, extractions, context = None, [], [], {}
+        if session.get('conversation_id'):
+            row = db.execute(text("""select id,active_version_id,created_at,updated_at,capture_state,upload_state,
+              transcription_state,english_state,speaker_state,final_state,total_samples,duration_seconds,
+              (select coverage_samples from transcript_versions v where v.id=conversations.active_version_id) as analysis_coverage_samples
+              from conversations where id=cast(:conversation as uuid) and organisation_id=cast(:org as uuid)
+                and owner_id=cast(:member as uuid) and customer_id=cast(:customer as uuid) and deleted_at is null"""), params).first()
+            recording = row_dict(row) if row else None
+        if recording:
+            params['version'] = str(recording.get('active_version_id') or '')
+            if recording.get('active_version_id'):
+                turns = [row_dict(row) for row in db.execute(text("""select t.id,t.ordinal,t.version_id,t.start_seconds,
+                  t.end_seconds,t.source_text,coalesce(t.english_text,tr.english_text) as english_text,
+                  t.source_language,t.speaker_ref,sa.role as speaker_role,sa.display_name as speaker_name,t.created_at,t.provenance
+                  from transcript_turns t
+                  left join lateral (select english_text from translations where source_turn_id=t.id
+                    and state='complete' order by created_at desc limit 1) tr on true
+                  left join speaker_assignments sa on sa.version_id=t.version_id and sa.speaker_ref=t.speaker_ref
+                  where t.conversation_id=cast(:conversation as uuid) and t.version_id=cast(:version as uuid)
+                  order by t.start_seconds,t.ordinal"""), params).all()]
+            extractions = [row_dict(row) for row in db.execute(text("""select id,fingerprint,status,data,error_message,created_at,updated_at
+              from conversation_extractions where conversation_id=cast(:conversation as uuid) order by created_at"""), params).all()]
+            stored = db.execute(text("select context from voice_ai_contexts where conversation_id=cast(:conversation as uuid)"), params).first()
+            context = stored[0] if stored else {}
+        turns = analysis_turns(turns, recording.get('analysis_coverage_samples') if recording else None)
+        for turn in turns:
+            turn['translation_state'] = 'complete' if str(turn.get('english_text') or '').strip() else 'pending'
+        return {'session_id': str(session_id), 'conversation_id': str(recording['id']) if recording else None,
+                'revision': str(recording.get('active_version_id') or '') if recording else '',
+                'recording': recording, 'transcript_preview': turns, 'insights': extractions,
+                'context': context or {}}
+
+
+def _live_task_key(snapshot):
+    scope = scope_parameters()
+    return scope['org'], scope['member'], str(snapshot['conversation_id'])
+
+
+@asynccontextmanager
+async def _voice_live_database():
+    # The sales database is synchronous. Keep connection setup, SQL and cleanup
+    # off the API loop so a slow database never stalls microphone uploads.
+    manager = await asyncio.to_thread(require_db)
+    database = await asyncio.to_thread(manager.__enter__)
+    try:
+        yield database
+    finally:
+        await asyncio.to_thread(manager.__exit__, None, None, None)
+
+
+async def _voice_live_execute(database, query, parameters):
+    return await asyncio.to_thread(database.execute, text(query), parameters)
+
+
+async def _analyse_voice_live(session_id):
+    """A poll starts work, but never awaits AI or catalogue services itself.
+
+    The task inherits the verified request's ContextVars. It owns its database
+    session, rechecks the customer scope and uses the same conversation lock as
+    the database webhook. A process restart simply leaves the next poll to retry.
+    """
+    fingerprint = None
+    conversation_id = None
+    try:
+        snapshot = await asyncio.to_thread(_voice_live_snapshot, session_id)
+        conversation_id = snapshot.get('conversation_id')
+        if not conversation_id:
+            return
+        async with _voice_live_database() as db:
+            claim = await _voice_live_execute(db, 'select pg_try_advisory_xact_lock(hashtext(:key)) as acquired',
+                                             {'key': f'voice-live:{conversation_id}'})
+            locked = claim.first()
+            if not locked or not locked.acquired:
+                return
+            # Re-read after acquiring the lock: a webhook may have completed
+            # between the initial snapshot and this claim.
+            snapshot = await asyncio.to_thread(_voice_live_snapshot, session_id)
+            if snapshot.get('conversation_id') != conversation_id:
+                return
+            pending = pending_turns(snapshot['transcript_preview'], snapshot['insights'])
+            context = snapshot['context']
+            previous_context = deepcopy(context)
+            if pending:
+                fingerprint = batch_fingerprint(pending)
+                scope = scope_parameters()
+                await _voice_live_execute(db, """insert into conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
+                  values(cast(:conversation as uuid),cast(:org as uuid),:fingerprint,'running','{}'::jsonb)
+                  on conflict(conversation_id,fingerprint) do update set status='running',error_message=null,updated_at=now()""",
+                  {**scope, 'conversation': conversation_id, 'fingerprint': fingerprint})
+                chunk = {'id': str(pending[-1]['id']), 'conversation_id': conversation_id,
+                         'fingerprint': fingerprint, 'turn_fingerprints': [turn_fingerprint(turn) for turn in pending],
+                         'english_text': '\n'.join(str(turn['english_text']) for turn in pending),
+                         'end_seconds': pending[-1].get('end_seconds'),
+                         'recent_dialogue': [{key: turn.get(key) for key in ('start_seconds','end_seconds','english_text','speaker_ref','speaker_role')}
+                                             for turn in snapshot['transcript_preview'] if turn.get('analysis_ready', True)
+                                             and turn.get('english_text') and (turn.get('start_seconds') or 0) <= (pending[-1].get('start_seconds') or 0)][-24:],
+                         'turns': [{key: turn.get(key) for key in ('start_seconds','end_seconds','english_text','speaker_ref','speaker_role')} for turn in pending]}
+                result = await asyncio.wait_for(VoiceConversationOrchestrator().run(chunk=chunk, durable_context=context), timeout=45)
+                status, error = analysis_outcome(result)
+                if status != 'complete':
+                    latest = await asyncio.to_thread(_session, db, session_id)
+                    if str(latest.get('conversation_id')) != conversation_id:
+                        return
+                    data = failed_analysis_data(result, {'version_id': snapshot['revision'], 'turn_fingerprints': chunk['turn_fingerprints']})
+                    await _voice_live_execute(db, """update conversation_extractions set status='failed',data=cast(:data as jsonb),error_message=:error,updated_at=now()
+                      where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint""",
+                      {'conversation': conversation_id, 'fingerprint': fingerprint, 'error': error['code'],
+                       'data': json.dumps(data, ensure_ascii=False, default=str)})
+                    await asyncio.to_thread(db.commit)
+                    return
+                context = result['context']
+            else:
+                result = {'context': context, 'extraction': {}, 'route': {}, 'agent_result': {}}
+            try:
+                catalogue = await asyncio.wait_for(search_catalogue(zoho, context), timeout=40)
+            except TimeoutError:
+                catalogue = {'status': 'unavailable', 'items': [], 'queries': [], 'notices': [{
+                    'code': 'catalogue_lookup_failed', 'message': 'Product search timed out. Transcript updates continue.',
+                }]}
+            except Exception:
+                catalogue = {'status': 'unavailable', 'items': [], 'queries': [], 'notices': [{
+                    'code': 'catalogue_lookup_failed', 'message': 'Product search is temporarily unavailable. Your requirements are preserved.',
+                }]}
+            catalogue['requirements_signature'] = requirement_signature(context)
+            retain_catalogue_recommendations(context, catalogue, previous_context)
+            latest = await asyncio.to_thread(_session, db, session_id)
+            if str(latest.get('conversation_id')) != conversation_id:
+                return
+            params = {**scope_parameters(), 'conversation': conversation_id,
+                      'context': json.dumps(context, ensure_ascii=False, default=str),
+                      'intent': result['route'].get('intent'), 'route': json.dumps(result['route'])}
+            await _voice_live_execute(db, """insert into voice_ai_contexts(conversation_id,organisation_id,context,last_intent,last_route,updated_at)
+              values(cast(:conversation as uuid),cast(:org as uuid),cast(:context as jsonb),:intent,cast(:route as jsonb),now())
+              on conflict(conversation_id) do update set context=excluded.context,
+                last_intent=coalesce(excluded.last_intent,voice_ai_contexts.last_intent),
+                last_route=case when excluded.last_route='{}'::jsonb then voice_ai_contexts.last_route else excluded.last_route end,
+                updated_at=now()""", params)
+            data = {**result.get('extraction', {}), 'analysis_status': 'complete', '_route': result['route'], '_catalogue': catalogue,
+                    '_live': {'version_id': snapshot['revision'], 'turn_fingerprints': chunk['turn_fingerprints'] if pending else []}}
+            if fingerprint:
+                await _voice_live_execute(db, """update conversation_extractions set status='complete',data=cast(:data as jsonb),updated_at=now()
+                  where conversation_id=cast(:conversation as uuid) and fingerprint=:fingerprint""",
+                  {'conversation': conversation_id, 'fingerprint': fingerprint, 'data': json.dumps(data, ensure_ascii=False, default=str)})
+            else:
+                # A webhook may have already extracted every turn. Publish the
+                # catalogue lookup separately without paying for another model call.
+                signature = hashlib.sha256(json.dumps({'queries': catalogue.get('queries') or [],
+                    'requirements_signature': catalogue['requirements_signature']}, sort_keys=True).encode()).hexdigest()
+                await _voice_live_execute(db, """insert into conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
+                  values(cast(:conversation as uuid),cast(:org as uuid),:fingerprint,'complete',cast(:data as jsonb))
+                  on conflict(conversation_id,fingerprint) do update set data=excluded.data,updated_at=now()""",
+                  {**scope_parameters(), 'conversation': conversation_id, 'fingerprint': f'catalogue:{signature}',
+                   'data': json.dumps(data, ensure_ascii=False, default=str)})
+            await asyncio.to_thread(db.commit)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        log.warning('voice_live_analysis_failed exception_type=%s', type(error).__name__)
+        if fingerprint and conversation_id:
+            # Store a short retry marker after the model transaction rolls back.
+            # No raw provider errors or customer speech enter logs/notices.
+            try:
+                async with _voice_live_database() as db:
+                    await _voice_live_execute(db, """insert into conversation_extractions(conversation_id,organisation_id,fingerprint,status,error_message)
+                      values(cast(:conversation as uuid),cast(:org as uuid),:fingerprint,'failed',:error)
+                      on conflict(conversation_id,fingerprint) do update set status='failed',error_message=excluded.error_message,updated_at=now()""",
+                      {**scope_parameters(), 'conversation': conversation_id, 'fingerprint': fingerprint, 'error': type(error).__name__})
+                    await asyncio.to_thread(db.commit)
+            except Exception:
+                log.warning('voice_live_failure_marker_unavailable')
+
+
+@app.get('/api/voice-sessions/{session_id}/live')
+async def voice_session_live(session_id: UUID, request: Request):
+    snapshot = await asyncio.to_thread(_voice_live_snapshot, session_id)
+    pending = pending_turns(snapshot['transcript_preview'], snapshot['insights'])
+    catalogue_rows = [row for row in snapshot['insights'] if (row.get('data') or {}).get('_catalogue')]
+    latest_catalogue_row = max(catalogue_rows, key=lambda row: str(row.get('updated_at') or ''), default=None)
+    catalogue = (latest_catalogue_row['data']['_catalogue'] if latest_catalogue_row else {})
+    context = snapshot['context']
+    fields = workspace_fields(context, catalogue)
+    requirements = fields['requirements']
+    notices = list(catalogue.get('notices') or [])
+    status = 'waiting_for_translation' if not any(turn.get('english_text') for turn in snapshot['transcript_preview']) else 'complete'
+    key = _live_task_key(snapshot) if snapshot['conversation_id'] else None
+    task = _voice_live_tasks.get(key)
+    if task and task.done():
+        _voice_live_tasks.pop(key, None)
+        task = None
+    failed = retry_failure(snapshot['insights'], pending=bool(pending), moment=now())
+    retry_wait = bool(failed)
+    failed_status, analysis_error = row_analysis_error(failed)
+    needs_catalogue = catalogue_due(catalogue, latest_catalogue_row.get('updated_at') if latest_catalogue_row else None, requirements, moment=now())
+    if requirements and catalogue.get('requirements_signature') and catalogue['requirements_signature'] != requirement_signature(context):
+        needs_catalogue = True
+    if pending:
+        status = failed_status if retry_wait else 'pending'
+    if (pending or needs_catalogue) and sales_workspace.get().role != 'receptionist':
+        if not settings.openai_api_key and pending:
+            status = 'unavailable'
+            analysis_error = {'code': 'voice_analysis_not_configured', 'message': 'Live AI suggestions are waiting for the managed AI service. Recording and transcript updates continue.'}
+            notices.append(analysis_error)
+        elif not task and not retry_wait and len(_voice_live_tasks) < 2:
+            task = asyncio.create_task(_analyse_voice_live(session_id))
+            _voice_live_tasks[key] = task
+            task.add_done_callback(lambda completed, selected=key: _voice_live_tasks.pop(selected, None) if _voice_live_tasks.get(selected) is completed else None)
+    if task and pending:
+        status = 'running'
+    if retry_wait:
+        notices.append({'code': 'voice_analysis_failed', 'message': analysis_error['message']})
+    return {**snapshot, 'insights': snapshot['insights'][-30:], **fields,
+            'keywords': intent_keywords(context), 'recommendations': context.get('recent_recommendations') or [],
+            'analysis_status': status, 'analysis_error': analysis_error if status in {'failed', 'unavailable'} else None,
+            'catalogue_status': 'searching' if task else catalogue.get('status', 'waiting'),
+            'notices': notices}
 
 
 @app.post('/api/voice-sessions/{session_id}/conversation')
@@ -1600,3 +1917,19 @@ async def chat(payload: ChatIn):
           {**params, 'data':json.dumps({'intent':result.get('intent'),'language':result.get('language'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])},default=str)})
         db.commit()
     return {'session_id':str(session['id']),'customer':customer,'intent':result['intent'],'answer':result['answer']}
+
+
+def _sales_document_service(session_id):
+    from .sales_documents import DocumentRepository, SalesDocumentService
+    context = sales_workspace.get()
+    if not context or context.role not in {'owner', 'salesperson'}:
+        raise HTTPException(403, 'Sales access is required to create or email documents.')
+    with require_db() as db:
+        session = _session(db, session_id)
+    scope = {**{'organisation_id': str(context.id), 'member_id': str(context.member_id)}, 'session_id': str(session_id)}
+    customer = {key: session.get(key) or '' for key in ('name', 'phone', 'email')}
+    return SalesDocumentService(DocumentRepository(scope, database_factory=require_db), customer, zoho=zoho, settings=settings)
+
+
+from .sales_documents import install_sales_document_routes
+install_sales_document_routes(app, _sales_document_service)

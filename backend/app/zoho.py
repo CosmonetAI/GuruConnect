@@ -2,6 +2,8 @@ from datetime import timedelta
 import logging
 import asyncio, httpx
 from contextvars import ContextVar
+import re
+from urllib.parse import urlsplit
 from sqlalchemy import text
 from .db import require_db, row_dict, now
 from .settings import settings
@@ -98,6 +100,71 @@ class ZohoClient:
                 await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
                 response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
         response.raise_for_status(); return response.json() if response.content else {'ok': True}
+
+    async def download_sales_document(self, org, kind, document_id):
+        """Download Zoho's authoritative PDF using this member's connection.
+
+        Books documents support GET /{resource}/{id}?accept=pdf. No caller-
+        supplied download URL is accepted, and OAuth headers never follow a
+        redirect. The caller separately authorizes access to the document ID.
+        """
+        resources = {
+            'invoice': 'invoices', 'invoices': 'invoices',
+            'quote': 'estimates', 'estimate': 'estimates', 'estimates': 'estimates',
+            'sales-order': 'salesorders', 'sales_order': 'salesorders',
+            'salesorder': 'salesorders', 'salesorders': 'salesorders', 'order': 'salesorders',
+            'purchase-order': 'purchaseorders', 'purchase_order': 'purchaseorders', 'purchaseorder': 'purchaseorders',
+        }
+        resource = resources.get(str(kind).strip().lower())
+        if not resource or not re.fullmatch(r'[0-9]{1,64}', str(document_id)) or not re.fullmatch(r'[0-9]{1,64}', str(org)):
+            raise ValueError('Invalid sales document identity')
+        allowed_hosts = {
+            'www.zohoapis.com', 'www.zohoapis.eu', 'www.zohoapis.in', 'www.zohoapis.com.au',
+            'www.zohoapis.jp', 'www.zohoapis.ca', 'www.zohoapis.com.cn', 'www.zohoapis.sa',
+        }
+        maximum = 8 * 1024 * 1024
+        await self.refresh()
+        for attempt in range(2):
+            connection = self._connection()
+            if not connection or not connection.get('access_token'):
+                raise RuntimeError('Zoho is not connected')
+            if str(connection.get('organization_id') or '') != str(org):
+                raise PermissionError('Select the connected Zoho Books organization before downloading')
+            domain = str(connection.get('api_domain') or settings.zoho_api_domain).rstrip('/')
+            parsed = urlsplit(domain)
+            if (parsed.scheme != 'https' or parsed.hostname not in allowed_hosts
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+                raise ValueError('Unsupported Zoho API domain')
+            domain = f'https://{parsed.hostname}'
+            headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/pdf'}
+            url = f'{domain}/books/v3/{resource}/{document_id}'
+            retry = False
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                async with client.stream('GET', url, params={'organization_id': str(org), 'accept': 'pdf'}, headers=headers) as response:
+                    if response.status_code == 401 and attempt == 0:
+                        retry = True
+                    else:
+                        if 300 <= response.status_code < 400:
+                            raise ValueError('Zoho PDF redirects are not supported')
+                        response.raise_for_status()
+                        if response.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'application/pdf':
+                            raise ValueError('Zoho did not return a PDF document')
+                        length = response.headers.get('content-length')
+                        if length is not None and (not length.isdigit() or int(length) > maximum):
+                            raise ValueError('Zoho PDF exceeds the download size limit')
+                        content = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            if len(content) + len(chunk) > maximum:
+                                raise ValueError('Zoho PDF exceeds the download size limit')
+                            content.extend(chunk)
+                        pdf = bytes(content)
+                        if not pdf.startswith(b'%PDF-') or b'%%EOF' not in pdf[-1024:]:
+                            raise ValueError('Zoho returned an invalid or incomplete PDF document')
+                        return pdf
+            if retry:
+                await self.refresh(force=True)
+        raise RuntimeError('Zoho PDF download failed')
     async def smoke_test(self):
         result=await self.request('GET','/books/v3/organizations')
         raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
@@ -206,8 +273,8 @@ class ZohoClient:
             if value not in (None,''): params[key]=value
         return await self.request('GET','/books/v3/items',params=params)
     async def search_books_items(self, org, query='', date=None, page=1):
-        params = {'organization_id': org, 'status': 'active', 'per_page': 200, 'page': page}
-        if query: params['search_text'] = query
+        params = {'organization_id': org, 'filter_by': 'Status.Active', 'per_page': 200, 'page': page}
+        if query: params['search_text'] = str(query).strip()[:100]
         if date: params['date'] = date
         return await self.request('GET','/books/v3/items',params=params)
     async def books_item(self,org,item_id): return await self.request('GET',f'/books/v3/items/{item_id}',params={'organization_id':org})

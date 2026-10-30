@@ -1,0 +1,161 @@
+[
+  {
+    "payload": {
+      "english_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB.",
+      "source_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB.",
+      "recent_dialogue": [
+        {
+          "start_seconds": 0,
+          "end_seconds": 10,
+          "english_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB.",
+          "source_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB."
+        }
+      ],
+      "durable_context": {
+        "active_topic": null,
+        "last_intent": null,
+        "focal_product": null,
+        "focal_product_sku": null,
+        "budget_max": null,
+        "preferred_features": [],
+        "brand_preferences": [],
+        "timeline": null,
+        "availability_requirement": null,
+        "discount_expectation": null,
+        "objections": [],
+        "unanswered_questions": [],
+        "commitments": [],
+        "buying_signals": [],
+        "contact_details": {},
+        "recent_summaries": [],
+        "intent_confidence": null,
+        "intent_evidence": [],
+        "document_kind": null,
+        "missing_critical_fields": [],
+        "suggested_questions": [],
+        "clarification_audience": "agent",
+        "updated_at": null,
+        "customer_requirements": [],
+        "recent_recommendations": []
+      },
+      "fallback_route_hint": {
+        "intent": "customer_requirements",
+        "agent": "conversation_monitor",
+        "confidence_floor": 0.65
+      }
+    },
+    "raw": "{\"intent\":\"customer_requirements\",\"intent_confidence\":1,\"intent_evidence\":[\"I need a one horsepower single phase motor and a ten amp double pole type C MCB.\"],\"document_kind\":null,\"requirements\":[{\"product\":{\"value\":\"one horsepower single phase motor\",\"evidence\":[\"I need a one horsepower single phase motor.\"]},\"category\":\"motor\",\"sku\":null,\"attributes\":[{\"name\":\"power\",\"value\":\"one horsepower\",\"evidence\":[\"I need a one horsepower single phase motor.\"]},{\"name\":\"phase\",\"value\":\"single\",\"evidence\":[\"I need a one horsepower single phase motor.\"]}],\"quantity\":null,\"budget\":null,\"excluded\":null,\"removed_attributes\":[],\"search_terms\":[\"one horsepower single phase motor\",\"motor\"],\"category_terms\":[\"single phase motor\"],\"accessory_terms\":[],\"excluded_terms\":[],\"required_terms\":[],\"removed_excluded_terms\":[],\"evidence\":[\"I need a one horsepower single phase motor.\"]},{\"product\":{\"value\":\"ten amp double pole type C MCB\",\"evidence\":[\"I need a ten amp double pole type C MCB.\"]},\"category\":\"circuit breaker\",\"sku\":null,\"attributes\":[{\"name\":\"current\",\"value\":\"ten amp\",\"evidence\":[\"I need a ten amp double pole type C MCB.\"]},{\"name\":\"type\",\"value\":\"double pole\",\"evidence\":[\"I need a ten amp double pole type C MCB.\"]},{\"name\":\"characteristic\",\"value\":\"type C\",\"evidence\":[\"I need a ten amp double pole type C MCB.\"]}],\"quantity\":null,\"budget\":null,\"excluded\":null,\"removed_attributes\":[],\"search_terms\":[\"ten amp double pole type C MCB\",\"circuit breaker\"],\"category_terms\":[\"double pole MCB\"],\"accessory_terms\":[],\"excluded_terms\":[],\"required_terms\":[],\"removed_excluded_terms\":[],\"evidence\":[\"I need a ten amp double pole type C MCB.\"]}],\"facts\":[],\"budget\":null,\"summary\":\"The customer requires a one horsepower single phase motor and a ten amp double pole type C MCB.\",\"missing_critical_fields\":[],\"suggested_questions\":[]}"
+  },
+  {
+    "payload": {
+      "english_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet.",
+      "source_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet.",
+      "recent_dialogue": [
+        {
+          "start_seconds": 0,
+          "end_seconds": 10,
+          "english_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB.",
+          "source_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB."
+        },
+        {
+          "start_seconds": 10,
+          "end_seconds": 20,
+          "english_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet.",
+          "source_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet."
+        }
+      ],
+      "durable_context": {
+        "active_topic": null,
+        "last_intent": null,
+        "focal_product": null,
+        "focal_product_sku": null,
+        "budget_max": null,
+        "preferred_features": [],
+        "brand_preferences": [],
+        "timeline": null,
+        "availability_requirement": null,
+        "discount_expectation": null,
+        "objections": [],
+        "unanswered_questions": [],
+        "commitments": [],
+        "buying_signals": [],
+        "contact_details": {},
+        "recent_summaries": [],
+        "intent_confidence": null,
+        "intent_evidence": [],
+        "document_kind": null,
+        "missing_critical_fields": [],
+        "suggested_questions": [],
+        "clarification_audience": "agent",
+        "updated_at": null,
+        "customer_requirements": [],
+        "recent_recommendations": []
+      },
+      "fallback_route_hint": {
+        "intent": "quote_request",
+        "agent": "business_actions",
+        "confidence_floor": 0.9
+      }
+    },
+    "raw": "{\"intent\":\"quote_request\",\"intent_confidence\":0.95,\"intent_evidence\":[\"\\\"Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet.\\\"\"],\"document_kind\":\"quotation\",\"requirements\":[{\"product\":{\"value\":\"single phase motor\",\"evidence\":[\"\\\"I need a one horsepower single phase motor and a ten amp double pole type C MCB.\\\"\"]},\"category\":\"motor\",\"sku\":null,\"attributes\":[{\"name\":\"horsepower\",\"value\":\"2 HP\",\"evidence\":[\"\\\"Make the motor two HP instead.\\\"\"]},{\"name\":\"fan\",\"value\":\"none\",\"evidence\":[\"\\\"No fan.\\\"\"]}],\"quantity\":null,\"budget\":null,\"excluded\":null,\"removed_attributes\":[],\"search_terms\":[\"single phase motor\",\"motor\"],\"category_terms\":[\"motor\"],\"accessory_terms\":[],\"excluded_terms\":[],\"required_terms\":[],\"removed_excluded_terms\":[],\"evidence\":[\"\\\"Make the motor two HP instead. No fan.\\\"\"]}],\"facts\":[],\"budget\":null,\"summary\":\"The customer has requested a two horsepower single phase motor without a fan and has asked for a quotation to be prepared but not sent yet.\",\"missing_critical_fields\":[],\"suggested_questions\":[\"What is the intended application for the motor?\",\"Is there a specific brand preference for the motor?\",\"What is the required timeline for delivery?\"]}"
+  },
+  {
+    "payload": {
+      "english_text": "Actually cancel the breaker, keep the motor. I will confirm quantity.",
+      "source_text": "Actually cancel the breaker, keep the motor. I will confirm quantity.",
+      "recent_dialogue": [
+        {
+          "start_seconds": 0,
+          "end_seconds": 10,
+          "english_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB.",
+          "source_text": "I need a one horsepower single phase motor and a ten amp double pole type C MCB."
+        },
+        {
+          "start_seconds": 10,
+          "end_seconds": 20,
+          "english_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet.",
+          "source_text": "Make the motor two HP instead. No fan. Also prepare a quotation, but do not send it yet."
+        },
+        {
+          "start_seconds": 20,
+          "end_seconds": 30,
+          "english_text": "Actually cancel the breaker, keep the motor. I will confirm quantity.",
+          "source_text": "Actually cancel the breaker, keep the motor. I will confirm quantity."
+        }
+      ],
+      "durable_context": {
+        "active_topic": null,
+        "last_intent": null,
+        "focal_product": null,
+        "focal_product_sku": null,
+        "budget_max": null,
+        "preferred_features": [],
+        "brand_preferences": [],
+        "timeline": null,
+        "availability_requirement": null,
+        "discount_expectation": null,
+        "objections": [],
+        "unanswered_questions": [],
+        "commitments": [],
+        "buying_signals": [],
+        "contact_details": {},
+        "recent_summaries": [],
+        "intent_confidence": null,
+        "intent_evidence": [],
+        "document_kind": null,
+        "missing_critical_fields": [],
+        "suggested_questions": [],
+        "clarification_audience": "agent",
+        "updated_at": null,
+        "customer_requirements": [],
+        "recent_recommendations": []
+      },
+      "fallback_route_hint": {
+        "intent": "customer_requirements",
+        "agent": "conversation_monitor",
+        "confidence_floor": 0.65
+      }
+    },
+    "raw": "{\"intent\":\"customer_requirements\",\"intent_confidence\":0.9,\"intent_evidence\":[\"\\\"Actually cancel the breaker, keep the motor. I will confirm quantity.\\\"\"],\"document_kind\":null,\"requirements\":[{\"product\":{\"value\":\"two horsepower single phase motor\",\"evidence\":[\"\\\"Make the motor two HP instead.\\\"\"]},\"category\":\"motor\",\"sku\":null,\"attributes\":[{\"name\":\"fan\",\"value\":\"none\",\"evidence\":[\"\\\"No fan.\\\"\"]}],\"quantity\":null,\"budget\":null,\"excluded\":null,\"removed_attributes\":[],\"search_terms\":[\"two horsepower single phase motor\",\"motor\"],\"category_terms\":[\"motor\"],\"accessory_terms\":[],\"excluded_terms\":[],\"required_terms\":[],\"removed_excluded_terms\":[],\"evidence\":[\"\\\"Actually cancel the breaker, keep the motor. I will confirm quantity.\\\"\"]}],\"facts\":[],\"budget\":null,\"summary\":\"The customer has requested to keep the two horsepower single phase motor and cancel the breaker. They will confirm the quantity later.\",\"missing_critical_fields\":[],\"suggested_questions\":[\"What quantity of the motor do you need?\"]}"
+  }
+]

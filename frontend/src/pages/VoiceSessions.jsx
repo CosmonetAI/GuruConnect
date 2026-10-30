@@ -21,13 +21,15 @@ import ConversationRecorder from "./Enquiries/ConversationRecorder";
 import ConversationTranscript from "../components/ConversationTranscript";
 import ProgressivePlayback from "../components/ProgressivePlayback";
 import PageLoader from "../components/PageLoader";
+import LiveSessionWorkspace, { ProductCartAction, ProductMatchDetails, Stock, productNeedsConfirmation, productOutOfStock, productPriceAvailable, productReviewFingerprint } from "../components/LiveSessionWorkspace";
+import SalesDocumentModal from "../components/SalesDocumentModal";
 import { request as recorderRequest } from "../services/officeApi";
 import { useOffice } from "../contexts/OfficeContext";
 import { supabase } from "../services/officeApi";
-import { recordingStatus } from "../recording/status";
 import "../zoho/styles.css";
 import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
+import "../styles/live-session-page.css";
 
 const newProduct = () => ({
   product: "",
@@ -53,6 +55,55 @@ const customerFields = [
   ["Project / site", "project"],
   ["Preferred contact", "preferredContact"],
 ];
+
+// Capture and speech processing have independent lifecycles. A running microphone
+// is not evidence that a provider has received or translated an audio window.
+/**
+ * @param {object} [options]
+ * @param {import('../recording/status').RecordingSnapshot | null} [options.snapshot]
+ * @param {{capture?: string}} [options.captureState]
+ * @param {{speech_configured?: boolean, translation_configured?: boolean} | null} [options.providerReadiness]
+ * @param {{stage?: string, message?: string, code?: string} | null} [options.processingStatus]
+ * @param {string | null} [options.processingMode]
+ * @param {Array<{english_text?: string | null, source_text?: string | null}>} [options.turns]
+ */
+export function liveProcessingStatus({ snapshot = null, captureState = {}, providerReadiness = null, processingStatus = null, processingMode = null, turns = [] } = {}) {
+  const transcription = snapshot?.transcription_state ?? snapshot?.transcriptionState;
+  const english = snapshot?.english_state ?? snapshot?.englishState;
+  const finalState = snapshot?.final_state ?? snapshot?.finalState;
+  const capture = ["recording", "paused"].includes(captureState.capture) ? captureState.capture : snapshot?.capture_state;
+  const capturing = ["recording", "paused"].includes(capture);
+  const hasEnglish = turns.some((turn) => Boolean(turn.english_text?.trim()));
+  const status = (key, label, detail, available = hasEnglish) => ({ key, label, detail, available });
+  if (finalState === "complete" && english === "complete") return status("complete", "Processing complete", "The recording transcript and English translation are available.", true);
+
+  const stage = processingStatus?.stage;
+  const failed = ["failed", "blocked", "uncertain"];
+  // The live endpoint can see per-window jobs that a conversation snapshot does
+  // not include, including a retry of a previously blocked window.
+  if (stage === "transcribing") return status("transcribing", "Transcribing", "The speech service is processing an audio window.");
+  if (stage === "translating") return status("translating", "Translating", "The English translation is being prepared; completed text remains visible.");
+  if (failed.includes(transcription)) return status("failed", transcription === "blocked" ? "Transcription unavailable" : "Transcription needs attention", snapshot?.processing_error_code || "Saved audio is retained. Retry transcription when the speech service is available.");
+  if (failed.includes(english)) return status("failed", english === "blocked" ? "Translation unavailable" : "Translation needs attention", snapshot?.processing_error_code || "The source transcript is retained. Retry translation when the service is available.");
+  if (failed.includes(stage)) return status("failed", "Speech processing needs attention", processingStatus.message || processingStatus.code || "Saved audio and completed text are retained.");
+  if (providerReadiness?.speech_configured === false) return status("failed", "Transcription unavailable", "Audio capture and saving remain available. Configure the speech service to process saved audio.");
+  if (providerReadiness?.translation_configured === false) return status("failed", "Translation unavailable", "Audio capture and saving remain available. Configure the translation service for English text.");
+  if (stage === "up_to_date") return status("ready", "Live translation up to date", "Showing processed speech. New text follows as the next audio window is ready.");
+
+  if (stage === "complete" && !capturing) return status("complete", "Processing complete", "The recording transcript and English translation are available.", true);
+  if (processingMode === "finalized_only" && capturing) return status("ready", "Translation starts after recording ends", "This recording is configured for processing after the audio is saved.");
+
+  if (["running", "processing"].includes(transcription)) return status("transcribing", "Transcribing", "The speech service is processing the latest audio.");
+  if (["running", "processing"].includes(english)) return status("translating", "Translating", "Preparing the English version of the latest speech.");
+  if (capturing && hasEnglish && !turns.some((turn) => turn.source_text && turn.english_text == null)) return status("ready", "Live translation up to date", "Showing processed speech. New text follows as the next audio window is ready.");
+  if (capturing && (stage === "waiting" || !snapshot || transcription === "pending" || !transcription)) return status("ready", "Waiting for first audio window", "Audio capture is active. Text appears when the first short audio window has been processed.");
+  if (transcription === "queued") return status("transcribing", "Transcription queued", "Saved audio is waiting for the speech service.");
+  if (["pending", "queued"].includes(english) && (["complete", "available"].includes(transcription) || turns.length)) return status("translating", "Translation queued", "The source transcript is available; its English translation is waiting to be processed.");
+  if (capturing) return status("ready", "Waiting for next audio window", "Audio capture is active. Completed speech and translation remain visible.");
+  if (snapshot?.upload_state && snapshot.upload_state !== "saved") return status("uploading", "Saving audio", "Audio is being saved for processing.");
+  if (snapshot) return status("ready", "Waiting for processing", "Audio is saved. Waiting for the next processing update.");
+  return status("ready", "Ready to record", "No recording is active.");
+}
 
 function CustomerModal({ contact, onClose }) {
   if (!contact) return null;
@@ -94,84 +145,6 @@ function CustomerModal({ contact, onClose }) {
             </div>
           ))}
         </div>
-      </section>
-    </div>
-  );
-}
-
-function SalesDocumentModal({
-  open,
-  contact,
-  customerType,
-  cart,
-  subtotal,
-  discount,
-  documentType,
-  setDocumentType,
-  email,
-  setEmail,
-  subject,
-  setSubject,
-  message,
-  setMessage,
-  busy,
-  onClose,
-  onBack,
-  onSubmit,
-}) {
-  if (!open || !contact) return null;
-  const isVendor = customerType === "dealer";
-  const availableTypes = isVendor
-    ? [{ value: "purchase-order", title: "Create purchase order", copy: "Create a purchase order in Zoho Books" }]
-    : [
-        { value: "invoice", title: "Send invoice", copy: "Create invoice in Zoho Books and email customer" },
-        { value: "quote", title: "Send quote", copy: "Create estimate / quotation and email customer" },
-        { value: "sales-order", title: "Create sales order", copy: "Create sales order in Zoho Books" },
-      ];
-  const selected = availableTypes.find((item) => item.value === documentType) || availableTypes[0];
-  const total = Math.max(0, subtotal - discount);
-  return (
-    <div className="session-modal-backdrop" onClick={onClose}>
-      <section className="sales-document-modal" role="dialog" aria-modal="true" aria-labelledby="sales-document-title" onClick={(event) => event.stopPropagation()}>
-        <header className="sales-document-heading">
-          <div>
-            <small>ZOHO BOOKS</small>
-            <h2 id="sales-document-title">Create sales document</h2>
-            <p>Create and send a document to the {isVendor ? "vendor" : "customer"} without leaving this session.</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close document modal"><X size={20} /></button>
-        </header>
-        <div className="sales-document-body">
-          <div className="sales-document-contact">
-            <div className="sales-document-avatar">{(contact.name || "C").slice(0, 2).toUpperCase()}</div>
-            <div><strong>{contact.name}</strong><span>{contact.phone || "Phone not provided"}</span><span>{contact.email || "Email not provided"}</span></div>
-            <span className="session-status-pill">{isVendor ? "Vendor" : "Customer"}</span>
-          </div>
-          <section className="sales-order-summary">
-            <div className="sales-document-section-heading"><strong>Order summary ({cart.length} {cart.length === 1 ? "product" : "products"})</strong><button type="button" className="link-button" onClick={onBack}>Edit cart</button></div>
-            <div className="sales-summary-table">
-              <div className="sales-summary-header"><span>Product</span><span>SKU</span><span>Price</span><span>Qty</span><span>Total</span></div>
-              {cart.map((line, index) => {
-                const lineSubtotal = Number(line.rate || 0) * Number(line.quantity || 0);
-                const lineDiscount = line.discount_type === "fixed" ? Number(line.discount || 0) : lineSubtotal * Number(line.discount || 0) / 100;
-                return <div className="sales-summary-row" key={line.item_id || line.sku || index}><span>{line.product || line.name}</span><span>{line.sku || "—"}</span><span>₹{Number(line.rate || 0).toLocaleString("en-IN")}</span><span>{line.quantity}</span><strong>₹{Math.max(0, lineSubtotal - lineDiscount).toLocaleString("en-IN")}</strong></div>;
-              })}
-            </div>
-            <div className="sales-summary-totals"><span>Subtotal</span><strong>₹{subtotal.toLocaleString("en-IN")}</strong><span>Discount</span><strong className="discount-value">- ₹{discount.toLocaleString("en-IN")}</strong><span className="final-label">Total amount</span><strong className="final-total">₹{total.toLocaleString("en-IN")}</strong></div>
-          </section>
-          <section>
-            <div className="sales-document-section-heading"><strong>Select document to create</strong></div>
-            <div className={`document-type-grid ${isVendor ? "is-vendor" : ""}`}>
-              {availableTypes.map((item) => <button type="button" key={item.value} className={`document-type-card ${selected.value === item.value ? "selected" : ""}`} onClick={() => setDocumentType(item.value)}><span className="document-type-radio" /> <span><strong>{item.title}</strong><small>{item.copy}</small></span></button>)}
-            </div>
-          </section>
-          <section className="sales-email-section">
-            <div className="sales-document-section-heading"><strong>Email details</strong><small className="zoho-sender-note">Sent through the connected Zoho Books account</small></div>
-            <label>To ({isVendor ? "vendor" : "customer"} email)<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" type="email" />{!email.trim() && <small className="document-email-warning">No email is present for this contact. Add one to the Zoho contact to send the document, or download it from GuruConnect after creation.</small>}</label>
-            <div className="sales-email-grid"><label>Email subject<input value={subject} onChange={(event) => setSubject(event.target.value)} /></label><label>Email message<textarea value={message} onChange={(event) => setMessage(event.target.value)} /></label></div>
-          </section>
-        </div>
-        <footer className="sales-document-footer"><button type="button" className="button button-quiet" onClick={onBack}>Back to cart</button><button type="button" className="primary" onClick={() => onSubmit(selected.value)} disabled={busy || !cart.length}>{busy ? "Creating…" : email.trim() ? "Create & send" : "Create & download"}</button></footer>
       </section>
     </div>
   );
@@ -315,7 +288,7 @@ function ProductRequirement({
 
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
-  const { user, workspace, setCaptureBusy } = useOffice();
+  const { user, workspace, localMode, setCaptureBusy } = useOffice();
   const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
     name: searchParams.get("name") || "",
@@ -371,24 +344,64 @@ export default function VoiceSessions() {
     [documentEmail, setDocumentEmail] = useState(""),
     [documentSubject, setDocumentSubject] = useState(""),
     [documentMessage, setDocumentMessage] = useState("");
+  const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentFeedback, setDocumentFeedback] = useState(""), [documentDelivery, setDocumentDelivery] = useState("email"), [documentResult, setDocumentResult] = useState(null);
+  const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
+  const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
+  const documentDrafts = useRef(new Map());
+  currentDocumentScope.current = `${user?.id}:${workspace?.id}:${workspace?.member_id || user?.id}:${session}`;
   const [recorderGeneration, setRecorderGeneration] = useState(0);
   const [captureBusy, setRecorderBusy] = useState(false);
   const [captureState, setCaptureState] = useState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
   const [recordingSnapshot, setRecordingSnapshot] = useState(null);
-  const busy = sessionBusy || captureBusy;
+  const [liveProcessing, setLiveProcessing] = useState(null);
+  const [liveAnalysis, setLiveAnalysis] = useState("waiting_for_translation");
+  const [liveKeywords, setLiveKeywords] = useState([]);
+  const [liveGuidance, setLiveGuidance] = useState({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
+  const [catalogueNotices, setCatalogueNotices] = useState([]);
+  const [liveNotice, setLiveNotice] = useState("");
+  const [customIntents, setCustomIntents] = useState([]);
+  const [hiddenIntents, setHiddenIntents] = useState([]);
+  const [activeTab, setActiveTab] = useState("conversation");
+  const [archivedConversationId, setArchivedConversationId] = useState(null);
+  const [viewProduct, setViewProduct] = useState(null);
+  useEffect(() => {
+    setViewProduct((current) => {
+      if (!current) return current;
+      const latest = recommendations.find((item) => (item.item_id || item.id || item.sku) === (current.item_id || current.id || current.sku));
+      return latest ? { ...current, ...latest } : current;
+    });
+  }, [recommendations]);
+  const [cartSearchBusy, setCartSearchBusy] = useState(false);
+  const [cartSearchError, setCartSearchError] = useState("");
+  const [intentSearch, setIntentSearch] = useState(false);
+  const [contextHydrated, setContextHydrated] = useState(null);
+  const [cartSaveError, setCartSaveError] = useState("");
+  const [cartSaving, setCartSaving] = useState(false);
+  const busy = sessionBusy || captureBusy || cartSaving || Boolean(documentBusy);
   const busyRef = useRef(false); busyRef.current = busy;
   const alive = useRef(true);
   const selection = useRef(0);
   const contactRequest = useRef(0);
   const controllers = useRef(new Set());
   const sessionRef = useRef(session); sessionRef.current = session;
+  const conversationRef = useRef(conversationId); conversationRef.current = conversationId;
+  const captureRef = useRef(captureState); captureRef.current = captureState;
+  const catalogueSearch = useRef(0);
+  const refreshLive = useRef(null);
+  const contextSaves = useRef(new Map());
   const blocker = useBlocker(busy);
-  useEffect(() => { if (blocker.state === 'blocked') { setError('Finish saving or detach the audio before leaving this session.'); blocker.reset(); } }, [blocker]);
+  useEffect(() => { if (blocker.state === 'blocked') { setError('Finish recording and saving this session before leaving.'); blocker.reset(); } }, [blocker]);
+  useEffect(() => {
+    if (!cartSaving && !documentBusy) return;
+    const preventLoss = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', preventLoss);
+    return () => window.removeEventListener('beforeunload', preventLoss);
+  }, [cartSaving, documentBusy]);
   useEffect(() => { setCaptureBusy(busy); return () => setCaptureBusy(false); }, [busy, setCaptureBusy]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; ++selection.current; controllers.current.forEach(controller => controller.abort()); }; }, []);
   const sessionCall = async (path, options = {}) => {
     const controller = new AbortController(); controllers.current.add(controller);
-    try { return await call(path, { ...options, signal: controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || workspace?.id } }, workspace?.id); }
+    try { return await call(path, { ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || user?.id } }, workspace?.id); }
     finally { controllers.current.delete(controller); }
   };
   const startedFromEnquiry = useRef(false);
@@ -408,14 +421,29 @@ export default function VoiceSessions() {
     const [noteData, contextData] = await Promise.all([sessionCall(`/voice-sessions/${id}/notes`), sessionCall(`/voice-sessions/${id}/context`)]);
     if (!alive.current || ticket !== selection.current) return;
     setNotes(noteData.notes || []);
-    setProductRequirements(contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()]);
-    setCart(contextData.cart || []);
+    const requirements = contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()];
+    const savedCart = contextData.cart || [];
+    contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: savedCart }), running: false, pending: null });
+    setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
+  };
+  const clearLiveWorkspace = () => {
+    documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentFeedback(""); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
+    setContextHydrated(null); setCartSaveError("");
+    setNoteBusy(false);
+    setTranscriptPreview([]); setInsights([]); setRecommendations([]); setProducts([]);
+    setLiveKeywords([]); setCustomIntents([]); setHiddenIntents([]);
+    setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
+    setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
+    setCart([]); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
+    setActiveTab("conversation"); setArchivedConversationId(null);
+    setCartProductSearchOpen(false); setViewProduct(null); setCartSearchError("");
+    setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
   };
   const refreshRecordingStatus = async (id = conversationId) => {
     if (!id || !workspace) return;
     try {
       const data = await recorderRequest(`/conversations/${encodeURIComponent(id)}`, workspace.id, {}, workspace.member_id);
-      if (alive.current && id === sessionRef.current || id === conversationId) setRecordingSnapshot(data);
+      if (alive.current && id === conversationRef.current) setRecordingSnapshot(data);
     } catch (e) {
       if (alive.current && e?.name !== "AbortError") setError((current) => current || e.message);
     }
@@ -426,10 +454,12 @@ export default function VoiceSessions() {
   }, []);
   const open = async (id) => {
     if (busyRef.current) return;
+    setContextHydrated(null);
     const ticket = ++selection.current; busyRef.current = true; setBusy(true); setError('');
     try {
       const data = await sessionCall(`/voice-sessions/${id}/history`);
       if (!alive.current || ticket !== selection.current) return;
+      clearLiveWorkspace();
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
       setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
@@ -452,17 +482,19 @@ export default function VoiceSessions() {
           email: contact.email || "",
         }
       : identity;
-    if (!next.name.trim() || !next.phone.trim() || !next.email.trim()) {
-      setError("Enter the customer’s name, phone number, and email address before starting the session.");
+    if (!next.name.trim() || !next.phone.trim()) {
+      setError("Enter the customer’s name and phone number before starting the session.");
       return;
     }
     busyRef.current = true; setBusy(true);
     setError("");
+    clearLiveWorkspace();
     setIdentity(next);
     setNoteText(""); setNoteError("");
     // Do not let the previous contact's failed/pending recording block this
     // contact while the phone-based session lookup is in flight.
     setConversationId(null);
+    conversationRef.current = null;
     setRecordingSnapshot(null);
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
     try {
@@ -530,6 +562,7 @@ export default function VoiceSessions() {
     setNotes([]);
     setNoteText(""); setNoteError("");
     setTranscriptPreview([]); setInsights([]); setRecommendations([]); setCart([]); setCartOpen(false);
+    clearLiveWorkspace();
     setProductRequirements([newProduct()]);
     setError("");
   };
@@ -537,13 +570,22 @@ export default function VoiceSessions() {
     const selectedSession = session;
     if (!alive.current || sessionRef.current !== selectedSession) throw new Error('The selected customer changed. Reopen the saved recording from Conversation history.');
     if (selectedSession) await sessionCall(`/voice-sessions/${selectedSession}/conversation`, { method: 'POST', body: JSON.stringify({ conversation_id: id }) });
-    if (alive.current && sessionRef.current === selectedSession) setConversationId(id);
+    if (alive.current && sessionRef.current === selectedSession) {
+      const changed = conversationRef.current !== id;
+      conversationRef.current = id;
+      setConversationId(id);
+      if (changed) {
+        setTranscriptPreview([]); setInsights([]); setRecommendations([]); setLiveKeywords([]);
+        setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
+        setRecordingSnapshot(null); setLiveProcessing(null); setLiveAnalysis("waiting_for_translation"); setCatalogueNotices([]);
+      }
+    }
   };
   const recordingSaved = async () => {
     const id = sessionRef.current; const ticket = selection.current;
     try {
       const data = await sessionCall(`/voice-sessions/${id}/history`);
-      if (alive.current && ticket === selection.current && id === sessionRef.current) { setRecorderSessions(data.recorder_sessions || []); setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); void refreshRecordingStatus(data.conversation_id || conversationId); }
+      if (alive.current && ticket === selection.current && id === sessionRef.current) { setRecorderSessions(data.recorder_sessions || []); void refreshRecordingStatus(data.conversation_id || conversationId); void refreshLive.current?.(); }
     } catch (e) { if (alive.current && e.name !== 'AbortError') setError(e.message); }
   };
   const deleteRecorderSession = async (id) => {
@@ -586,11 +628,24 @@ export default function VoiceSessions() {
     }
   };
   const searchCartProducts = async () => {
-    if (!cartSearch.trim()) return;
+    const query = cartSearch.trim();
+    if (!query) { setCartSearchResults([]); return; }
+    const ticket = ++catalogueSearch.current;
+    const selected = sessionRef.current;
+    setCartSearchBusy(true); setCartSearchError("");
     try {
-      const data = await sessionCall(`/products?search=${encodeURIComponent(cartSearch.trim())}`);
+      const data = await sessionCall(`/products?search=${encodeURIComponent(query)}`);
+      if (!alive.current || ticket !== catalogueSearch.current || selected !== sessionRef.current) return;
       setCartSearchResults(data.items || []);
-    } catch (e) { setError(e.message); }
+      if (intentSearch) {
+        setCustomIntents((current) => [...new Set([...current, query])]);
+        setProducts((current) => [...new Map([...current, ...(data.items || [])].map((item) => [item.item_id || item.id, item])).values()]);
+      }
+    } catch (e) {
+      if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchError(e.message);
+    } finally {
+      if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchBusy(false);
+    }
   };
   const resolveDocumentContact = async () => {
     const ticket = selection.current;
@@ -626,7 +681,9 @@ export default function VoiceSessions() {
         setDocumentContact(null);
       }
     } catch (e) {
-      setError(e.message);
+      if (alive.current && ticket === selection.current) {
+        setCustomerType("unknown"); setDocumentContact(null);
+      }
     }
   };
   useEffect(() => {
@@ -640,26 +697,70 @@ export default function VoiceSessions() {
     if (session) void resolveDocumentContact();
   }, [session, identity.phone, identity.email]);
   useEffect(() => {
-    if (!session || !conversationId || !supabase) return;
-    const channel = supabase.channel(`voice-extraction-${conversationId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_extractions', filter: `conversation_id=eq.${conversationId}` }, () => {
-        void sessionCall(`/voice-sessions/${session}/history`).then((data) => {
-          if (sessionRef.current !== session) return;
-          setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
-          const names = (data.insights || []).flatMap((item) => item.data?.products || []).map((item) => typeof item === 'string' ? item : item.name || item.product || '').filter(Boolean).slice(-3);
-          if (names.length) void Promise.all(names.map((name) => sessionCall(`/products?search=${encodeURIComponent(name)}`))).then((rows) => setRecommendations(rows.flatMap((row) => row.items || []).slice(0, 8))).catch(() => {});
-        }).catch(() => {});
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `id=eq.${conversationId}` }, () => { void refreshRecordingStatus(conversationId); })
+    if (!session || !conversationId || !workspace) return;
+    const controller = new AbortController();
+    let timer, inFlight = false, latest = null;
+    const isCurrent = () => !controller.signal.aborted && alive.current && sessionRef.current === session && conversationRef.current === conversationId;
+    const refresh = async () => {
+      if (!isCurrent() || inFlight) return;
+      window.clearTimeout(timer); inFlight = true;
+      try {
+        const data = await sessionCall(`/voice-sessions/${session}/live`, { signal: controller.signal });
+        if (!isCurrent() || (data.conversation_id && data.conversation_id !== conversationId)) return;
+        latest = data;
+        if (Array.isArray(data.transcript_preview)) setTranscriptPreview(data.transcript_preview);
+        if (Array.isArray(data.insights)) setInsights(data.insights);
+        if (Array.isArray(data.keywords)) setLiveKeywords(data.keywords);
+        if (Array.isArray(data.recommendations)) setRecommendations(data.recommendations);
+        setLiveGuidance({ requirements: Array.isArray(data.requirements) ? data.requirements : [], clarificationSuggestions: Array.isArray(data.clarification_suggestions) ? data.clarification_suggestions : [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
+        if (data.recording) setRecordingSnapshot(data.recording);
+        setLiveProcessing({ providerReadiness: data.provider_readiness, processingStatus: data.processing_status, processingMode: data.processing_mode });
+        if (data.analysis_status) setLiveAnalysis(data.analysis_status);
+        setCatalogueNotices(data.notices || []); setLiveNotice("");
+      } catch (e) {
+        if (isCurrent() && e.name !== "AbortError") setLiveNotice("Live updates are reconnecting. Recording and saved audio are preserved.");
+      } finally {
+        inFlight = false;
+        if (isCurrent()) {
+          const capturing = ["recording", "paused"].includes(captureRef.current.capture);
+          const processing = latest && (latest.recording?.final_state === "queued" || latest.recording?.final_state === "running" || ["pending", "running"].includes(latest.analysis_status) || latest.catalogue_status === "searching");
+          timer = window.setTimeout(refresh, capturing || processing ? 2000 : 8000);
+        }
+      }
+    };
+    refreshLive.current = refresh;
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    void refresh();
+    const channel = supabase?.channel(`voice-live-${conversationId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `id=eq.${conversationId}` }, () => { void refresh(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_extractions', filter: `conversation_id=eq.${conversationId}` }, () => { void refresh(); })
       .subscribe();
-    return () => { void supabase.removeChannel(channel); };
-  }, [session, conversationId]);
-  useEffect(() => { if (conversationId) void refreshRecordingStatus(conversationId); }, [conversationId, workspace?.id]);
+    return () => { controller.abort(); window.clearTimeout(timer); refreshLive.current = null; document.removeEventListener("visibilitychange", onVisible); if (channel) void supabase.removeChannel(channel); };
+  }, [session, conversationId, workspace?.id, workspace?.member_id]);
   useEffect(() => {
-    if (!session) return;
-    const timer = window.setTimeout(() => { void sessionCall(`/voice-sessions/${session}/context`, { method: 'PUT', body: JSON.stringify({ product_requirements: productRequirements, cart }) }).catch(() => {}); }, 250);
-    return () => window.clearTimeout(timer);
-  }, [session, cart]);
+    if (!session || contextHydrated !== session || sessionBusy) return;
+    const entry = contextSaves.current.get(session);
+    if (!entry) return;
+    const body = JSON.stringify({ product_requirements: productRequirements, cart });
+    if ((!entry.running && body === entry.saved) || body === entry.pending) return;
+    entry.pending = body;
+    if (entry.running) return;
+    entry.running = true; setCartSaving(true);
+    void (async () => {
+        try {
+          while (entry.pending) {
+            const pendingBody = entry.pending; entry.pending = null;
+            if (pendingBody === entry.saved) continue;
+            await sessionCall(`/voice-sessions/${session}/context`, { method: 'PUT', body: pendingBody });
+            entry.saved = pendingBody;
+            if (alive.current && sessionRef.current === session) setCartSaveError("");
+          }
+        } catch (e) {
+          if (alive.current && sessionRef.current === session) setCartSaveError("Your latest cart changes could not be saved. Keep this session open and retry by updating the cart.");
+        } finally { entry.running = false; if (alive.current && sessionRef.current === session) setCartSaving(false); }
+    })();
+  }, [session, cart, productRequirements, contextHydrated, sessionBusy]);
   const selectProduct = (index, item) => {
     updateProduct(index, "product", item.name || item.item_name || "");
     updateProduct(index, "sku", item.sku || "");
@@ -667,37 +768,61 @@ export default function VoiceSessions() {
     setProducts([]);
   };
   const addToCart = (item) => {
+    if (sessionBusy || contextHydrated !== session) return;
     const id = item.item_id || item.id || item.sku;
+    const latest = recommendations.find((candidate) => (candidate.item_id || candidate.id || candidate.sku) === id);
+    if (latest) item = { ...item, ...latest, match_confirmation_acknowledged: item.match_confirmation_acknowledged && productReviewFingerprint(item) === productReviewFingerprint(latest) };
+    const rate = Number(item.rate ?? item.price);
+    if (!id || !productPriceAvailable(item) || productOutOfStock(item) || (productNeedsConfirmation(item) && !item.match_confirmation_acknowledged)) return;
     setCart((current) => {
       const found = current.find((line) => (line.item_id || line.id || line.sku) === id);
       if (found) return current.map((line) => line === found ? { ...line, quantity: Number(line.quantity || 1) + 1 } : line);
-      return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', rate: Number(item.rate ?? item.price ?? 0) }];
+      return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', rate }];
     });
     setCartOpen(true);
     setCartProductSearchOpen(false);
   };
-  const updateCart = (index, key, value) => setCart((current) => current.map((line, i) => i === index ? { ...line, [key]: key === 'quantity' || key === 'discount' ? Math.max(0, Number(value) || 0) : value } : line));
+  const updateCart = (index, key, value) => setCart((current) => current.map((line, i) => {
+    if (sessionBusy || contextHydrated !== session) return line;
+    if (i !== index) return line;
+    const next = { ...line, [key]: key === 'quantity' ? Math.max(1, Math.floor(Number(value) || 1)) : key === 'discount' ? Math.max(0, Number(value) || 0) : value };
+    next.discount = Math.min(Number(next.discount) || 0, next.discount_type === 'fixed' ? Number(next.rate) * Number(next.quantity) : 100);
+    return next;
+  }));
+  const removeCartItem = (index) => { if (sessionBusy || contextHydrated !== session) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
   const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
   const openDocumentModal = async () => {
-    if (!cart.length) return;
-    if (customerType === "unknown") { setError("Customer account details are still being checked."); return; }
-    try {
-      const zohoStatus = await sessionCall("/zoho/status");
-      if (!zohoStatus?.connected || !zohoStatus?.organization_id) {
-        setError("Connect the salesperson's Zoho Books account and select an organization before sending a document.");
-        return;
-      }
-    } catch (e) {
-      setError(e.message);
+    if (!session || !cart.length || documentInFlight.current || contextHydrated !== session) return;
+    if (!cart.every(productPriceAvailable)) { setCartSaveError('Confirm catalogue prices before completing this cart.'); return; }
+    const scope = currentDocumentScope.current, selectedSession = session, ticket = selection.current;
+    const unresolved = documentDrafts.current.get(scope);
+    const sameCart = unresolved && JSON.stringify(unresolved.cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type])) === JSON.stringify(cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type]));
+    if (unresolved?.pendingCreation || (sameCart && unresolved?.result && ["failed", "uncertain"].includes(unresolved.result.delivery?.status))) {
+      documentSnapshot.current = unresolved;
+      setDocumentOptions(unresolved.options); setDocumentCart(unresolved.cart); setDocumentResult(unresolved.result); setDocumentPendingCreation(Boolean(unresolved.pendingCreation)); setDocumentError(unresolved.error || "");
+      const original = unresolved.createAction.body, fields = unresolved.emailFields || original;
+      setDocumentType(original.type); setDocumentEmail(fields.recipient || ""); setDocumentSubject(fields.subject); setDocumentMessage(fields.message); setDocumentDelivery(original.delivery); setDocumentModalOpen(true);
       return;
     }
-    const vendor = customerType === "dealer";
-    setDocumentType(vendor ? "purchase-order" : "invoice");
-    setDocumentEmail(identity.email || documentContact?.email || documentContact?.Email || "");
-    setDocumentSubject(`Your ${vendor ? "purchase order" : "invoice"} from GuruConnect`);
-    setDocumentMessage(`Hi ${identity.name || "there"},\n\nPlease find your ${vendor ? "purchase order" : "document"} for the selected items. Let me know if you have any questions.`);
-    setDocumentModalOpen(true);
+    const lines = cart.map((line) => ({ ...line }));
+    documentInFlight.current = true; setDocumentBusy("options"); setError(""); setDocumentFeedback("");
+    try {
+      const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
+      if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
+      const supportedTypes = (options.document_types || []).filter((type) => ["invoice", "quote", "sales-order"].includes(type));
+      if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
+      const customer = { ...identity, ...(options.customer || {}) };
+      const snapshot = { scope, session: selectedSession, cart: lines, options: { ...options, customer, document_types: supportedTypes }, result: null };
+      documentSnapshot.current = snapshot;
+      setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
+      setDocumentType(supportedTypes[0]); setDocumentEmail(customer.email || "");
+      setDocumentDelivery(options.mode === "local-demo" || !options.email?.configured || !customer.email ? "download" : "email");
+      setDocumentSubject("Your document from GuruConnect");
+      setDocumentMessage(`Hi ${customer.name || "there"},\n\nPlease find your document for the selected items attached. Let us know if you have any questions.`);
+      setDocumentModalOpen(true);
+    } catch (error) { if (alive.current && currentDocumentScope.current === scope && ticket === selection.current && error.name !== "AbortError") setError(error.message); }
+    finally { documentInFlight.current = false; if (alive.current && currentDocumentScope.current === scope && ticket === selection.current) setDocumentBusy(""); }
   };
   const downloadTranscript = () => {
     if (!transcriptPreview.length) return;
@@ -708,6 +833,7 @@ export default function VoiceSessions() {
   };
   const addNote = async () => {
     if (!session || !noteText.trim() || noteBusy) return;
+    const ticket = selection.current;
     setNoteBusy(true);
     setNoteError("");
     try {
@@ -716,12 +842,13 @@ export default function VoiceSessions() {
         body: JSON.stringify({ content: noteText.trim() }),
       });
       if (!data?.note) throw new Error("The note could not be saved.");
+      if (!alive.current || sessionRef.current !== session || ticket !== selection.current) return;
       setNotes((current) => [...current, data.note]);
       setNoteText("");
     } catch (e) {
-      setNoteError(e?.message || "The note could not be saved. Please try again.");
+      if (alive.current && sessionRef.current === session && ticket === selection.current) setNoteError(e?.message || "The note could not be saved. Please try again.");
     } finally {
-      setNoteBusy(false);
+      if (alive.current && sessionRef.current === session && ticket === selection.current) setNoteBusy(false);
     }
   };
   const booksContactId =
@@ -734,116 +861,72 @@ export default function VoiceSessions() {
     selectedContact?.records?.bigin ||
     selectedContact?.bigin_contact_id ||
     null;
-  const downloadSalesDocument = (type, lines, result) => {
-    const record = result?.quote || result?.order || result?.invoice || result?.purchase_order || result?.response?.estimate || result?.response?.salesorder || result?.response?.invoice || result?.response?.purchaseorder || {};
-    const documentNumber = record.estimate_number || record.salesorder_number || record.invoice_number || record.purchaseorder_number || record.document_number || 'Created in Zoho Books';
-    const content = [
-      `${type.replace('-', ' ').toUpperCase()}`,
-      `Contact: ${identity.name}`,
-      `Phone: ${identity.phone}`,
-      `Email: No email present for this contact`,
-      `Document: ${documentNumber}`,
-      '',
-      ...lines.map((line) => `${line.product || line.name || 'Product'} | SKU: ${line.sku || '—'} | Qty: ${line.quantity} | Unit price: ₹${Number(line.rate || 0).toLocaleString('en-IN')}`),
-      '',
-      `Subtotal: ₹${cartSubtotal.toLocaleString('en-IN')}`,
-      `Discount: ₹${cartDiscount.toLocaleString('en-IN')}`,
-      `Total: ₹${Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}`,
-    ].join('\n');
-    const safe = (identity.name || 'contact').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'contact';
-    const stamp = new Date().toISOString().replace('T', '_').replace(/:/g, '-').slice(0, 19);
-    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safe}_${stamp}_${type.replace(/-/g, '_')}.txt`; anchor.click(); URL.revokeObjectURL(url);
+  const downloadDocumentPdf = (result) => {
+    const pdf = result?.pdf;
+    if (pdf?.mime_type !== "application/pdf" || typeof pdf.base64 !== "string") throw new Error("The document PDF is unavailable. Keep this session open and retry.");
+    const binary = atob(pdf.base64);
+    if (!binary.startsWith("%PDF-")) throw new Error("The server did not return a valid PDF document.");
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    const anchor = document.createElement("a"); anchor.href = url;
+    anchor.download = String(pdf.filename || "GuruConnect_document.pdf").replace(/[\\/]/g, "_");
+    anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const createDocument = async (type, emailDetails = {}) => {
-    if (customerType === "unknown") {
-      setError("Customer account details are still being checked.");
+  const closeDocumentModal = () => { if (!documentInFlight.current) setDocumentModalOpen(false); };
+  const documentScopeCurrent = (snapshot) => alive.current && documentSnapshot.current === snapshot && currentDocumentScope.current === snapshot.scope && sessionRef.current === snapshot.session;
+  const createDocument = async (type) => {
+    const snapshot = documentSnapshot.current;
+    if (!snapshot || documentInFlight.current || !documentScopeCurrent(snapshot)) return;
+    const recipient = documentEmail.trim();
+    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !recipient || documentDelivery === "download";
+    if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email, or choose Download PDF instead of emailing."); return; }
+    const existing = snapshot.result;
+    if (existing && downloadOnly) {
+      try { downloadDocumentPdf(existing); setDocumentFeedback("Document PDF downloaded."); setDocumentModalOpen(false); } catch (error) { setDocumentError(error.message); }
       return;
     }
-    if (customerType === "dealer" && type !== "purchase-order") {
-      setError(
-        "Quotes, invoices, and sales orders can only be created for customers.",
-      );
-      return;
-    }
-    if (customerType === "customer" && type === "purchase-order") {
-      setError("Purchase orders can only be created for vendors.");
-      return;
-    }
-    const recipient = (emailDetails.email || identity.email || "").trim();
-    const hasRecipient = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient);
-    if (!hasRecipient && emailDetails.downloadOnly !== true) {
-      setError("No email is present for this contact. Add an email to the Zoho contact to send this document, or choose Create & download.");
-      return;
-    }
-    const lines = (cart.length ? cart : productRequirements).filter(
-      (line) => line.item_id && Number(line.quantity) > 0,
-    );
-    if (!lines.length) {
-      setError("Search and select at least one catalogue product first.");
-      return;
-    }
-    const contactId = booksContactId || biginContactId;
-    if (!contactId) {
-      setError(
-        "This customer has no Zoho contact record yet. Link or create the customer before generating a document.",
-      );
-      return;
-    }
-    const path =
-      type === "quote"
-        ? "/quotes"
-        : type === "invoice"
-          ? "/invoices"
-          : type === "sales-order"
-            ? "/orders"
-            : "/purchase-orders";
-    const key = type === "purchase-order" ? "vendor_id" : "customer_id";
-    const sourceKey =
-      type === "purchase-order" ? "vendor_source" : "customer_source";
-    const recordKey =
-      type === "purchase-order" ? "vendor_record" : "customer_record";
-    const fromBigin = Boolean(biginContactId && !booksContactId);
-    setDocumentBusy(type);
-    setError("");
+    if (existing?.delivery?.status === "uncertain") { setDocumentError("Email submission is uncertain. Check its status before retrying; your document PDF is available to download."); return; }
+    const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.notes || line.product || line.name || "" }));
+    if (!lines.length || lines.some((line) => !line.item_id || !Number.isFinite(line.quantity) || line.quantity <= 0)) { setDocumentError("Select at least one catalogue product with a valid quantity."); return; }
+    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient, subject: documentSubject, message: documentMessage } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, subject: documentSubject, message: documentMessage, line_items: lines };
+    const signature = JSON.stringify(body);
+    const actionName = existing ? "emailAction" : "createAction";
+    if (snapshot[actionName]?.signature !== signature) snapshot[actionName] = { signature, requestId: crypto.randomUUID(), body };
+    const requestId = snapshot[actionName].requestId;
+    documentInFlight.current = true; setDocumentBusy(type); setDocumentError(""); setDocumentFeedback("");
     try {
-      const result = await sessionCall(path, {
-        method: "POST",
-        body: JSON.stringify({
-          [key]: contactId,
-          [sourceKey]: fromBigin ? "bigin" : "books",
-          [recordKey]: fromBigin
-              ? {
-                  id: biginContactId,
-                  Full_Name: identity.name,
-                  Mobile: identity.phone,
-                  Email: identity.email,
-                }
-              : null,
-          date: new Date().toISOString().slice(0, 10),
-          line_items: lines.map((line) => ({
-            item_id: line.item_id || line.id,
-            quantity: Number(line.quantity),
-            rate: Number(line.rate || 0),
-            ...(line.discount ? { discount: Number(line.discount), discount_type: line.discount_type || 'percentage' } : {}),
-            description: line.notes || line.product,
-          })),
-          notes: "Generated from GuruConnect voice session",
-        }),
-      });
-      if (type !== 'purchase-order' && result && hasRecipient) {
-        const record = result.quote || result.order || result.invoice || result.purchase_order || result.response?.estimate || result.response?.salesorder || result.response?.invoice || result.response?.purchaseorder;
-        const recordId = record?.estimate_id || record?.salesorder_id || record?.invoice_id || record?.purchaseorder_id || record?.id;
-        if (recordId) await sessionCall(`${path}/${recordId}/email`, { method: 'POST', body: JSON.stringify({ to_mail_ids: [recipient], subject: emailDetails.subject || `Your ${type.replace('-', ' ')} from GuruConnect`, body: emailDetails.message || `Please find your ${type.replace('-', ' ')} attached.` }) });
+      const path = `/voice-sessions/${snapshot.session}/sales-documents${existing ? `/${encodeURIComponent(existing.document.id)}/email` : ""}`;
+      const response = await sessionCall(path, { method: "POST", timeoutMs: 90000, headers: { "Idempotency-Key": requestId }, body: JSON.stringify({ ...body, request_id: requestId }) });
+      if (!documentScopeCurrent(snapshot)) return;
+      const result = existing ? { ...existing, ...response, document: response.document || existing.document, pdf: response.pdf || existing.pdf } : response;
+      if (!result?.document?.id || !result.pdf) throw new Error("The document response is incomplete. Retry this action using the same session.");
+      snapshot.result = result; snapshot.pendingCreation = false; documentDrafts.current.delete(snapshot.scope); setDocumentPendingCreation(false); setDocumentResult(result);
+      const deliveryStatus = result.delivery?.status;
+      // A confirmed rejection can be retried as a new delivery. A lost response
+      // keeps its action key so checking it cannot submit the email twice.
+      if (existing && deliveryStatus === "failed") snapshot.emailAction = null;
+      if (downloadOnly) {
+        downloadDocumentPdf(result); setDocumentModalOpen(false);
+        setDocumentFeedback(`${result.document.demo ? "Sample document" : "Document"} created and downloaded as PDF.`);
+      } else if (deliveryStatus === "accepted") {
+        setDocumentModalOpen(false); setDocumentFeedback("Document created. Submitted for delivery via SMTP2GO.");
+      } else {
+        snapshot.error = result.delivery?.message || (deliveryStatus === "uncertain" ? "Email submission is uncertain. Check its status before retrying. You can download the created PDF." : "The document was created, but email submission failed. Retry email or download the PDF.");
+        snapshot.emailFields = { recipient, subject: documentSubject, message: documentMessage };
+        documentDrafts.current.set(snapshot.scope, snapshot); setDocumentError(snapshot.error);
       }
-      if (!hasRecipient) downloadSalesDocument(type, lines, result);
-      setDocumentModalOpen(false);
-      setError(hasRecipient ? `${type.replace("-", " ")} created and sent through the connected Zoho Books account.` : `${type.replace("-", " ")} created. No email is present for this contact, so the document was downloaded from GuruConnect.`);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setDocumentBusy("");
+    } catch (error) {
+      if (documentScopeCurrent(snapshot)) {
+        const message = error.message || "The document could not be created. Retry this action.";
+        if (!existing && !snapshot.result && (error.details?.document_started === true || (error.details?.document_started !== false && (!error.status || error.status >= 500)))) {
+          snapshot.pendingCreation = true; snapshot.error = message; documentDrafts.current.set(snapshot.scope, snapshot); setDocumentPendingCreation(true);
+        } else if (!existing && !snapshot.result) {
+          snapshot.pendingCreation = false; documentDrafts.current.delete(snapshot.scope); setDocumentPendingCreation(false);
+        }
+        setDocumentError(message);
+      }
     }
+    finally { documentInFlight.current = false; if (documentScopeCurrent(snapshot)) setDocumentBusy(""); }
   };
   const openCustomer = () => setCustomerOpen(true);
   const copyPhone = async () => {
@@ -881,14 +964,9 @@ export default function VoiceSessions() {
     }
   };
   const currentRecordingSnapshot = recordingSnapshot || (recorderSessions.find((item) => item.id === conversationId) || null);
-  const recordingUiStatus = captureState.capture === "recording" || captureState.capture === "paused"
-    ? recordingStatus({ capture_state: captureState.capture })
-    : recordingStatus(currentRecordingSnapshot);
-  const transcriptionUiStatus = currentRecordingSnapshot
-    ? recordingStatus(currentRecordingSnapshot)
-    : captureBusy
-      ? { key: "ready", label: "Waiting for first window", detail: "Recording continues while the first processing window is assembled." }
-      : recordingStatus(null);
+  const transcriptionUiStatus = liveProcessingStatus({ snapshot: currentRecordingSnapshot, captureState, turns: transcriptPreview, ...liveProcessing });
+  const demoCatalogue = localMode && (catalogueNotices.some((notice) => notice.code === "local_demo_catalogue") || recommendations.some((item) => item.catalogue_source === "local-demo") || cart.some((item) => item.catalogue_source === "local-demo"));
+  const demoCatalogueNotice = demoCatalogue ? "Demo catalogue: products, prices and stock are sample data. Zoho Books is not connected." : "";
   const aiInsightStatus = insights.some((item) => item.status === "failed")
     ? { key: "failed", label: "AI analysis failed", detail: "Previously completed transcript content is preserved." }
     : insights.some((item) => item.status === "running" || item.status === "pending")
@@ -906,7 +984,8 @@ export default function VoiceSessions() {
   };
   const matchesContactFilter = (item) => contactFilter === "all" || (contactFilter === "closed" ? statusIsClosed(item) : statusIsActive(item) && !statusIsClosed(item));
   const visibleContacts = contacts.filter(matchesContactFilter);
-  const visibleChats = chats.filter(matchesContactFilter);
+  const uniqueChats = chats.filter((chat) => !contacts.some((contact) => contact.session_id === chat.id));
+  const visibleChats = uniqueChats.filter(matchesContactFilter);
   const retryRecordingStage = async () => {
     if (!conversationId || !workspace) return;
     const stage = currentRecordingSnapshot?.transcription_state && ["failed", "blocked", "uncertain"].includes(currentRecordingSnapshot.transcription_state) ? "transcription" : "translation";
@@ -923,8 +1002,9 @@ export default function VoiceSessions() {
           {error}
         </div>
       )}
-      <div className="chat-layout voice-sessions-layout">
-        <section className="chat-list">
+      {documentFeedback && <p className="session-document-feedback" role="status">{documentFeedback}</p>}
+      <div className={`chat-layout voice-sessions-layout${cart.length && cartOpen ? " is-cart-focused" : ""}`}>
+        <section className="chat-list" inert={cart.length && cartOpen ? true : undefined} aria-hidden={cart.length && cartOpen ? true : undefined}>
           <div className="list-head">
             <span>Contacts & sessions</span>
             <button type="button" onClick={reset} disabled={busy}>
@@ -943,7 +1023,7 @@ export default function VoiceSessions() {
             />
           </div>
           <div className="session-contact-filters" role="tablist" aria-label="Contact filters">
-            {[['all', `All (${contacts.length + chats.length})`], ['active', 'Active'], ['closed', 'Closed']].map(([value, label]) => (
+            {[['all', `All (${contacts.length + uniqueChats.length})`], ['active', 'Active'], ['closed', 'Closed']].map(([value, label]) => (
               <button
                 type="button"
                 role="tab"
@@ -963,11 +1043,12 @@ export default function VoiceSessions() {
           {visibleContacts.map((contact) => (
             <button
               type="button"
-              className={`contact-row ${selectedContact?.id === contact.id ? "selected" : ""}`}
+              className={`contact-row ${selectedContact?.id === contact.id || session === contact.session_id ? "selected" : ""}`}
               onClick={() => chooseContact(contact)}
               disabled={busy}
               key={contact.id}
             >
+              <span className="session-contact-avatar" aria-hidden="true">{String(contact.name || "Customer").trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span>
               <b>{contact.name}</b>
               <small>
                 {contact.phone || contact.email || "No phone or email"}
@@ -976,9 +1057,9 @@ export default function VoiceSessions() {
               {contact.recording_status && <span className="contact-status-pill">{contact.recording_status}</span>}
             </button>
           ))}
-          <div className="contact-heading session-heading">
+          {visibleChats.length > 0 && <div className="contact-heading session-heading">
             <Headphones size={15} /> Recent sessions
-          </div>
+          </div>}
           {visibleChats.map((chat) => (
             <button
               type="button"
@@ -987,6 +1068,7 @@ export default function VoiceSessions() {
               disabled={busy}
               key={chat.id}
             >
+              <span className="session-contact-avatar" aria-hidden="true">{String(chat.name || "Customer").trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span>
               <b>{chat.name}</b>
               <small>{chat.phone || chat.email || "Voice session"}</small>
               <em>{new Date(chat.updated_at).toLocaleString()}</em>
@@ -996,275 +1078,119 @@ export default function VoiceSessions() {
             <p className="session-list-empty">No {contactFilter === "all" ? "contacts or sessions" : `${contactFilter} contacts`} found.</p>
           )}
         </section>
-        <section className="conversation">
-          {selectedContact && (
-            <div className="contact-record">
-              <div>
-                <strong>{selectedContact.name}</strong>
-                {selectedContact.phone && (
-                  <button
-                    type="button"
-                    className="contact-phone-link"
-                    onClick={openCustomer}
-                  >
-                    <UserRound size={13} /> {selectedContact.phone}
-                  </button>
-                )}
-                {selectedContact.phone && <button type="button" className="copy-phone-button" onClick={() => void copyPhone()} aria-label="Copy phone number" title="Copy phone number"><Copy size={13} /></button>}
-                {!identity.email && !captureState.capture.startsWith("record") && !captureState.capture.startsWith("paused") && <input className="contact-email-entry" type="email" aria-label="Customer email address" placeholder="Customer email *" value={identity.email} onChange={(event) => { const email = event.target.value; setIdentity((current) => ({ ...current, email })); setSelectedContact((current) => current ? { ...current, email } : current); }} />}
-              </div>
-              <div className="session-status-strip" aria-label="Conversation processing status">
-                <span className={`status-indicator status-${recordingUiStatus.key}`}><i />Recording <b>{recordingUiStatus.label}</b>{captureState.capture === "recording" && <em>· {new Date(captureState.elapsedSeconds * 1000).toISOString().slice(11, 19)}</em>}</span>
-                <span className={`status-indicator status-${transcriptionUiStatus.key}`}><i />Transcription &amp; translation <b>{transcriptionUiStatus.label}</b></span>
-                <span className={`status-indicator status-${aiInsightStatus.key}`}><i />AI insights <b>{aiInsightStatus.label}</b></span>
-              </div>
-              {selectedContact.enquiry_id && (
-                <label className="session-stage-control">
-                  <span>Enquiry stage</span>
-                  <select
-                    value={selectedContact.enquiry_stage || "new"}
-                    onChange={(event) => void changeEnquiryStage(event.target.value)}
-                    disabled={stageBusy}
-                  >
-                    <option value="new">New enquiry</option>
-                    <option value="in_process">In process</option>
-                    <option value="closed">Closed</option>
-                    <option value="customer_did_not_show">Customer didn’t show up</option>
-                  </select>
-                </label>
-              )}
-            </div>
-          )}
-          <div className="messages">
-            {session && (
-              <div className="conversation-panel-heading">
-                <div>
-                  <strong>Conversation</strong>
-                  <small>{messages.length ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "Live customer conversation"}</small>
-                </div>
-                {selectedContact?.enquiry_stage && <span>{String(selectedContact.enquiry_stage).replaceAll("_", " ")}</span>}
-              </div>
-            )}
-            {!session && (
-              <div className="welcome">
-                <Headphones size={34} />
-                <h2>Start a voice session</h2>
-                <p>
-                  Select a contact from Bigin, Books, enquiries, or recent
-                  sessions. Start the session when you are ready to speak with
-                  the customer; processing continues in the background.
-                </p>
-                <div className="identity">
-                  <input
-                    placeholder="Customer name"
-                    value={identity.name}
-                    onChange={(event) =>
-                      setIdentity({ ...identity, name: event.target.value })
-                    }
-                  />
-                  <input
-                    inputMode="numeric"
-                    maxLength="15"
-                    placeholder="Phone number"
-                    value={identity.phone}
-                    onChange={(event) =>
-                      setIdentity({
-                        ...identity,
-                        phone: event.target.value
-                          .replace(/\D/g, "")
-                          .slice(0, 15),
-                      })
-                    }
-                  />
-                  <input
-                    type="email"
-                    placeholder="Email address *"
-                    required
-                    value={identity.email}
-                    onChange={(event) =>
-                      setIdentity({ ...identity, email: event.target.value })
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="primary voice-open-button"
-                    onClick={() => void prepareSession()}
-                    disabled={busy || !identity.name.trim() || !identity.phone.trim() || !identity.email.trim()}
-                  >
-                    {busy ? "Starting…" : "Start session"}
-                  </button>
-                </div>
-              </div>
-            )}
-            {session &&
-              messages.map((message, index) => (
-                <div className={`bubble ${message.role}`} key={index}>
-                  <span>{message.content}</span>
-                  {message.created_at && (
-                    <time>{new Date(message.created_at).toLocaleString()}</time>
-                  )}
-                </div>
-              ))}
-            {session && !messages.length && (
-              <div className="conversation-empty-state">
-                <MessageSquare size={22} />
-                <strong>No conversation messages yet</strong>
-                <p>Start the session when you are ready. Customer and salesperson messages will appear here as they are captured.</p>
-              </div>
-            )}
-            {session && (
-              <div className="voice-processing-note">
-                <Mic2 size={15} />
-                <span>{transcriptionUiStatus.detail} {aiInsightStatus.detail}</span>
-                {recordingUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
-              </div>
-            )}
-            {session && recorderSessions.length > 0 && (
-              <section className="session-recording-history" aria-label="Past recordings for this customer">
-                <div className="session-recording-history-heading">
-                  <strong>Past recordings for this customer</strong>
-                  <span>{recorderSessions.length}</span>
-                </div>
-                {recorderSessions.map((recording) => (
-                  <article className="session-recording-history-row" key={recording.id}>
-                    <div>
-                      <strong>{new Date(recording.created_at).toLocaleString()}</strong>
-                      <small>{recording.duration_seconds ? `${Math.round(recording.duration_seconds)} sec` : "Not saved yet"} · {String(recording.final_state || recording.capture_state || "pending").replaceAll("_", " ")}</small>
-                    </div>
-                    <div className="session-recording-history-actions">
-                      {workspace && recording.upload_state === "saved" && (
-                        <ProgressivePlayback
-                          conversationId={recording.id}
-                          workspaceId={workspace.id}
-                          memberId={workspace.member_id}
-                          compact
-                        />
-                      )}
-                      <button type="button" className="button button-quiet" onClick={() => setConversationId(recording.id)} disabled={busy}>Open transcript</button>
-                      <button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} />Delete</button>
-                    </div>
-                  </article>
-                ))}
-              </section>
-            )}
-          </div>
-          {session && (
-            <div className="voice-composer">
-              <div className="session-workspace">
-                <div className="session-workspace-left">
-                  <section className="session-insights-panel">
-                    <div className="session-section-heading"><div><small>LIVE CONVERSATION WORKSPACE</small><h3>Transcript & recommendations</h3></div><span className="session-status-pill">{transcriptPreview.length ? 'Processing updates' : 'Ready to record'}</span></div>
-                    <div className="compact-transcript" aria-label="Latest transcript">
-                      <div className="compact-transcript-heading"><strong>Latest transcript</strong><button type="button" className="button button-quiet" onClick={downloadTranscript} disabled={!transcriptPreview.length}><Download size={14} /> Download transcript</button></div>
-                      {transcriptPreview.length ? transcriptPreview.map((turn) => <p key={turn.id}><time>{new Date((recorderSessions[0]?.created_at || Date.now())).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><strong>{turn.speaker_ref || 'Conversation'}:</strong> {turn.english_text || turn.source_text}</p>) : <p className="notes-empty">Transcript will appear here after each completed audio chunk.</p>}
-                    </div>
-                    <div className="recommendations-heading"><strong><ShoppingCart size={15} /> Recommended products</strong><button type="button" className="link-button" onClick={() => setCartOpen(true)}>Cart ({cart.length})</button></div>
-                    <div className="recommendations-row">{(recommendations.length ? recommendations : products).slice(0, 6).map((item) => <article className="recommendation-card" key={item.item_id || item.id || item.sku}><div className="recommendation-image">{item.image_url ? <img src={item.image_url} alt="" /> : <ShoppingCart size={22} />}</div><strong>{item.name || item.item_name}</strong><small>SKU: {item.sku || 'Not provided'}</small><b>{item.rate != null ? `₹${Number(item.rate).toLocaleString('en-IN')}` : 'Price on request'}</b><button type="button" className="primary" onClick={() => addToCart(item)} disabled={!item.item_id && !item.id}>Add to cart</button></article>)}{!recommendations.length && !products.length && <p className="notes-empty">Recommendations will appear when the conversation identifies a catalogue match.</p>}</div>
-                    {cartOpen && <section className="session-cart"><div className="session-section-heading"><h3><ShoppingCart size={15} /> Cart · {cart.length} item{cart.length === 1 ? '' : 's'}</h3><div className="cart-heading-actions"><button type="button" className="button button-quiet" onClick={() => setCartProductSearchOpen(true)}>+ Add another product</button><button type="button" className="link-button" onClick={() => setCartOpen(false)}>Hide cart</button></div></div>{cart.map((line, index) => <div className="cart-line" key={line.item_id || line.sku || index}><div><strong>{line.product || line.name}</strong><small>{line.sku || 'No SKU'} · ₹{Number(line.rate || 0).toLocaleString('en-IN')}</small></div><input aria-label="Quantity" type="number" min="1" value={line.quantity} onChange={(event) => updateCart(index, 'quantity', event.target.value)} /><input aria-label="Discount" type="number" min="0" value={line.discount} onChange={(event) => updateCart(index, 'discount', event.target.value)} /><select aria-label="Discount type" value={line.discount_type} onChange={(event) => updateCart(index, 'discount_type', event.target.value)}><option value="percentage">%</option><option value="fixed">₹</option></select><b>₹{Math.max(0, Number(line.rate || 0) * Number(line.quantity || 0) - (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100)).toLocaleString('en-IN')}</b><button type="button" className="link-button" onClick={() => setCart((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}<div className="cart-total"><span>Subtotal</span><b>₹{cartSubtotal.toLocaleString('en-IN')}</b><span>Discount</span><b>- ₹{cartDiscount.toLocaleString('en-IN')}</b><span>Final total</span><strong>₹{Math.max(0, cartSubtotal - cartDiscount).toLocaleString('en-IN')}</strong></div><button type="button" className="primary complete-cart" onClick={() => void openDocumentModal()} disabled={!cart.length}>Complete cart <ChevronRight size={15} /></button></section>}
-                    {cartProductSearchOpen && <div className="session-modal-backdrop cart-search-backdrop" onClick={() => setCartProductSearchOpen(false)}><section className="product-search-modal" role="dialog" aria-modal="true" aria-labelledby="cart-product-search-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>PRODUCT CATALOGUE</small><h2 id="cart-product-search-title">Add another product</h2></div><button type="button" onClick={() => setCartProductSearchOpen(false)} aria-label="Close product search"><X size={20} /></button></div><div className="cart-product-search-form"><input autoFocus placeholder="Search by product name or SKU" value={cartSearch} onChange={(event) => setCartSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchCartProducts(); } }} /><button type="button" className="primary" onClick={() => void searchCartProducts()} disabled={!cartSearch.trim()}>Search</button></div><div className="cart-product-results">{cartSearchResults.map((item) => <button type="button" className="cart-product-result" key={item.item_id || item.id || item.sku} onClick={() => addToCart(item)}><span className="cart-product-result-image">{item.image_url ? <img src={item.image_url} alt="" /> : <ShoppingCart size={18} />}</span><span><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {item.rate != null ? `₹${Number(item.rate).toLocaleString("en-IN")}` : "Price on request"}</small></span><b>Add</b></button>)}{cartSearch && !cartSearchResults.length && <p className="notes-empty">No catalogue products found.</p>}</div></section></div>}
-                  </section>
-                  <ConversationRecorder
-                    key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`}
-                    customerName={identity.name}
-                    customerPhone={identity.phone}
-                    customerEmail={identity.email}
-                    title="Voice session"
-                    initialConversationId={conversationId}
-                    onConversationChange={linkConversation}
-                    onBusyChange={setRecorderBusy}
-                    onCaptureChange={setCaptureState}
-                    onSaved={() => void recordingSaved()}
-                    chunkSeconds={180}
-                    grouped
-                    sessionOnly
-                  />
-                </div>
-                <aside
-                  className={`session-notes${notesCollapsed ? " is-collapsed" : ""}`}
-                >
-                  <div className="notes-heading">
-                    <button
-                      type="button"
-                      className="session-panel-toggle"
-                      title={notesCollapsed ? "Expand executive notes" : "Collapse executive notes to show more history"}
-                      aria-expanded={!notesCollapsed}
-                      aria-controls="session-notes-content"
-                      onClick={() =>
-                        setNotesCollapsed((collapsed) => !collapsed)
-                      }
-                    >
-                      <h3>Internal notes</h3>
-                      <span>{notes.length}</span>
-                      {notesCollapsed ? (
-                        <ChevronRight size={18} aria-hidden="true" />
-                      ) : (
-                        <ChevronDown size={18} aria-hidden="true" />
-                      )}
-                    </button>
+        <section className={`conversation${session ? " live-session-open" : ""}`}>
+          {session && selectedContact && (
+            <>
+              <div className="contact-record live-session-header">
+                <div className="session-customer-heading">
+                  <strong>{identity.name || selectedContact.name}</strong>
+                  <div className="session-customer-contact">
+                    <button type="button" className="contact-phone-link" onClick={openCustomer}><UserRound size={14} />{identity.phone || "Customer details"}</button>
+                    {identity.phone && <button type="button" className="copy-phone-button" onClick={() => void copyPhone()} aria-label="Copy phone number"><Copy size={13} /></button>}
                   </div>
-                  <div
-                    id="session-notes-content"
-                    className="session-panel-content"
-                    hidden={notesCollapsed}
-                  >
-                    <div className="notes-list" aria-label="Timestamped internal notes">
-                      {notes.length ? notes.map((note) => (
-                        <article key={note.id}>
-                          <div className="note-meta"><span className="note-avatar">You</span><strong>You</strong><time>{new Date(note.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div>
-                          <p>{note.content}</p>
-                        </article>
-                      )) : <p className="notes-empty">No internal notes yet.</p>}
-                    </div>
-                    <div className="note-editor">
-                      <textarea
-                        value={noteText}
-                        onChange={(event) => setNoteText(event.target.value)}
-                        placeholder="Add an internal note…"
-                        onKeyDown={(event) => {
-                          if (
-                            (event.ctrlKey || event.metaKey) &&
-                            event.key === "Enter"
-                          )
-                            void addNote();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="primary"
-                        onClick={() => void addNote()}
-                        disabled={!noteText.trim() || noteBusy}
-                      >
-                        {noteBusy ? "Saving…" : "Add note"}
-                      </button>
-                      {noteError && <p className="note-editor-error" role="alert">{noteError}</p>}
-                    </div>
-                  </div>
-                </aside>
-              </div>
-              <div id="voice-document-actions" className="document-actions session-document-actions">
-                <div><strong>Ready to create a Zoho document?</strong><small>{cart.length ? `${cart.length} item${cart.length === 1 ? "" : "s"} in cart · ₹${Math.max(0, cartSubtotal - cartDiscount).toLocaleString("en-IN")}` : "Add products to the cart first."}</small></div>
-                <button type="button" className="primary" onClick={() => void openDocumentModal()} disabled={!!documentBusy || !cart.length}>Complete cart <ChevronRight size={15} /></button>
-              </div>
-              {conversationId && (
-                <div className="session-transcript">
-                  <ConversationTranscript conversationId={conversationId} />
                 </div>
-              )}
-            </div>
+                <div className="live-header-status" aria-label="Conversation processing status">
+                  <span className={`live-header-pill status-${transcriptionUiStatus.key}`} title={transcriptionUiStatus.detail}>
+                    <i />{transcriptionUiStatus.label}
+                  </span>
+                  {demoCatalogue && <span className="live-header-pill status-ready" title={demoCatalogueNotice}>Demo catalogue</span>}
+                  {transcriptionUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
+                </div>
+                {selectedContact.enquiry_id && <label className="session-stage-control"><span>Enquiry stage</span><select value={selectedContact.enquiry_stage || "new"} onChange={(event) => void changeEnquiryStage(event.target.value)} disabled={stageBusy}><option value="new">New enquiry</option><option value="in_process">In process</option><option value="closed">Closed</option><option value="customer_did_not_show">Customer didn’t show up</option></select></label>}
+                {cart.length > 0 && <button type="button" className="session-contacts-toggle" onClick={() => setCartOpen(!cartOpen)} aria-pressed={!cartOpen}><BookUser size={16} />{cartOpen ? "Show contacts" : "Focus cart"}</button>}
+              </div>
+              <nav className="live-session-tabs" aria-label="Customer session views">
+                <button type="button" className={activeTab === "conversation" ? "selected" : ""} onClick={() => setActiveTab("conversation")}><MessageSquare size={15} />Conversation</button>
+                <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
+                <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
+                <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Recordings ({recorderSessions.length})</button>
+              </nav>
+            </>
           )}
+          {!session && <div className="messages session-welcome"><div className="welcome">
+            <span className="session-welcome-icon"><Headphones size={32} /></span>
+            <small>YOUR LIVE SALES WORKSPACE</small><h2>Start a customer conversation</h2>
+            <p>Select a recent contact or enter customer details. Capture the conversation, see its English translation, and find matching inventory as you speak.</p>
+            <div className="identity">
+              <label>Customer name<input placeholder="Customer name" value={identity.name} onChange={(event) => setIdentity({ ...identity, name: event.target.value })} /></label>
+              <label>Phone number<input inputMode="tel" maxLength="15" placeholder="Phone number" value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value.replace(/\D/g, "").slice(0, 15) })} /></label>
+              <label>Email address (optional)<input aria-label="Email address" type="email" placeholder="Email address" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label>
+              <button type="button" className="primary voice-open-button" onClick={() => void prepareSession()} disabled={busy || !identity.name.trim() || !identity.phone.trim()}>{busy ? "Opening…" : "Open customer session"}<ChevronRight size={16} /></button>
+            </div>
+            <small className="session-welcome-footnote">You’ll start the microphone in the next step.</small>
+          </div></div>}
+          {session && <>
+            {activeTab !== "conversation" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : "Enquiry context"}>
+              <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+            </section>}
+            <LiveSessionWorkspace
+              identity={identity}
+              messages={messages}
+              transcript={transcriptPreview}
+              recommendations={[...new Map([...products, ...recommendations].map((item) => [item.item_id || item.id || item.sku, item])).values()]}
+              intents={[...new Set([...liveKeywords, ...customIntents])].filter((keyword) => !hiddenIntents.includes(keyword))}
+              {...liveGuidance}
+              cart={cart}
+              cartOpen={cartOpen}
+              onCartOpenChange={setCartOpen}
+              onAddToCart={addToCart}
+              onUpdateCart={updateCart}
+              onRemoveCart={removeCartItem}
+              onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
+              onCompleteCart={() => void openDocumentModal()}
+              onViewProduct={setViewProduct}
+              onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
+              onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
+              notes={notes}
+              noteText={noteText}
+              onNoteTextChange={setNoteText}
+              onAddNote={() => void addNote()}
+              noteBusy={noteBusy}
+              noteError={noteError}
+              recordingState={captureState}
+              recordingStatus={transcriptionUiStatus}
+              insightsStatus={{ key: liveAnalysis, label: liveAnalysis === "running" || liveAnalysis === "pending" ? "Finding product matches…" : liveAnalysis === "unavailable" ? "Product analysis temporarily unavailable" : liveAnalysis === "failed" ? "Product analysis needs attention" : liveAnalysis === "complete" ? "Requirements updated" : "Listening for product requirements" }}
+              catalogueNotice={[liveNotice, cartSaveError, demoCatalogueNotice, ...catalogueNotices.filter((notice) => !demoCatalogue || notice.code !== "local_demo_catalogue").map((notice) => notice.message)].filter(Boolean).join(" ")}
+              onDownloadTranscript={downloadTranscript}
+              sessionStartedAt={recordingSnapshot?.created_at}
+            >
+              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
+            </LiveSessionWorkspace>
+          </>}
         </section>
       </div>
+      {cartProductSearchOpen && <div className="session-modal-backdrop cart-search-backdrop" onClick={() => setCartProductSearchOpen(false)}><section className="product-search-modal" role="dialog" aria-modal="true" aria-labelledby="inventory-search-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>ZOHO INVENTORY</small><h2 id="inventory-search-title">{intentSearch ? "Add a product requirement" : "Add another product"}</h2></div><button type="button" onClick={() => setCartProductSearchOpen(false)} aria-label="Close inventory search"><X size={20} /></button></div><form className="cart-product-search-form" onSubmit={(event) => { event.preventDefault(); void searchCartProducts(); }}><input autoFocus aria-label="Search inventory" placeholder="Search by product, description, or SKU" value={cartSearch} onChange={(event) => { ++catalogueSearch.current; setCartSearch(event.target.value); setCartSearchBusy(false); setCartSearchError(""); }} /><button type="submit" className="primary" disabled={cartSearchBusy || !cartSearch.trim()}>{cartSearchBusy ? "Searching…" : "Search"}</button></form><div className="cart-product-results" aria-busy={cartSearchBusy}>{cartSearchError && <p role="alert">{cartSearchError}</p>}{cartSearchResults.map((result) => {
+          const match = recommendations.find((item) => (item.item_id || item.id || item.sku) === (result.item_id || result.id || result.sku));
+          const item = match ? { ...result, ...match } : result;
+          return <article className="cart-product-result" key={item.item_id || item.id || item.sku}>
+            <span className="cart-product-result-image"><ShoppingCart size={20} /></span>
+            <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(item.rate ?? item.price).toLocaleString("en-IN")}` : "Confirm price"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
+            <ProductCartAction item={item} onAddToCart={addToCart} />
+          </article>;
+        })}{!cartSearchBusy && cartSearch && !cartSearchResults.length && !cartSearchError && <p className="notes-empty">Search your connected catalogue to see matching inventory.</p>}</div></section></div>}
+      {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(viewProduct.rate ?? viewProduct.price).toLocaleString("en-IN")}` : "Confirm price"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
+      {archivedConversationId && <div className="session-modal-backdrop" onClick={() => setArchivedConversationId(null)}><section className="session-archive-modal" role="dialog" aria-modal="true" aria-label="Saved conversation transcript" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2>Saved conversation</h2><button type="button" onClick={() => setArchivedConversationId(null)} aria-label="Close saved conversation"><X size={20} /></button></div><ConversationTranscript conversationId={archivedConversationId} /></section></div>}
       <CustomerModal
         contact={customerOpen ? selectedContact : null}
         onClose={() => setCustomerOpen(false)}
       />
       <SalesDocumentModal
         open={documentModalOpen}
-        contact={selectedContact}
-        customerType={customerType}
-        cart={cart}
-        subtotal={cartSubtotal}
-        discount={cartDiscount}
+        contact={documentOptions?.customer || null}
+        customerType="customer"
+        cart={documentCart}
+        subtotal={documentCart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0)}
+        discount={documentCart.reduce((sum, line) => sum + (line.discount_type === "fixed" ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0)}
+        documentTypes={documentOptions?.document_types}
+        emailConfigured={documentOptions?.email?.configured === true}
+        delivery={documentDelivery}
+        setDelivery={setDocumentDelivery}
+        demo={documentOptions?.mode === "local-demo"}
+        error={documentError}
+        createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status } : null}
+        pendingCreation={documentPendingCreation}
+        onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }}
         documentType={documentType}
         setDocumentType={setDocumentType}
         email={documentEmail}
@@ -1274,9 +1200,9 @@ export default function VoiceSessions() {
         message={documentMessage}
         setMessage={setDocumentMessage}
         busy={!!documentBusy}
-        onClose={() => setDocumentModalOpen(false)}
-        onBack={() => setDocumentModalOpen(false)}
-        onSubmit={(type) => void createDocument(type, { email: documentEmail, subject: documentSubject, message: documentMessage, downloadOnly: !documentEmail.trim() })}
+        onClose={closeDocumentModal}
+        onBack={closeDocumentModal}
+        onSubmit={(type) => void createDocument(type)}
       />
     </section>
   );

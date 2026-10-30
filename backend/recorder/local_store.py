@@ -157,7 +157,8 @@ class LocalStore:
 
     def _block_connection_jobs(self, db, engine, error_code, finish_in_flight=False):
         kind = "translate" if engine == "openai-translator" else "transcribe"
-        for job in db.execute("select * from jobs where kind=? and state in ('queued','running')", (kind,)).fetchall():
+        live_kind = "live_translate" if kind == "translate" else "live_transcribe"
+        for job in db.execute("select * from jobs where kind in (?,?) and state in ('queued','running')", (kind, live_kind)).fetchall():
             if finish_in_flight and job["state"] == "running" and job["submission_state"] == "accepted":
                 continue
             state = "uncertain" if job["state"] == "running" and job["submission_state"] == "accepted" else "blocked"
@@ -292,11 +293,100 @@ class LocalStore:
     def enqueue_job(self, conversation_id: str, kind: str, payload: dict | None = None) -> dict:
         payload = payload or {}
         dedupe = f"{conversation_id}:{kind}:{payload.get('run_id', 'production')}"
+        if payload.get("window_id") is not None:
+            dedupe += f":{payload['window_id']}"
         job_id = str(uuid4())
         with self.transaction() as db:
             db.execute("insert into jobs(id,conversation_id,kind,dedupe_key,state,payload,created_at,updated_at) values(?,?,?,?,'queued',?,?,?) on conflict(dedupe_key) do nothing", (job_id, conversation_id, kind, dedupe, encoded(payload), now(), now()))
             row = db.execute("select * from jobs where dedupe_key=?", (dedupe,)).fetchone()
         return self._job(row)
+
+    def plan_live_windows(self, conversation_id: str, window_seconds: int = 10, context_seconds: int = 2) -> list[dict]:
+        """Persist independent upload/provider boundaries for customer Sessions."""
+        if not 5 <= window_seconds <= 30 or not 0 <= context_seconds <= 10:
+            raise ValueError("invalid_live_window")
+        queued = []
+        with self.transaction() as db:
+            found = db.execute("select data from records where table_name='conversations' and id=?", (conversation_id,)).fetchone()
+            conversation = json.loads(found["data"]) if found else None
+            if not conversation or conversation.get("capture_state") == "deleted" or conversation.get("upload_state") == "saved":
+                return []
+            if not (conversation.get("live_session") or conversation.get("live_session_id")) or conversation.get("audio_only"):
+                return []
+            chunks = [json.loads(row["data"]) for row in db.execute("select data from chunks where conversation_id=? and confirmed=1 order by sequence", (conversation_id,))]
+            coverage = 0
+            for chunk in chunks:
+                if int(chunk["start_sample"]) != coverage:
+                    break
+                coverage += int(chunk["sample_count"])
+            conversation.update(total_samples=coverage, duration_seconds=coverage / 16000, updated_at=now())
+            db.execute("update records set data=? where table_name='conversations' and id=?", (encoded(conversation), conversation_id))
+            prior = [json.loads(row["payload"]) for row in db.execute("select payload from jobs where conversation_id=? and kind='live_transcribe'", (conversation_id,))]
+            start = max((int(payload["ownership_end"]) for payload in prior), default=0)
+            window_samples = window_seconds * 16000
+            while coverage - start >= window_samples:
+                end = start + window_samples
+                window_id = f"{start}:{end}"
+                payload = {"run_id": conversation["run_id"], "window_id": window_id,
+                           "sample_start": max(0, start - context_seconds * 16000), "sample_end": end,
+                           "ownership_start": start, "ownership_end": end}
+                dedupe = f"{conversation_id}:live_transcribe:{conversation['run_id']}:{window_id}"
+                db.execute("insert into jobs(id,conversation_id,kind,dedupe_key,state,payload,created_at,updated_at) values(?,?,'live_transcribe',?,'queued',?,?,?) on conflict(dedupe_key) do nothing",
+                           (str(uuid4()), conversation_id, dedupe, encoded(payload), now(), now()))
+                queued.append(self._job(db.execute("select * from jobs where dedupe_key=?", (dedupe,)).fetchone()))
+                start = end
+        return queued
+
+    def publish_live_window(self, job: dict, turns: list[dict], speakers: list[dict], provenance: dict) -> bool:
+        """Merge one fenced window atomically; stale translations cannot erase newer speech."""
+        conversation_id, payload = job["conversation_id"], job["payload"]
+        window_key = f"{conversation_id}:{payload['window_id']}"
+        with self.transaction() as db:
+            self._fenced(db, job["id"], job.get("lease_token"))
+            found = db.execute("select data from records where table_name='conversations' and id=?", (conversation_id,)).fetchone()
+            conversation = json.loads(found["data"]) if found else None
+            if not conversation or conversation.get("capture_state") == "deleted":
+                raise ValueError("conversation_deleted")
+            row = db.execute("select data from records where table_name='transcripts' and id=?", (conversation_id,)).fetchone()
+            previous = json.loads(row["data"]) if row else {}
+            previous_version = previous.get("version") or {}
+            if previous_version and previous_version.get("kind") != "progressive":
+                # A complete whole-recording source version is authoritative,
+                # including while its final English translation is pending.
+                return False
+            old = db.execute("select data from records where table_name='live_windows' and id=?", (window_key,)).fetchone()
+            old_window = json.loads(old["data"]) if old else {}
+            source_job = payload.get("source_job_id") or job["id"]
+            if job["kind"] == "live_translate" and old_window.get("source_job_id") != source_job:
+                return False
+            window = {"conversation_id": conversation_id, "window_id": payload["window_id"],
+                      "ownership_start": payload["ownership_start"], "ownership_end": payload["ownership_end"],
+                      "source_job_id": source_job, "turns": turns, "speakers": speakers, "provenance": provenance}
+            db.execute("insert into records values('live_windows',?,?) on conflict(table_name,id) do update set data=excluded.data", (window_key, encoded(window)))
+            windows = [json.loads(value["data"]) for value in db.execute("select data from records where table_name='live_windows'")]
+            windows = sorted((value for value in windows if value["conversation_id"] == conversation_id), key=lambda value: value["ownership_start"])
+            all_turns = [dict(turn) for value in windows for turn in value["turns"]]
+            all_turns.sort(key=lambda turn: (turn["start_seconds"], turn["end_seconds"], turn["id"]))
+            for ordinal, turn in enumerate(all_turns): turn["ordinal"] = ordinal
+            all_speakers = {speaker["speaker_ref"]: speaker for value in windows for speaker in value["speakers"]}
+            coverage = 0
+            for value in windows:
+                if value["ownership_start"] != coverage: break
+                coverage = value["ownership_end"]
+            english_state = "available" if all(turn.get("english_text") is not None for turn in all_turns) else "pending"
+            version = {"id": str(uuid4()), "run_id": payload.get("run_id"), "kind": "progressive",
+                       "coverage_samples": coverage, "english_state": english_state,
+                       "speaker_state": "provisional", "provenance": {**provenance, "progressive": True}}
+            value = {"version": version, "turns": all_turns, "speakers": list(all_speakers.values()), "revisions": previous.get("revisions", [])}
+            db.execute("insert into records values('transcripts',?,?) on conflict(table_name,id) do update set data=excluded.data", (conversation_id, encoded(value)))
+            # Local historic progressive selection is unsupported. Keep only
+            # the current cumulative view, avoiding quadratic transcript copies.
+            unresolved = db.execute("select state,error_code from jobs where conversation_id=? and id<>? and kind in ('live_transcribe','live_translate') and state in ('failed','blocked','uncertain') order by created_at desc limit 1", (conversation_id, job["id"])).fetchone()
+            conversation.update(active_version_id=version["id"], transcription_state="available", english_state=english_state,
+                                speaker_state="provisional", final_state=unresolved["state"] if unresolved else "queued" if conversation.get("upload_state") == "saved" else "pending",
+                                processing_error_code=unresolved["error_code"] if unresolved else None, updated_at=now())
+            db.execute("update records set data=? where table_name='conversations' and id=?", (encoded(conversation), conversation_id))
+        return True
 
     def claim_job(self, worker_id: str, lease_seconds: int = 900) -> dict | None:
         timestamp = time.time()
@@ -308,10 +398,10 @@ class LocalStore:
                 if saved:
                     value = json.loads(saved["data"])
                     value.update(final_state="uncertain", processing_error_code="external_execution_uncertain")
-                    value["english_state" if job["kind"] == "translate" else "transcription_state"] = "uncertain"
+                    value["english_state" if job["kind"] in {"translate", "live_translate"} else "transcription_state"] = "uncertain"
                     db.execute("update records set data=? where table_name='conversations' and id=?", (encoded(value), job["conversation_id"]))
             db.execute("update jobs set state=case when submission_state='accepted' then 'uncertain' else 'queued' end,error_code=case when submission_state='accepted' then 'external_execution_uncertain' else error_code end,lease_token=null,lease_until=null,updated_at=? where state='running' and lease_until<?", (now(), timestamp))
-            row = db.execute("select * from jobs where state='queued' order by created_at,id limit 1").fetchone()
+            row = db.execute("select * from jobs where state='queued' order by case when kind='live_translate' then 0 else 1 end,created_at,id limit 1").fetchone()
             if not row:
                 return None
             token = str(uuid4())
@@ -348,6 +438,9 @@ class LocalStore:
 
     def retry_jobs(self, conversation_id: str, kinds: list[str]) -> tuple[list[str], list[str]]:
         resumed, uncertain = [], []
+        kinds = list(kinds)
+        if "transcribe" in kinds: kinds.append("live_transcribe")
+        if "translate" in kinds: kinds.append("live_translate")
         with self.transaction() as db:
             rows = db.execute("select * from jobs where conversation_id=?", (conversation_id,)).fetchall()
             for row in rows:
@@ -414,6 +507,7 @@ class LocalStore:
                 if version["id"] == current_id or (data.get("version") or {}).get("run_id") in run_ids:
                     db.execute("delete from records where table_name='versions' and id=?", (version["id"],))
             db.execute("delete from records where table_name='transcripts' and id=?", (conversation_id,))
+            db.execute("delete from records where table_name='live_windows' and id like ?", (conversation_id + ":%",))
             db.execute("delete from chunks where conversation_id=?", (conversation_id,))
             db.execute("update jobs set state='succeeded',result='{}',submission_state='received',lease_token=null,lease_until=null,updated_at=? where id=?", (now(), job_id))
 

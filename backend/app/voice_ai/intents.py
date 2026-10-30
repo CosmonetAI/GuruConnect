@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 
@@ -41,16 +42,48 @@ ROUTES = {
 
 
 def classify_voice_intent(text: str, context: dict[str, Any]) -> Route:
+    """Conservative offline hint, never an authorization for a business action.
+
+    The semantic model owns the final route. Avoid substring document triggers:
+    a price question mentioning a rejected quotation is still a price question.
+    """
     value = str(text or '').lower().strip()
-    if any(term in value for term in ('human', 'agent', 'call me', 'salesperson')): return ROUTES['human_handoff']
-    if any(term in value for term in ('invoice', 'tax invoice', 'bill me')): return ROUTES['invoice_request']
-    if any(term in value for term in ('sales order', 'place the order', 'confirm order')): return ROUTES['sales_order_request']
-    if any(term in value for term in ('quote', 'quotation', 'estimate')): return ROUTES['quote_request']
-    if any(term in value for term in ('discount', 'offer', 'best price', 'reduce the price')): return ROUTES['discount']
-    if any(term in value for term in ('available', 'availability', 'stock', 'in stock')):
+    # Remove locally negated clauses before looking for positive requests. The
+    # fallback deliberately abstains on other ambiguous language.
+    positive = re.sub(r"\b(?:no|not|don't|do not|without|cancel|skip)\b[^,.;!?]*?(?=\b(?:just|only|but|instead)\b|[,.;!?]|$)", ' ', value)
+    def matches(pattern: str) -> bool:
+        return re.search(pattern, positive) is not None
+    if matches(r'\b(?:speak|talk|connect|transfer)\b.{0,25}\b(?:human|agent|salesperson)\b|\bcall me\b'):
+        return ROUTES['human_handoff']
+    if matches(r'\b(?:send|prepare|create|need|want|issue)\b.{0,35}\b(?:invoice|tax invoice)\b|\bbill me\b'):
+        return ROUTES['invoice_request']
+    if matches(r'\b(?:place|confirm)\s+(?:the\s+|my\s+)?order\b|\b(?:need|create|prepare)\b.{0,25}\bsales order\b'):
+        return ROUTES['sales_order_request']
+    if matches(r'\b(?:need|create|prepare|send|want)\b.{0,25}\bpurchase order\b'):
+        return ROUTES['purchase_order_request']
+    if matches(r'\b(?:send|prepare|create|need|want|give)\b.{0,35}\b(?:quote|quotation|estimate|written offer|boq|bill of quantities)\b'):
+        return ROUTES['quote_request']
+    if matches(r'\b(?:discount|best price|reduce the price)\b'):
+        return ROUTES['discount']
+    if matches(r'\b(?:available|availability|stock)\b'):
         return ROUTES['availability'] if context.get('focal_product') or context.get('recent_recommendations') else ROUTES['product_information']
-    if any(term in value for term in ('price', 'cost', 'rate', 'how much')): return ROUTES['pricing']
-    if any(term in value for term in ('recommend', 'suggest', 'which one', 'best option', 'show me')): return ROUTES['product_recommendation']
-    if any(term in value for term in ('cart', 'add this', 'remove this', 'quantity')): return ROUTES['cart_update']
-    if any(term in value for term in ('need', 'looking for', 'prefer', 'budget', 'quiet', 'want')): return ROUTES['customer_requirements']
+    if matches(r'\b(?:prices?|costs?|rates?)\b|\bhow much\b'):
+        return ROUTES['pricing']
+    if matches(r'\b(?:recommend|suggest|which one|best option|show me)\b'):
+        return ROUTES['product_recommendation']
+    if matches(r'\b(?:add|remove|update)\b.{0,30}\bcart\b'):
+        return ROUTES['cart_update']
+    if re.search(r'\b(?:need|looking for|prefer|budget|quiet|want|cancel|instead|make that|make it|make two)\b', value):
+        return ROUTES['customer_requirements']
+    if re.fullmatch(r'(?:that one|this one)[.! ]*', value):
+        return ROUTES['buying_signal'] if len(context.get('recent_recommendations') or []) == 1 else ROUTES['clarification']
     return ROUTES['general_conversation']
+
+
+def model_route(extraction: dict[str, Any]) -> dict[str, Any]:
+    """Route a validated semantic result while retaining confidence and evidence."""
+    intent = extraction.get('intent')
+    route = ROUTES[intent] if intent in ROUTES else ROUTES['unknown']
+    return {**route.__dict__, 'confidence': extraction.get('intent_confidence', 0),
+            'evidence': extraction.get('intent_evidence') or [], 'source': 'model',
+            'requires_agent_approval': route.agent == 'business_actions', 'auto_execute': False}

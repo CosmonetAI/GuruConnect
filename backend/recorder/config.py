@@ -35,10 +35,10 @@ class Settings(BaseSettings):
     pool_max_size: int = Field(default=10, ge=1, le=50)
     upload_max_bytes: int = Field(default=6_000_000, ge=32044, le=10_000_000)
     recording_max_seconds: int = Field(default=7200, ge=30, le=7200)
-    # Progressive transcription windows are the product's three-minute units.
-    # Browser uploads remain smaller durable Storage chunks; the worker assembles
-    # those chunks into this bounded provider window.
+    # Durable browser chunks and provider windows are independent. Customer
+    # Sessions publish short progressive windows while recording continues.
     window_seconds: int = Field(default=180, ge=5, le=180)
+    live_window_seconds: int = Field(default=10, ge=5, le=30)
     context_seconds: int = Field(default=2, ge=0, le=10)
     signed_url_seconds: int = Field(default=120, ge=30, le=600)
     worker_lease_seconds: int = Field(default=180, ge=30, le=900)

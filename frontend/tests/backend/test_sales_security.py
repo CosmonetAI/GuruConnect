@@ -134,6 +134,7 @@ def api(monkeypatch):
     ('POST', '/api/voice-sessions', {'name': 'Example', 'phone': '9876543210'}),
     ('POST', '/api/voice-sessions/00000000-0000-0000-0000-000000000001/conversation', {}),
     ('GET', '/api/products', None), ('GET', '/api/session-contacts', None),
+    ('GET', '/api/voice-sessions/00000000-0000-0000-0000-000000000001/live', None),
 ])
 def test_all_sales_routes_require_a_verified_bearer_before_sql(api, method, path, body):
     response = api.client.request(method, path, headers={'X-Workspace-ID': api.org, 'X-User-ID': api.user}, json=body)
@@ -180,7 +181,7 @@ def test_only_verified_owner_can_explicitly_select_another_member(api):
 
 
 @pytest.mark.parametrize('method,suffix,body', [
-    ('GET', 'history', None), ('GET', 'notes', None), ('POST', 'notes', {'content': 'Private'}),
+    ('GET', 'history', None), ('GET', 'live', None), ('GET', 'notes', None), ('POST', 'notes', {'content': 'Private'}),
     ('GET', 'context', None), ('PUT', 'context', {'product_requirements': []}),
     ('POST', 'conversation', {'conversation_id': None}),
 ])

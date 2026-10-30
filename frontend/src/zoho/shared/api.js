@@ -2,7 +2,8 @@ const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').repla
 export const API = `${API_BASE}/api`;
 
 export async function call(path, opts = {}, workspaceId = null) {
-  const headers = new Headers({ 'Content-Type': 'application/json', ...(opts.headers || {}) });
+  const { timeoutMs = 30000, ...requestOptions } = opts;
+  const headers = new Headers({ 'Content-Type': 'application/json', ...(requestOptions.headers || {}) });
   const workspace = workspaceId
     || localStorage.getItem('guruconnect-active-organisation')
     || localStorage.getItem('guruconnect-active-workspace');
@@ -17,11 +18,15 @@ export async function call(path, opts = {}, workspaceId = null) {
       headers.set('X-User-ID', session.user.id);
     }
   } catch {}
-  const timeout = AbortSignal.timeout(30000);
-  const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
-  const response = await fetch(API + path, { ...opts, headers, signal, credentials: 'omit' });
-  const data = await response.json();
-  if (!response.ok) throw Error(typeof data.detail === 'string' ? data.detail : data.detail?.message || data.error?.message || 'Request failed');
+  const timeout = AbortSignal.timeout(Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, timeoutMs)) : 30000);
+  const signal = requestOptions.signal ? AbortSignal.any([timeout, requestOptions.signal]) : timeout;
+  const response = await fetch(API + path, { ...requestOptions, headers, signal, credentials: 'omit' });
+  const data = await response.json().catch(() => ({ detail: `Request failed (${response.status})` }));
+  if (!response.ok) {
+    const details = typeof data.detail === 'object' && data.detail ? data.detail : data.error || {};
+    const error = Object.assign(Error(typeof data.detail === 'string' ? data.detail : details.message || 'Request failed'), { status: response.status, code: details.code, details });
+    throw error;
+  }
   return data;
 }
 

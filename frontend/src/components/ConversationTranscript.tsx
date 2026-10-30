@@ -99,7 +99,22 @@ function ScopedConversationTranscript({ conversationId }: { conversationId: stri
   const speakers = [...new Set((transcript.data?.turns || []).map(turn => turn.speaker_id).filter((id): id is string => !!id))]
   const voices = new Map(speakers.map((id, index) => [id, `Detected voice ${index + 1}`]))
   const turns = (transcript.data?.turns || []).filter(turn => `${turn.english_text || ''} ${turn.source_text || ''}`.toLowerCase().includes(query.toLowerCase()))
-  const translationJobs = progress.data?.jobs?.filter(job => job.job_type === 'translate' && translationFailures.has(job.status) && (!transcript.data?.run_id || !job.run_id || job.run_id === transcript.data.run_id)) || []
+  const totalSeconds = typeof c?.total_samples === 'number' ? c.total_samples / 16000 : c?.duration_seconds
+  const activeFinalEnglishComplete = c?.finalization_state === 'complete' && c.english_state === 'complete'
+    && transcript.data?.status === 'complete' && transcript.data.kind === 'final'
+    && !!transcript.data.version_id && transcript.data.version_id === c.active_transcript_version_id
+    && typeof totalSeconds === 'number' && Number.isFinite(totalSeconds) && totalSeconds > 0
+    && typeof transcript.data.covered_seconds === 'number' && Number.isFinite(transcript.data.covered_seconds)
+    && transcript.data.covered_seconds >= totalSeconds
+  const translationJobs = progress.data?.jobs?.filter(job => {
+    if (job.job_type !== 'translate' || !translationFailures.has(job.status)
+      || (transcript.data?.run_id && job.run_id && job.run_id !== transcript.data.run_id)) return false
+    // A published final version supersedes failed progressive windows. Keep
+    // uncertain submissions and final/unclassified failures visible for review.
+    const supersededWindow = activeFinalEnglishComplete && !!transcript.data?.run_id && job.run_id === transcript.data.run_id
+      && job.status !== 'uncertain' && 'window_id' in job && typeof job.window_id === 'string' && !!job.window_id
+    return !supersededWindow
+  }) || []
   const translationAttention = translationJobs.length > 0 || ['failed', 'blocked', 'partial'].includes(c?.english_state || '')
   const speechJobs = progress.data?.jobs?.filter(job => ['transcribe', 'finalise'].includes(job.job_type) && translationFailures.has(job.status)) || []
   const speechMessages = [...new Set(speechJobs.map(job => errorMessageForCode(job.error_code || '', 'Contact your administrator if transcription remains unavailable. Saved audio is preserved.')))]

@@ -13,7 +13,7 @@ export default function AppLayout() {
       <Sidebar />
       <div className="app-main">
         <main className="app-content" id="main-content" tabIndex={-1}>
-          <Outlet key={`${user?.id}/${workspace?.id}`} />
+          <Outlet key={`${user?.id}/${workspace?.id}/${workspace?.member_id ?? user?.id}`} />
         </main>
       </div>
     </div>

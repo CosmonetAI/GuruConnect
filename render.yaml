@@ -90,6 +90,8 @@ services:
         value: "4"
       - key: MANAGED_PROVIDER_CONCURRENCY
         value: "4"
+      - key: LIVE_WINDOW_SECONDS
+        value: "10"
       - key: PROCESSING_SHUTDOWN_SECONDS
         value: "15"
       - key: ELEVENLABS_API_KEY
@@ -104,6 +106,18 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4o-mini
+      - key: CATALOGUE_SEMANTICS_ENABLED
+        value: "true"
+      - key: CATALOGUE_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: CATALOGUE_REFRESH_SECONDS
+        value: "900"
+      - key: SMTP2GO_API_KEY
+        sync: false
+      - key: SMTP2GO_SENDER_EMAIL
+        sync: false
+      - key: SMTP2GO_SENDER_NAME
+        value: GuruConnect
       - key: VOICE_EXTRACTION_WEBHOOK_SECRET
         sync: false
       - key: APP_TIMEZONE

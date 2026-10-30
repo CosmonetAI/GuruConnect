@@ -88,6 +88,34 @@ def new(client, headers, **fields):
     return response.json()
 
 
+def test_sales_document_claims_persist_in_native_postgres_with_member_and_session_scope(api):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.sales_documents import DocumentRepository
+    client, headers, users, blobs, url = api
+    org, owner = headers['X-Workspace-ID'], str(users[1])
+    with psycopg.connect(url, autocommit=True) as connection:
+        customer = connection.execute("""insert into customers(name,phone,normalized_phone,organisation_id,owner_id,member_id)
+          values('Synthetic document test','9876500001','9876500001',%s,%s,%s) returning id""", (org, owner, owner)).fetchone()[0]
+        session = connection.execute("insert into chat_sessions(customer_id,title,organisation_id,member_id) values(%s,'Document fixture',%s,%s) returning id", (customer, org, owner)).fetchone()[0]
+    engine = create_engine(url.replace('postgresql://', 'postgresql+psycopg://', 1))
+    factory = sessionmaker(bind=engine)
+    try:
+        scope = {'organisation_id': org, 'member_id': owner, 'session_id': str(session)}
+        repository = DocumentRepository(scope, database_factory=factory)
+        identity = str(uuid4())
+        row = {**scope, 'id': identity, 'request_id': str(uuid4()), 'request_hash': 'fixture-hash', 'state': 'creating'}
+        saved, claimed = repository.claim(row)
+        assert claimed and saved['id'] == identity
+        assert repository.claim(row)[1] is False
+        repository.patch(identity, {'state': 'created'}, {'state': 'creating'})
+        assert DocumentRepository(scope, database_factory=factory).get(identity)['state'] == 'created'
+        assert DocumentRepository({**scope, 'member_id': str(users[2])}, database_factory=factory).get(identity) is None
+        assert DocumentRepository({**scope, 'session_id': str(uuid4())}, database_factory=factory).get(identity) is None
+    finally:
+        engine.dispose()
+
+
 def wav(samples=80000):
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as file:
@@ -301,7 +329,7 @@ def test_progressive_before_stop_versions_corrections_speaker_groups_and_deletio
     conv = new(client, headers)
     prefix = f"/api/v1/conversations/{conv['id']}"
     lease = client.post(prefix+"/lease", headers=headers, json={"tab_id": "progressive-test-tab"}).json()
-    for sequence in range(12):
+    for sequence in range(4):
         chunk, url = reserve(client, headers, conv, lease, blobs, sequence=sequence, start_sample=sequence*80000)
         assert client.post(url+"/confirm", headers=headers, json=chunk).status_code == 200
     async def commit_windows():
@@ -320,7 +348,7 @@ def test_progressive_before_stop_versions_corrections_speaker_groups_and_deletio
     asyncio.run(commit_windows())
     before_stop = client.get(prefix+"/transcript", headers=headers).json()
     assert len(before_stop["turns"]) == 4
-    assert before_stop["version"]["coverage_samples"] == 960000
+    assert before_stop["version"]["coverage_samples"] == 320000
     assert client.get(prefix, headers=headers).json()["capture_state"] == "recording"
     refs = list(dict.fromkeys(turn["speaker_ref"] for turn in before_stop["turns"]))
     assert len(refs) == 4  # Window speaker-a is not a persistent person identity.

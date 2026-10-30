@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import logging
 import math
 import os
@@ -18,7 +19,7 @@ import wave
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from .audio import MAX_SESSION_SAMPLES, SAMPLE_RATE, validate_wav
+from .audio import MAX_SESSION_SAMPLES, SAMPLE_RATE, ownership_segments, pcm_to_wav, validate_wav
 from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator
 from .providers import ElevenLabsAdapter, ProviderError
 from .provider_bootstrap import server_credentials, bootstrap_local_managed_providers
@@ -230,6 +231,99 @@ class LocalWorker:
             )
         return turns, list(speakers.values()), reliably_english or not segments
 
+    def live_audio(self, job):
+        """Read and validate only the bounded confirmed chunks needed by this window."""
+        payload, conversation_id = job["payload"], job["conversation_id"]
+        start, end = int(payload["sample_start"]), int(payload["sample_end"])
+        if not 0 <= start < end <= MAX_SESSION_SAMPLES or end - start > 40 * SAMPLE_RATE:
+            raise ProviderError("invalid_audio")
+        pcm, position = bytearray(), start
+        for row in self.store.chunks(conversation_id):
+            left, right = int(row["start_sample"]), int(row["start_sample"]) + int(row["sample_count"])
+            if right <= start or left >= end:
+                continue
+            path = Path(row["path"])
+            expected = self.store.chunk_path(conversation_id, row["part_id"], row["sequence"])
+            if path != expected or not path.resolve().is_relative_to(self.store.root):
+                raise ProviderError("invalid_audio")
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as source:
+                data = source.read(180 * SAMPLE_RATE * 2 + 4097)
+            info = validate_wav(data, int(row["sample_count"]), max_samples=180 * SAMPLE_RATE)
+            if info.sha256 != row["sha256"] or len(data) != int(row["bytes"]):
+                raise ProviderError("input_hash_mismatch")
+            take_start, take_end = max(start, left), min(end, right)
+            if take_start != position:
+                raise ProviderError("invalid_audio")
+            pcm.extend(info.pcm[(take_start-left)*2:(take_end-left)*2])
+            position = take_end
+        if position != end:
+            raise ProviderError("invalid_audio")
+        return io.BytesIO(pcm_to_wav(bytes(pcm)))
+
+    def live_superseded(self, job):
+        version = self.store.get_transcript(job["conversation_id"]).get("version") or {}
+        return bool(version and version.get("kind") != "progressive")
+
+    async def live_transcribe(self, job):
+        conversation_id, payload = job["conversation_id"], job["payload"]
+        conversation = self.store.get("conversations", conversation_id)
+        if not conversation or conversation.get("capture_state") == "deleted":
+            raise ProviderError("permission_denied")
+        if self.live_superseded(job):
+            self.mutate(job, "complete_job", {"superseded": True}); return
+        credentials = self.credentials("elevenlabs")
+        with self.live_audio(job) as audio:
+            self.mutate(job, "mark_job_accepted", str(job["id"]))
+            result = await ElevenLabsAdapter(credentials["api_key"]).process(audio, conversation.get("language_hint", "auto"), str(job["id"]))
+        duration = (payload["sample_end"] - payload["sample_start"]) / SAMPLE_RATE
+        relative, _, english = self.normalize_result(result, f"{conversation_id}:window-{payload['ownership_start']}", duration)
+        segments = [{"start": turn["start_seconds"], "end": turn["end_seconds"], "text": turn["source_text"],
+                     "speaker": turn["speaker_ref"], "words": turn["words"]} for turn in relative]
+        owned = ownership_segments(segments, payload["sample_start"] / SAMPLE_RATE,
+                                   payload["ownership_start"] / SAMPLE_RATE, payload["ownership_end"] / SAMPLE_RATE,
+                                   f"{conversation_id}:window-{payload['ownership_start']}")
+        turns, speakers = [], {}
+        for ordinal, segment in enumerate(owned):
+            speaker_ref = segment.get("speaker")
+            if speaker_ref:
+                speakers[speaker_ref] = {"speaker_ref": speaker_ref, "display_name": None, "role": "other", "is_provisional": True}
+            turns.append({"id": str(uuid4()), "ordinal": ordinal, "start_seconds": segment["start"], "end_seconds": segment["end"],
+                          "source_text": segment["text"], "source_language": result.get("language") or "auto",
+                          "english_text": segment["text"] if english else None, "speaker_ref": speaker_ref,
+                          "speaker_confidence": "provisional", "attribution_state": "provisional", "words": segment.get("words", [])})
+        provenance = {**result.get("provenance", {}), "translation": "source-english" if english else "pending", "translated_word_alignment": None}
+        published = self.store.publish_live_window(job, turns, list(speakers.values()), provenance)
+        if published and not english:
+            self.store.enqueue_job(conversation_id, "live_translate", {**payload, "source_job_id": job["id"]})
+        self.mutate(job, "complete_job", {"window_id": payload["window_id"], "turns": len(turns), "superseded": not published})
+
+    async def live_translate(self, job):
+        conversation_id, payload = job["conversation_id"], job["payload"]
+        if self.live_superseded(job):
+            self.mutate(job, "complete_job", {"superseded": True}); return
+        window = self.store.get("live_windows", f"{conversation_id}:{payload['window_id']}")
+        if not window or window.get("source_job_id") != payload.get("source_job_id"):
+            self.mutate(job, "complete_job", {"superseded": True}); return
+        credentials = self.credentials("openai-translator")
+        model = (self.store.connection("openai-translator") or {}).get("config", {}).get("model", OPENAI_TRANSLATION_MODEL)
+        turns = window["turns"]
+        for turn in turns:
+            if turn.get("english_text") is not None:
+                continue
+            self.mutate(job, "mark_job_accepted", turn["id"])
+            async def account_usage(usage):
+                run = self.store.get("runs", payload["run_id"]) or {}
+                self.patch_run(job, translation_input_tokens=int(run.get("translation_input_tokens", 0)) + usage.input_tokens,
+                               translation_output_tokens=int(run.get("translation_output_tokens", 0)) + usage.output_tokens,
+                               translator_model=model)
+            translated = await OpenAITranslator(credentials["api_key"], usage_callback=account_usage, model=model).translate(turn["source_text"], turn.get("source_language"))
+            turn["english_text"] = translated.text
+            published = self.store.publish_live_window(job, turns, window["speakers"], {**window["provenance"], "translation": f"openai-{model}"})
+            if not published:
+                break
+        self.mutate(job, "complete_job", {"window_id": payload["window_id"], "translated_turns": len(turns)})
+
     async def transcribe(self, job):
         conversation_id = job["conversation_id"]
         conversation = self.store.get("conversations", conversation_id)
@@ -365,7 +459,11 @@ class LocalWorker:
         execution = None
         try:
             operation = (
-                self.assemble(job)
+                self.live_transcribe(job)
+                if job["kind"] == "live_transcribe"
+                else self.live_translate(job)
+                if job["kind"] == "live_translate"
+                else self.assemble(job)
                 if job["kind"] == "assemble"
                 else self.transcribe(job)
                 if job["kind"] in {"transcribe", "finalise"}
@@ -417,8 +515,10 @@ class LocalWorker:
             if job["kind"] == "delete":
                 log.warning("local_cleanup_pending job_id=%s code=%s", job["id"], code)
                 return
+            if job["kind"] in {"live_transcribe", "live_translate"} and self.live_superseded(job):
+                return
             updates = {"final_state": state, "processing_error_code": code}
-            updates["english_state" if job["kind"] == "translate" else "transcription_state"] = state
+            updates["english_state" if job["kind"] in {"translate", "live_translate"} else "transcription_state"] = state
             self.patch_conversation(job["conversation_id"], **updates)
             self.patch_run(job, state=state)
             log.warning("local_job_failed job_id=%s code=%s state=%s", job["id"], code, state)

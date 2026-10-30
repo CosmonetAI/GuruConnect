@@ -30,7 +30,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
   private add(samples: Float32Array) {
     const room = Math.max(0, this.maxSamples - this.total - this.pending.length);
     for (const value of samples.subarray(0,room)) this.pending.push(value);
-    // The page chooses the chunk duration: all microphone and imported audio use 10-second chunks.
+    // The page chooses durable upload boundaries independently of STT windows.
     while (this.pending.length >= this.chunkSamples) this.emit(this.chunkSamples);
     if (this.total + this.pending.length >= this.maxSamples && !this.paused) {
       this.flush(); this.paused = true; this.port.postMessage({ type: 'limit', samples: this.total });

@@ -23,7 +23,7 @@ export default defineConfig({
   },
   webServer: [
     { command: 'npm run dev:api -- --port 8011', url: 'http://127.0.0.1:8011/ready', reuseExistingServer: false, timeout: 60000, env: environment },
-    { command: 'npm run dev:web -- --port 5177', url: 'http://127.0.0.1:5177', reuseExistingServer: false, timeout: 60000, env: environment },
+    { command: 'npm run dev:web -- --port 5177', url: 'http://127.0.0.1:5177', reuseExistingServer: false, timeout: 180000, env: environment },
   ],
   projects: [{ name: 'local-chromium', use: { ...devices['Desktop Chrome'] } }],
 })

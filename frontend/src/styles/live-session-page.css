@@ -1,0 +1,124 @@
+/* The live customer workspace uses the available screen beside the CRM navigation. */
+.app-content:has(.voice-sessions-page) { max-width: none; padding: 12px 14px; }
+.voice-sessions-page { height: calc(100dvh - 24px); min-height: 0; gap: 10px; color: #132b50; }
+.voice-sessions-page > .error { flex: 0 0 auto; margin: 0; font-size: 12px; }
+.voice-sessions-page .voice-sessions-layout { grid-template-columns: 272px minmax(0, 1fr); min-height: 0; gap: 12px; border: 0; border-radius: 0; background: transparent; transition: grid-template-columns 360ms ease, gap 360ms ease; }
+.voice-sessions-page .voice-sessions-layout > .chat-list { min-width: 0; max-height: none; border: 1px solid #dfe8f3; border-radius: 12px; background: #fff; transition: opacity 220ms ease, transform 360ms ease; }
+.voice-sessions-page .list-head { align-items: center; padding: 16px; border-bottom: 0; color: #122a50; font-size: 15px; }
+.voice-sessions-page .list-head button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; background: #f0f6ff; color: #1764ee; }
+.voice-sessions-page .contact-search { margin: 0 14px 14px; padding: 10px; background: #fff; }
+.voice-sessions-page .session-contact-filters { margin: 0; padding: 0 12px; border-bottom: 1px solid #e6edf6; border-radius: 0; background: #fff; }
+.voice-sessions-page .session-contact-filters button { padding: 12px 4px; border-radius: 0; font-size: 11px; }
+.voice-sessions-page .session-contact-filters button.selected { color: #075cf6; border-bottom-color: #075cf6; box-shadow: none; }
+.voice-sessions-page .contact-row, .voice-sessions-page .chat-row { padding: 14px 16px; border-bottom: 1px solid #eff3f8; color: #173254; }
+.voice-sessions-page .contact-row b, .voice-sessions-page .chat-row b { font-size: 12px; }
+.voice-sessions-page .contact-row.selected, .voice-sessions-page .chat-row.selected { border-left-color: #1764ff; background: linear-gradient(90deg, #eef4ff, #f7fbff); }
+.voice-sessions-page .contact-row:disabled, .voice-sessions-page .chat-row:disabled { cursor: default; opacity: .72; }
+.voice-sessions-page .voice-sessions-layout > .conversation { display: flex; flex-direction: column; min-width: 0; height: 100%; min-height: 0; border: 1px solid #dfe8f3; border-radius: 12px; background: #fff; overflow: hidden; }
+.voice-sessions-page .live-session-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; min-height: 78px; padding: 14px 20px; border-bottom: 0; background: #fff; }
+.voice-sessions-page .live-session-header .session-customer-heading { display: grid; gap: 5px; margin-right: auto; }
+.voice-sessions-page .live-session-header strong { font-size: 22px; letter-spacing: -.6px; line-height: 1.2; }
+.voice-sessions-page .live-session-header .session-customer-contact { display: flex; flex-direction: row; align-items: center; gap: 9px; }
+.voice-sessions-page .live-session-header .contact-phone-link { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: none; color: #245b9a; font-size: 12px; cursor: pointer; }
+.voice-sessions-page .live-session-header .copy-phone-button { width: 25px; height: 25px; margin: 0; border-radius: 5px; }
+.voice-sessions-page .live-session-header .live-header-status { display: flex; align-items: center; flex-direction: row; gap: 8px; }
+.voice-sessions-page .live-header-pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: 24px; background: #e5faf0; color: #078043; font-size: 11px; font-weight: 650; letter-spacing: 0; }
+.voice-sessions-page .live-session-header .live-header-status > .live-header-pill { display: inline-flex; }
+.voice-sessions-page .live-header-pill i { width: 7px; height: 7px; padding: 0; border-radius: 50%; background: #22b76e; }
+.voice-sessions-page .live-header-pill.status-failed { color: #b23e3e; background: #fff0f0; }
+.voice-sessions-page .live-header-pill.status-failed i { background: #cf4d4d; }
+.voice-sessions-page .live-header-pill.status-ready { background: #eff5ff; color: #47688d; }
+.voice-sessions-page .live-header-pill.status-ready i { background: #86a7ce; }
+.voice-sessions-page .session-stage-control { margin-left: 0; }
+.voice-sessions-page .session-stage-control span { color: #085ee6; font-size: 11px; }
+.voice-sessions-page .session-stage-control select { max-width: 160px; color: #183b61; font-size: 11px; }
+.voice-sessions-page .session-contacts-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 7px 9px; border: 1px solid #dce7f5; border-radius: 7px; background: #fff; color: #1b62d8; font: inherit; font-size: 11px; cursor: pointer; }
+.voice-sessions-page .live-session-tabs { display: flex; flex: 0 0 auto; align-items: stretch; gap: 8px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid #e0e9f5; overflow-x: auto; }
+.voice-sessions-page .live-session-tabs button { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 0 10px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: #677c99; font: inherit; font-size: 11px; cursor: pointer; }
+.voice-sessions-page .live-session-tabs button.selected { border-bottom-color: #1263ff; color: #0757cd; font-weight: 700; }
+.voice-sessions-page .session-welcome { display: grid; place-items: center; padding: 28px; background: radial-gradient(ellipse at top, #f3f8ff, #fff 65%); }
+.voice-sessions-page .session-welcome .welcome { width: min(510px, 100%); margin: 0 auto; }
+.voice-sessions-page .session-welcome-icon { display: grid; width: 70px; height: 70px; place-items: center; margin: 0 auto 22px; border: 1px solid #d4e4ff; border-radius: 22px; background: #edf5ff; color: #1764ee; }
+.voice-sessions-page .session-welcome small { color: #5278a3; font-size: 10px; letter-spacing: 1.5px; font-weight: 700; }
+.voice-sessions-page .session-welcome h2 { margin: 9px 0 12px; color: #152c4f; font-size: 27px; letter-spacing: -.8px; }
+.voice-sessions-page .session-welcome p { margin: 0; color: #7386a1; font-size: 13px; line-height: 1.7; }
+.voice-sessions-page .session-welcome .identity { display: grid; gap: 13px; margin: 25px auto 18px; text-align: left; }
+.voice-sessions-page .identity label { display: grid; gap: 6px; color: #496482; font-size: 11px; font-weight: 600; }
+.voice-sessions-page .identity input { min-height: 43px; padding: 11px 12px; background: #fff; font-size: 13px; }
+.voice-sessions-page .voice-open-button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 45px; margin-top: 4px; background: #0961f7; }
+.voice-sessions-page .session-welcome .session-welcome-footnote { color: #8d9bb0; font-size: 10px; font-weight: 400; letter-spacing: 0; }
+.voice-sessions-page .is-cart-focused { grid-template-columns: 0 minmax(0, 1fr); gap: 0; }
+.voice-sessions-page .is-cart-focused > .chat-list { opacity: 0; transform: translateX(-20px); pointer-events: none; border-width: 0; }
+.voice-sessions-page .session-view-drawer { flex: 0 0 auto; max-height: 32vh; overflow: auto; padding: 12px 18px; border-bottom: 1px solid #dfebf6; background: #f8fbff; font-size: 12px; }
+.session-drawer-heading { display: flex; align-items: center; justify-content: space-between; }
+.session-drawer-heading button { display: grid; place-items: center; padding: 5px; border: 0; background: transparent; color: #56708e; cursor: pointer; }
+.session-context-summary { color: #5c7292; line-height: 1.6; }
+.session-context-summary > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.session-context-summary span { padding: 5px 8px; border-radius: 6px; background: #e6f0ff; color: #285ea8; }
+.session-archive-modal { width: min(980px, 96vw); max-height: 90dvh; overflow: auto; border-radius: 14px; background: #fff; padding: 0 18px 18px; }
+.session-product-details-body { display: grid; gap: 12px; padding: 20px; color: #4c6584; font-size: 13px; line-height: 1.6; }
+.session-product-details-body .primary { min-height: 40px; background: #0961f7; }
+.voice-sessions-page .live-session-workspace .session-recorder { padding: 0; }
+.voice-sessions-page .live-session-workspace .session-recording-container { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.voice-sessions-page .live-session-workspace .session-recorder .recorder-panel { flex: 1 1 480px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0; padding: 0; border: 0; box-shadow: none; background: #fff; }
+.voice-sessions-page .live-session-workspace .recorder-visual { flex: 0 0 52px; padding: 0; }
+.voice-sessions-page .live-session-workspace .microphone-orbit { width: 52px; height: 52px; background: #e6f0ff; }
+.voice-sessions-page .live-session-workspace .microphone-button { width: 36px; height: 36px; background: #0961f7; color: #fff; }
+.voice-sessions-page .live-session-workspace .recorder-copy { flex: 1 1 160px; }
+.voice-sessions-page .live-session-workspace .recorder-copy h3 { margin: 3px 0; font-size: 13px; color: #173557; }
+.voice-sessions-page .live-session-workspace .recorder-copy p { margin: 2px 0; color: #7a8faa; font-size: 10px; line-height: 1.5; }
+.voice-sessions-page .live-session-workspace .recording-ready-label, .voice-sessions-page .live-session-workspace .recording-live { font-size: 9px; letter-spacing: 1px; }
+.voice-sessions-page .live-session-workspace .elapsed-timer { margin-top: 3px; color: #173557; font-size: 14px; font-variant-numeric: tabular-nums; }
+.voice-sessions-page .live-session-workspace .recorder-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+.voice-sessions-page .live-session-workspace .recorder-controls .button { min-height: 38px; padding: 0 13px; font-size: 11px; }
+.voice-sessions-page .live-session-workspace .recording-consent { width: min(280px, 100%); margin: 0; }
+.voice-sessions-page .live-session-workspace .recording-consent .checkbox-field { display: flex; align-items: flex-start; gap: 7px; font-size: 9px; line-height: 1.5; }
+.voice-sessions-page .live-session-workspace .recording-consent input { flex: 0 0 14px; width: 14px; height: 14px; margin: 0; accent-color: #0961f7; }
+.voice-sessions-page .live-session-workspace .connected-recording-metrics { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 7px; font-size: 9px; }
+.voice-sessions-page .live-session-workspace .voice-level-wave { min-width: 85px; height: 28px; }
+.voice-sessions-page .live-session-workspace .audio-storage-notice { margin: 7px 0 0; font-size: 10px; line-height: 1.4; }
+.voice-sessions-page :where(button, input, select, textarea):focus-visible { outline: 2px solid #4b8cff; outline-offset: 3px; }
+.voice-sessions-page .contact-search input { padding: 0; min-height: 24px; }
+.voice-sessions-page .contact-row, .voice-sessions-page .chat-row { position: relative; padding-left: 63px; min-height: 90px; }
+.voice-sessions-page .contact-row b, .voice-sessions-page .chat-row b { font-size: 13px; }
+.voice-sessions-page .session-contact-avatar { position: absolute; left: 15px; top: 17px; display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: #ede8ff; color: #7260d9; font-size: 12px; font-weight: 650; }
+.voice-sessions-page :is(.contact-row, .chat-row):nth-of-type(3n) .session-contact-avatar { background: #dcf9ed; color: #298564; }
+.voice-sessions-page :is(.contact-row, .chat-row):nth-of-type(3n + 1) .session-contact-avatar { background: #fff0d9; color: #b87b28; }
+.voice-sessions-page .live-session-header .copy-phone-button { min-height: 25px; }
+@media (min-width: 1000px) {
+  .voice-sessions-page .live-session-workspace .session-recording-container { display: grid; grid-template-columns: minmax(0, 1fr) 225px; gap: 4px 14px; }
+  .voice-sessions-page .live-session-workspace .session-recorder .recorder-panel { display: grid; grid-template-columns: 52px minmax(150px, 1fr) auto; min-height: 64px; gap: 12px; }
+  .voice-sessions-page .live-session-workspace .session-recorder .recorder-panel .recorder-visual { width: 52px; }
+  .voice-sessions-page .live-session-workspace .session-recorder .recorder-controls { flex-wrap: nowrap; }
+  .voice-sessions-page .live-session-workspace .recorder-copy p { display: block; font-size: 10px; }
+  .voice-sessions-page .live-session-workspace .recording-consent { width: auto; }
+  .voice-sessions-page .live-session-workspace .connected-recording-metrics { grid-column: 1; margin: 0 0 0 64px; }
+  .voice-sessions-page .live-session-workspace .audio-storage-notice { grid-column: 2; grid-row: 2; margin: 0; font-size: 9px; }
+  .voice-sessions-page .live-session-workspace .audio-storage-notice[role="status"],
+  .voice-sessions-page .live-session-workspace .recorder-error { grid-column: 1 / -1; grid-row: auto; }
+  .voice-sessions-page .live-session-workspace .voice-level-wave { min-width: 60px; }
+}
+/* The order reference gives the conversation its own full-height left rail,
+   with the customer header above the cart and notes. display:contents keeps
+   the same recorder and conversation DOM mounted through the transition. */
+@media (min-width: 1480px) {
+  .voice-sessions-page .voice-sessions-layout { grid-template-columns: 310px minmax(0, 1fr); }
+  .voice-sessions-page .is-cart-focused { grid-template-columns: 0 minmax(0, 1fr); }
+  .voice-sessions-page .is-cart-focused > .conversation { display: grid; grid-template-columns: minmax(270px, .95fr) minmax(0, 2fr) 260px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; padding: 0; border: 0; border-radius: 0; background: transparent; container-type: inline-size; }
+  .voice-sessions-page .is-cart-focused .live-session-header { grid-column: 2 / -1; grid-row: 1; min-height: 76px; padding: 12px 18px; border: 1px solid #dfe8f3; border-radius: 12px; }
+  .voice-sessions-page .is-cart-focused .live-session-tabs { display: none; }
+  .voice-sessions-page .is-cart-focused .live-session-workspace,
+  .voice-sessions-page .is-cart-focused .lws-work-grid { display: contents; }
+  .voice-sessions-page .is-cart-focused .lws-conversation-lane { grid-column: 1; grid-row: 1 / 3; overflow-y: auto; scrollbar-width: thin; }
+  .voice-sessions-page .is-cart-focused .lws-cart-lane { grid-column: 2; grid-row: 2; overflow: hidden; }
+  .voice-sessions-page .is-cart-focused .lws-notes { grid-column: 3; grid-row: 2; }
+  .voice-sessions-page .is-cart-focused .lws-recording-footer { grid-column: 1 / -1; grid-row: 3; border: 1px solid #dfe8f3; border-radius: 12px; }
+  .voice-sessions-page .is-cart-focused .lws-conversation { min-height: 260px; max-height: 43vh; }
+  .voice-sessions-page .is-cart-focused .lws-suggestions { flex: 1 0 auto; }
+  .voice-sessions-page .is-cart-focused .lws-cart { min-height: 0; }
+  .voice-sessions-page .is-cart-focused .session-view-drawer { display: none; }
+}
+@media (min-width: 1600px) { .voice-sessions-page .voice-sessions-layout { grid-template-columns: 300px minmax(0, 1fr); }.voice-sessions-page .is-cart-focused { grid-template-columns: 0 minmax(0, 1fr); } }
+@media (max-width: 1190px) { .voice-sessions-page .voice-sessions-layout { grid-template-columns: 224px minmax(0, 1fr); }.voice-sessions-page .is-cart-focused { grid-template-columns: 0 minmax(0, 1fr); }.voice-sessions-page .live-session-header { gap: 9px 12px; padding: 12px 15px; }.voice-sessions-page .live-session-header strong { font-size: 19px; }.voice-sessions-page .live-header-pill { font-size: 10px; padding: 7px 9px; } }
+@media (max-width: 760px) { .app-content:has(.voice-sessions-page) { padding: 8px; }.voice-sessions-page { height: auto; min-height: calc(100dvh - 16px); overflow: visible; }.voice-sessions-page .voice-sessions-layout { display: flex; flex-direction: column; overflow: visible; }.voice-sessions-page .voice-sessions-layout > .chat-list { max-height: 245px; flex: 0 0 auto; }.voice-sessions-page .voice-sessions-layout > .conversation { height: auto; min-height: 680px; overflow: visible; }.voice-sessions-page .is-cart-focused > .chat-list { display: none; }.voice-sessions-page .live-session-header { flex-direction: row; }.voice-sessions-page .live-session-header .session-stage-control { margin: 0; }.voice-sessions-page .live-session-tabs { padding: 0 6px; gap: 0; }.voice-sessions-page .live-session-tabs button { padding: 0 9px; font-size: 10px; }.voice-sessions-page .session-welcome { padding: 25px 18px; }.voice-sessions-page .session-welcome h2 { font-size: 23px; }.voice-sessions-page .live-session-workspace .recording-consent { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .voice-sessions-page .voice-sessions-layout, .voice-sessions-page .voice-sessions-layout > .chat-list { transition: none; } }

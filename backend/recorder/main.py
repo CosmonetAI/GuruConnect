@@ -22,8 +22,6 @@ from .runtime import ProcessingRuntime
 from .storage import Storage
 from .transcript_routes import router as transcript_router
 from .walkin_routes import router as walkin_router
-from app.main import bind_parent
-from app.zoho import refresh_loop as gg_refresh_loop
 
 log = logging.getLogger("recorder.api")
 
@@ -35,6 +33,10 @@ select
     to_regclass('public.profiles') is not null
     and to_regclass('public.organisations') is not null
     and to_regclass('public.members') is not null
+    and to_regclass('public.voice_sales_documents') is not null
+    and to_regclass('public.catalogue_index_scopes') is not null
+    and to_regclass('public.catalogue_index_snapshots') is not null
+    and to_regclass('public.catalogue_index_items') is not null
     and to_regclass('public.invites') is not null
     and to_regclass('public.engine_connections') is not null
     and to_regclass('public.workspace_engine_settings') is not null
@@ -65,6 +67,11 @@ def create_app(settings=None, *, allow_local=False):
         from .local_api import create_local_app
         return create_local_app(settings)
 
+    # The independent SQLite workspace does not use the hosted sales graph or
+    # Zoho database. Avoid loading that entire dependency tree on local startup.
+    from app.main import bind_parent, stop_voice_live_tasks
+    from app.zoho import refresh_loop as gg_refresh_loop
+
     @asynccontextmanager
     async def lifespan(app):
         log.info("api_starting environment=%s", settings.environment)
@@ -77,6 +84,9 @@ def create_app(settings=None, *, allow_local=False):
         finally:
             log.info("api_stopping")
             try:
+                # Mounted FastAPI applications do not run their own lifespan.
+                # Release sales analysis transactions before closing resources.
+                await stop_voice_live_tasks()
                 await app.state.processing.stop()
             finally:
                 gg_refresh_task.cancel()
