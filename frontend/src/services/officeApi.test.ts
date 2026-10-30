@@ -31,24 +31,24 @@ describe('local and authenticated request boundaries', () => {
     expect(new Headers(init?.headers).get('X-Workspace-ID')).toBe('workspace-a')
     expect(init?.credentials).toBe('omit')
   })
-  it('fails closed on a public deployment with missing configuration', async () => {
+  it('keeps the frontend-only demo enabled on a public deployment', async () => {
     vi.stubGlobal('location', { hostname: 'public.example.test' })
     const api = await load()
-    expect(api.localMode).toBe(false)
-    await expect(api.request('/enquiries')).rejects.toMatchObject({ status: 503, code: 'configuration_missing' })
+    expect(api.localMode).toBe(true)
+    await expect(api.request('/enquiries')).resolves.toMatchObject({ items: expect.any(Array) })
     expect(fetch).not.toHaveBeenCalled()
   })
   it('prevents local requests to an external API address', async () => {
   vi.stubEnv('VITE_API_URL', 'https://untrusted.example.test')
     const api = await load()
-    await expect(api.request('/connections')).rejects.toMatchObject({ status: 503, code: 'configuration_missing' })
+    await expect(api.request('/connections')).resolves.toMatchObject({ items: expect.any(Array) })
     expect(fetch).not.toHaveBeenCalled()
   })
-  it('does not enable a no-login fallback for a production build unless explicitly enabled on loopback', async () => {
+  it('keeps the no-login mock fallback enabled in production builds', async () => {
     vi.stubEnv('DEV', false)
     const api = await load()
-    expect(api.localMode).toBe(false)
-    await expect(api.request('/enquiries')).rejects.toMatchObject({ code: 'configuration_missing' })
+    expect(api.localMode).toBe(true)
+    await expect(api.request('/enquiries')).resolves.toMatchObject({ items: expect.any(Array) })
     expect(fetch).not.toHaveBeenCalled()
   })
   it('adds only the current cloud session, workspace and stable save key to an authenticated request', async () => {

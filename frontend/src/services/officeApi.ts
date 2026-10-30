@@ -5,9 +5,11 @@ export type ConversationCreateInput = components['schemas']['ConversationCreate'
 export type ChunkInput = components['schemas']['Chunk'];
 export type ManifestInput = components['schemas']['Manifest'];
 // This branch is intentionally frontend-only. Environment credentials are not used here.
+// Keep the deployed demo on the same mock-data path as localhost. The demo is
+// published as a static site, so a hostname check would incorrectly switch it
+// into the production setup screen after deployment.
 export const configured = false;
-const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-export const localMode = loopback;
+export const localMode = true;
 export const supabase: ReturnType<typeof createClient> | null = null;
 export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
 const mockDataKey = 'guruconnect-frontend-mock-data';
