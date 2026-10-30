@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useBlocker } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, ClipboardPlus } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { useNavigate, useBlocker } from 'react-router-dom'
+import { CheckCircle2, ClipboardPlus, Mic, Square } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput } from '../../types/walkin'
 import { attachWalkinRecording, isWalkinDemoMode, registerWalkin } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
-import ConversationRecorder from '../Enquiries/ConversationRecorder'
 import './Walkins.css'
 
 const registrationSchema = z.object({
@@ -40,9 +39,35 @@ export default function WalkinRegistration() {
   const [voiceBusy, setVoiceBusy] = useState(false)
   const voiceConversation = useRef<string | null>(null)
   const [voiceId, setVoiceId] = useState<string | null>(null)
+  const voiceFillStep = useRef(0)
   const blocker = useBlocker(voiceBusy || saving)
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
   useEffect(() => { if (blocker.state === 'blocked') { setError('End the visitor recording before leaving this page.'); blocker.reset() } }, [blocker])
+  useEffect(() => {
+    if (!voiceBusy) return
+    const demoFields: Array<[keyof FormValues, string]> = [
+      ['customerName', 'Akshat Saxena'], ['mobileNumber', '9311854768'], ['email', 'akshat@example.com'],
+      ['companyName', 'Cosmonet AI'], ['projectName', 'Bengaluru Central showroom'], ['preferredContactMethod', 'Phone'],
+    ]
+    const timer = window.setInterval(() => {
+      const next = demoFields[voiceFillStep.current % demoFields.length]
+      voiceFillStep.current += 1
+      setForm(previous => ({ ...previous, [next[0]]: next[1] }))
+      setErrors(previous => ({ ...previous, [next[0]]: undefined }))
+      setSaveKey(crypto.randomUUID())
+    }, 850)
+    return () => window.clearInterval(timer)
+  }, [voiceBusy])
+
+  const toggleDemoRecording = () => {
+    if (voiceBusy) { setVoiceBusy(false); return }
+    voiceFillStep.current = 0
+    const recordingId = `demo-recording-${Date.now()}`
+    voiceConversation.current = recordingId
+    setVoiceId(recordingId)
+    setVoiceBusy(true)
+    setError('')
+  }
 
   const update = <K extends keyof FormValues>(field: K, value: FormValues[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
@@ -103,7 +128,6 @@ export default function WalkinRegistration() {
 
   return (
     <div className="walkin-page">
-      <div className="walkin-back-row"><Link to="/walkins"><ArrowLeft size={16} /> Reception queue</Link></div>
       <header className="walkin-header">
         <div>
           <div className="walkin-kicker"><ClipboardPlus size={15} /> RECEPTION</div>
@@ -115,7 +139,7 @@ export default function WalkinRegistration() {
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
-          <div className="walkin-section-heading"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div>
+          <div className="walkin-section-heading"><div className="walkin-section-heading-copy"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div><DemoRecordingButton recording={voiceBusy} onClick={toggleDemoRecording} /></div>
           <div className="walkin-form-grid">
             <Field label="Name (customer full name)" name="customerName" required error={errors.customerName}><input disabled={!!voiceId || voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
             <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber}><input disabled={!!voiceId || voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
@@ -131,10 +155,17 @@ export default function WalkinRegistration() {
         </section>
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
-        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><ConversationRecorder customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id) }} onBusyChange={setVoiceBusy} chunkSeconds={30} audioBucket="walkin-audio" compact registrationOnly /><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
+        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
       </form>
     </div>
   )
+}
+
+function DemoRecordingButton({ recording, onClick }: { recording: boolean; onClick: () => void }) {
+  return <div className={`demo-recording${recording ? ' is-recording' : ''}`}>
+    <button type="button" className="demo-recording-button" onClick={onClick}>{recording ? <><Square size={15} fill="currentColor" /> Stop recording</> : <><Mic size={16} /> Start recording</>}</button>
+    {recording && <div className="demo-recording-live"><span className="demo-waveform" aria-label="Recording waveform">{Array.from({ length: 22 }, (_, index) => <i key={index} style={{ '--wave-delay': `${index * 45}ms`, '--wave-height': `${10 + ((index * 13) % 20)}px` } as CSSProperties} />)}</span><small>Listening and filling the form...</small></div>}
+  </div>
 }
 
 function Field({

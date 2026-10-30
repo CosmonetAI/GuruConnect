@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams, useBlocker } from "react-router-dom";
+import { Link, useSearchParams, useBlocker } from "react-router-dom";
 import {
   BookUser,
+  Columns3,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -55,6 +56,32 @@ const customerFields = [
   ["Project / site", "project"],
   ["Preferred contact", "preferredContact"],
 ];
+
+function localDemoSession(next) {
+  const transcript = [
+    { start_seconds: 0, speaker_role: "customer", speaker_name: next.name, english_text: "I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?" },
+    { start_seconds: 12, speaker_role: "agent", speaker_name: "Ravi Kumar", english_text: "Yes, I can suggest a few BLDC options with remote control and good air delivery." },
+    { start_seconds: 25, speaker_role: "customer", speaker_name: next.name, english_text: "Please show me the 1200mm model and a premium option with a light. My budget is around twelve thousand." },
+    { start_seconds: 39, speaker_role: "agent", speaker_name: "Ravi Kumar", english_text: "I will compare the matching products and prepare the quotation with the available discount." },
+  ];
+  const products = [
+    { item_id: "item-1", name: "Aero BLDC Ceiling Fan 1200mm", sku: "FAN-BLDC-1200", rate: 4499, stock_on_hand: 24, image_url: "/product-aero-bldc.jpg", match_status: "verified", matched_specs: ["quiet operation", "energy efficient"], features: ["Energy efficient BLDC", "Low noise operation", "Remote control"] },
+    { item_id: "item-2", name: "Luxe Ceiling Fan 1200mm with LED", sku: "FAN-LUXE-1200", rate: 6999, stock_on_hand: 12, image_url: "/product-luxe-led.jpg", match_status: "verified", matched_specs: ["ceiling fan", "modern design"], features: ["BLDC motor", "LED light with dimmer", "Remote control"] },
+    { item_id: "item-3", name: "LED Bulb 9W (Pack of 4)", sku: "LED-9W-4", rate: 1999, stock_on_hand: 48, image_url: "/product-led-bulb.jpg", match_status: "verified", matched_specs: ["ceiling fan", "modern design"], features: ["Bright white light", "Energy efficient", "Easy installation"] },
+  ];
+  return {
+    session: { id: `demo-session-${next.phone}`, name: next.name, phone: next.phone, email: next.email || "", enquiry_id: `enquiry-${next.phone}`, enquiry_stage: "In process" },
+    messages: transcript.map((turn) => ({ role: turn.speaker_role === "customer" ? "user" : "assistant", content: turn.english_text })),
+    recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: products,
+    customer_history: { transcript_summary: `${next.name} is comparing quiet, energy-efficient ceiling fans and asked for a 1200mm model with remote control.`, keywords: ["Ceiling fan", "1200mm", "BLDC", "Remote control", "Energy efficient"], recordings: [{ id: `history-${next.phone}-1`, created_at: "2026-10-29T10:24:00Z", duration_seconds: 192, summary: "Customer compared regular and BLDC fan options and requested a premium model.", keywords: ["BLDC", "Remote control", "Premium model"], status: "Processed" }, { id: `history-${next.phone}-2`, created_at: "2026-10-27T15:12:00Z", duration_seconds: 137, summary: "Customer shared budget, installation preference, and a follow-up requirement.", keywords: ["Budget", "Installation", "Follow-up"], status: "Processed" }], quotes: [{ id: `quote-${next.phone}`, number: "QT-2026-1027", status: "sent", total: 12448, date: "2026-10-28" }], lead: { id: `lead-${next.phone}`, Deal_Name: `${next.name} · Ceiling fan opportunity`, Stage: "Qualification", Lead_Status: "Registered", Phone: next.phone, Contact_Name: { name: next.name, mobile: next.phone }, Owner: { name: "Ravi Kumar" } } },
+    insights: [{ label: "Customer intent", value: "Compare ceiling fan options" }, { label: "Budget", value: "₹12,000" }],
+    keywords: ["Ceiling fan", "Regular fan", "Good air delivery", "Modern design"],
+    requirements: [{ label: "Product", value: "1200mm ceiling fan" }, { label: "Specification", value: "Quiet BLDC with remote" }, { label: "Budget", value: "₹12,000" }],
+    current_intent: "Compare ceiling fan options", agent_guidance: ["Lead with BLDC energy savings", "Mention remote control and installation", "Prepare a quote after product selection"],
+    clarification_suggestions: ["Confirm blade colour", "Confirm delivery timeline"], catalogue_status: "up_to_date", analysis_status: "complete",
+    processing_status: { stage: "complete", message: "Demo transcript analysed locally." }, notices: [{ code: "local_demo_catalogue", message: "Demo catalogue: products, prices and stock are sample data." }],
+  };
+}
 
 // Capture and speech processing have independent lifecycles. A running microphone
 // is not evidence that a provider has received or translated an audio window.
@@ -363,6 +390,9 @@ export default function VoiceSessions() {
   const [hiddenIntents, setHiddenIntents] = useState([]);
   const [activeTab, setActiveTab] = useState("conversation");
   const [archivedConversationId, setArchivedConversationId] = useState(null);
+  const [customerHistory, setCustomerHistory] = useState({ recordings: [], quotes: [], keywords: [], transcript_summary: '' });
+  const [crmLead, setCrmLead] = useState(null);
+  const [fullHistoryOpen, setFullHistoryOpen] = useState(false);
   const [viewProduct, setViewProduct] = useState(null);
   useEffect(() => {
     setViewProduct((current) => {
@@ -431,6 +461,7 @@ export default function VoiceSessions() {
     setContextHydrated(null); setCartSaveError("");
     setNoteBusy(false);
     setTranscriptPreview([]); setInsights([]); setRecommendations([]); setProducts([]);
+    setCustomerHistory({ recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(null); setFullHistoryOpen(false);
     setLiveKeywords([]); setCustomIntents([]); setHiddenIntents([]);
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
@@ -462,7 +493,13 @@ export default function VoiceSessions() {
       clearLiveWorkspace();
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
+      setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
+      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
+      setLiveKeywords(data.keywords || []);
+      setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
+      setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
+      setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
+      setCatalogueNotices(data.notices || []);
       setNoteText(""); setNoteError("");
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
@@ -498,10 +535,9 @@ export default function VoiceSessions() {
     setRecordingSnapshot(null);
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
     try {
-      const data = await sessionCall("/voice-sessions", {
-        method: "POST",
-        body: JSON.stringify(next),
-      });
+      const data = localMode
+        ? localDemoSession(next)
+        : await sessionCall("/voice-sessions", { method: "POST", body: JSON.stringify(next) });
       if (!alive.current || ticket !== selection.current) return;
       setSelectedContact(
         contact || {
@@ -516,12 +552,22 @@ export default function VoiceSessions() {
       setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
       setRecorderSessions(data.recorder_sessions || []);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
+      setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
+      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
+      setLiveKeywords(data.keywords || []);
+      setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
+      setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
+      setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
+      setCatalogueNotices(data.notices || []);
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
-      await load();
-      await loadContacts(contactSearch);
-      await loadSessionExtras(data.session.id, ticket);
+      // Render the live workspace as soon as the session payload arrives.
+      // Notes/context/list refreshes are secondary and must not leave the
+      // start button stuck if one optional mock endpoint is unavailable.
+      setBusy(false); busyRef.current = false;
+      void load().catch(() => undefined);
+      void loadContacts(contactSearch).catch(() => undefined);
+      void loadSessionExtras(data.session.id, ticket).catch((e) => { if (alive.current) setError(e.message); });
     } catch (e) {
       if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message);
     } finally {
@@ -818,7 +864,7 @@ export default function VoiceSessions() {
       setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
       setDocumentType(supportedTypes[0]); setDocumentEmail(customer.email || "");
       setDocumentDelivery(options.mode === "local-demo" || !options.email?.configured || !customer.email ? "download" : "email");
-      setDocumentSubject("Your document from GuruConnect");
+      setDocumentSubject("Your document from ConnectCosmos");
       setDocumentMessage(`Hi ${customer.name || "there"},\n\nPlease find your document for the selected items attached. Let us know if you have any questions.`);
       setDocumentModalOpen(true);
     } catch (error) { if (alive.current && currentDocumentScope.current === scope && ticket === selection.current && error.name !== "AbortError") setError(error.message); }
@@ -869,7 +915,7 @@ export default function VoiceSessions() {
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
     const anchor = document.createElement("a"); anchor.href = url;
-    anchor.download = String(pdf.filename || "GuruConnect_document.pdf").replace(/[\\/]/g, "_");
+    anchor.download = String(pdf.filename || "ConnectCosmos_document.pdf").replace(/[\\/]/g, "_");
     anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const closeDocumentModal = () => { if (!documentInFlight.current) setDocumentModalOpen(false); };
@@ -1100,10 +1146,11 @@ export default function VoiceSessions() {
                 {cart.length > 0 && <button type="button" className="session-contacts-toggle" onClick={() => setCartOpen(!cartOpen)} aria-pressed={!cartOpen}><BookUser size={16} />{cartOpen ? "Show contacts" : "Focus cart"}</button>}
               </div>
               <nav className="live-session-tabs" aria-label="Customer session views">
-                <button type="button" className={activeTab === "conversation" ? "selected" : ""} onClick={() => setActiveTab("conversation")}><MessageSquare size={15} />Conversation</button>
+                <button type="button" className={activeTab === "conversation" ? "selected" : ""} onClick={() => setActiveTab("conversation")}><MessageSquare size={15} />Customer history</button>
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
-                <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Recordings ({recorderSessions.length})</button>
+                <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Customer recordings ({customerHistory.recordings?.length || recorderSessions.length})</button>
+                {crmLead && <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "lead" ? "conversation" : "lead")}><Columns3 size={15} />CRM lead</button>}
               </nav>
             </>
           )}
@@ -1120,9 +1167,13 @@ export default function VoiceSessions() {
             <small className="session-welcome-footnote">You’ll start the microphone in the next step.</small>
           </div></div>}
           {session && <>
-            {activeTab !== "conversation" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : "Enquiry context"}>
+            {(activeTab === "history" || activeTab === "context") && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Customer recordings" : "Enquiry context"}>
               <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : (customerHistory.recordings?.length || recorderSessions.length) ? [...customerHistory.recordings, ...recorderSessions].map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {recording.status || String(recording.final_state || "processed").replaceAll("_", " ")}</small><span>{recording.summary || ''}</span></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setFullHistoryOpen(true)}>View history</button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+            </section>}
+            {activeTab === "lead" && <section className="session-view-drawer session-crm-lead-tab" aria-label="CRM lead">
+              <div className="session-drawer-heading"><strong>CRM lead</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close CRM lead panel"><X size={16} /></button></div>
+              {crmLead ? <div className="session-crm-lead-panel"><div className="session-crm-lead-row"><div><small>ZOHO BIGIN · CRM LEAD</small><strong>{crmLead.Deal_Name || `${identity.name} lead`}</strong><span>{crmLead.Lead_Status || crmLead.Stage || "Registered"} · {crmLead.Phone || identity.phone}</span></div><Link className="button button-primary" to={`/pipelines?lead=${encodeURIComponent(crmLead.id)}`}>Open CRM lead <ChevronRight size={14} /></Link></div><dl className="session-crm-lead-details"><div><dt>Status</dt><dd>{crmLead.Lead_Status || "Registered"}</dd></div><div><dt>Pipeline stage</dt><dd>{crmLead.Stage || "Qualification"}</dd></div><div><dt>Phone</dt><dd>{crmLead.Phone || identity.phone || "Not provided"}</dd></div><div><dt>Owner</dt><dd>{crmLead.Owner?.name || "Assigned team"}</dd></div></dl></div> : <p>No CRM lead is linked to this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
@@ -1149,6 +1200,8 @@ export default function VoiceSessions() {
               noteBusy={noteBusy}
               noteError={noteError}
               recordingState={captureState}
+              customerHistory={customerHistory}
+              onOpenHistory={() => setFullHistoryOpen(true)}
               recordingStatus={transcriptionUiStatus}
               insightsStatus={{ key: liveAnalysis, label: liveAnalysis === "running" || liveAnalysis === "pending" ? "Finding product matches…" : liveAnalysis === "unavailable" ? "Product analysis temporarily unavailable" : liveAnalysis === "failed" ? "Product analysis needs attention" : liveAnalysis === "complete" ? "Requirements updated" : "Listening for product requirements" }}
               catalogueNotice={[liveNotice, cartSaveError, demoCatalogueNotice, ...catalogueNotices.filter((notice) => !demoCatalogue || notice.code !== "local_demo_catalogue").map((notice) => notice.message)].filter(Boolean).join(" ")}
@@ -1170,6 +1223,7 @@ export default function VoiceSessions() {
           </article>;
         })}{!cartSearchBusy && cartSearch && !cartSearchResults.length && !cartSearchError && <p className="notes-empty">Search your connected catalogue to see matching inventory.</p>}</div></section></div>}
       {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(viewProduct.rate ?? viewProduct.price).toLocaleString("en-IN")}` : "Confirm price"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
+      {fullHistoryOpen && <div className="session-modal-backdrop" onClick={() => setFullHistoryOpen(false)}><section className="session-archive-modal customer-history-modal" role="dialog" aria-modal="true" aria-label="Complete customer history" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>CUSTOMER HISTORY</small><h2>{identity.name || 'Customer'}</h2></div><button type="button" onClick={() => setFullHistoryOpen(false)} aria-label="Close customer history"><X size={20} /></button></div><p className="customer-history-summary">{customerHistory.transcript_summary || 'Previous sessions, products, keywords and documents for this customer.'}</p><div className="customer-history-modal-list">{(customerHistory.recordings || []).map((recording) => <article key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><p>{recording.summary}</p><div className="lws-history-keywords">{(recording.keywords || []).map((keyword) => <span key={keyword}>{keyword}</span>)}</div></div><small>{Math.round(recording.duration_seconds || 0)} sec · {recording.status || 'Processed'}</small></article>)}<h3>Quotes generated</h3>{(customerHistory.quotes || []).map((quote) => <article className="customer-history-quote" key={quote.id}><strong>{quote.number}</strong><span>{quote.status || 'Draft'} · ₹{Number(quote.total || 0).toLocaleString('en-IN')}</span><small>{quote.date || 'Demo record'}</small></article>)}</div></section></div>}
       {archivedConversationId && <div className="session-modal-backdrop" onClick={() => setArchivedConversationId(null)}><section className="session-archive-modal" role="dialog" aria-modal="true" aria-label="Saved conversation transcript" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2>Saved conversation</h2><button type="button" onClick={() => setArchivedConversationId(null)} aria-label="Close saved conversation"><X size={20} /></button></div><ConversationTranscript conversationId={archivedConversationId} /></section></div>}
       <CustomerModal
         contact={customerOpen ? selectedContact : null}

@@ -1,20 +1,70 @@
 import { createClient } from '@supabase/supabase-js';
 import type { components } from '../../packages/contracts/api.generated';
+import seedData from './mock-data.json';
 export type ConversationCreateInput = components['schemas']['ConversationCreate'];
 export type ChunkInput = components['schemas']['Chunk'];
 export type ManifestInput = components['schemas']['Manifest'];
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
-export const configured = !!url && !!key && !!import.meta.env.VITE_API_URL && !url.includes('YOUR_PROJECT');
+// This branch is intentionally frontend-only. Environment credentials are not used here.
+export const configured = false;
 const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-export const localMode = !configured && loopback && (import.meta.env.DEV || import.meta.env.VITE_LOCAL_MODE === 'true');
-export const supabase = configured ? createClient(url!, key!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+export const localMode = loopback;
+export const supabase: ReturnType<typeof createClient> | null = null;
 export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
+const mockDataKey = 'guruconnect-frontend-mock-data';
+type MockData = typeof seedData & { profile: Record<string, unknown>; team: Record<string, unknown>[]; enquiries: Record<string, any>[]; conversations: Record<string, any>[]; connections: Record<string, any>[] };
+function readMockData(): MockData {
+  try {
+    const saved = sessionStorage.getItem(mockDataKey);
+    return saved ? JSON.parse(saved) as MockData : structuredClone(seedData) as MockData;
+  } catch { return structuredClone(seedData) as MockData; }
+}
+function writeMockData(data: MockData) { sessionStorage.setItem(mockDataKey, JSON.stringify(data)); }
+function mockPage(items: any[]) { return { items, total: items.length, totalPages: Math.max(1, Math.ceil(items.length / 20)), page: 1, pageSize: 20 }; }
+async function mockRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const data = readMockData();
+  const method = (init.method ?? 'GET').toUpperCase();
+  const body = init.body ? JSON.parse(String(init.body)) as Record<string, any> : {};
+  const cleanPath = path.split('?')[0];
+  if (cleanPath === '/profile') {
+    if (method === 'PATCH') data.profile = { ...data.profile, display_name: body.display_name ?? data.profile.display_name, phone: body.phone ?? data.profile.phone, availability_status: body.availability_status ?? data.profile.availability_status, leave_end_date: body.leave_end_date ?? data.profile.leave_end_date, preferences: body.preferences ?? data.profile.preferences };
+    writeMockData(data); return data.profile as T;
+  }
+  if (cleanPath === '/team') return { items: data.team } as T;
+  if (cleanPath === '/invites' && method === 'POST') {
+    data.team = [...data.team, { user_id: `mock-member-${Date.now()}`, display_name: body.name, email: body.email, role: body.role, status: 'invited', availability_status: 'active' }];
+    writeMockData(data); return { ok: true } as T;
+  }
+  const teamDelete = cleanPath.match(/^\/team\/([^/]+)\/delete$/);
+  if (teamDelete && method === 'DELETE') { data.team = data.team.filter(item => item.user_id !== decodeURIComponent(teamDelete[1])); writeMockData(data); return { ok: true } as T; }
+  if (cleanPath === '/connections') return { items: data.connections } as T;
+  if (cleanPath === '/analytics') return { enquiries: data.enquiries.length, newEnquiries: data.enquiries.filter(item => item.stage === 'new').length, quoted: 0, won: 0, channels: [] } as T;
+  if (cleanPath === '/enquiries/unread-count') return { count: data.enquiries.filter(item => item.stage === 'new').length } as T;
+  if (cleanPath === '/walkins/missed-visitors') return { items: [] } as T;
+  if (cleanPath === '/enquiries') {
+    if (method === 'POST') {
+      const created = { ...body, id: `mock-enquiry-${Date.now()}`, enquiryNumber: `ENQ-${new Date().getFullYear()}-${String(data.enquiries.length + 1001)}`, createdAt: new Date().toISOString(), stage: body.stage ?? 'new', recording: null };
+      data.enquiries = [created as any, ...data.enquiries]; writeMockData(data); return created as T;
+    }
+    const query = new URLSearchParams(path.split('?')[1] ?? '').get('query')?.toLowerCase() ?? '';
+    return mockPage(data.enquiries.filter(item => !query || `${item.customerName} ${item.phone} ${item.summary}`.toLowerCase().includes(query))) as T;
+  }
+  const enquiryMatch = cleanPath.match(/^\/enquiries\/([^/]+)(?:\/state)?$/);
+  if (enquiryMatch) {
+    const item = data.enquiries.find(entry => entry.id === decodeURIComponent(enquiryMatch[1]));
+    if (!item) throw new ApiError(404, 'not_found', 'Enquiry not found.');
+    if (method === 'PATCH') Object.assign(item, cleanPath.endsWith('/state') ? { stage: body.stage } : body);
+    writeMockData(data); return item as T;
+  }
+  if (cleanPath === '/conversations') return mockPage(data.conversations) as T;
+  if (cleanPath.startsWith('/conversations/')) return data.conversations.find(item => item.id === cleanPath.split('/')[2]) as T;
+  if (cleanPath === '/workspaces') return { items: [] } as T;
+  return {} as T;
+}
 const serviceErrorMessages: Record<string, string> = {
   api_unreachable: localMode ? 'Local services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
   configuration_mismatch: 'Workspace services are using different modes. Ask your administrator to finish the workspace setup, then try again.',
   engine_unconfigured: 'The managed speech service is unavailable. Contact your administrator, then retry the failed stage. Your saved audio is preserved.',
-  database_schema_missing: 'GuruConnect setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
+  database_schema_missing: 'ConnectCosmos setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
   recording_not_saved: 'Stop recording and finish saving the audio before saving this enquiry.',
   stale_connection_generation: 'This connection changed while the form was open. Refresh its settings and try again.',
   database_unavailable: 'Workspace services cannot reach the database. Ask your administrator to check the database connection, then try again.',
@@ -63,6 +113,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 export async function request<T>(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<T> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
+  if (localMode) return mockRequest<T>(path, init);
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
   const abort = new AbortController();
   const cancelled = () => abort.abort(init.signal?.reason ?? new DOMException('The request was cancelled.', 'AbortError'));
@@ -108,6 +159,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
 /** Authenticated binary response for progressive audio and other streamed media. */
 export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<Response> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
+  if (localMode) throw new ApiError(503, 'local_demo_only', 'Live audio processing is disabled in frontend demo mode.');
   if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
   const signal = init.signal ?? undefined;
   signal?.throwIfAborted();

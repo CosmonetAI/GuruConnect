@@ -384,9 +384,28 @@
 .walkin-section-heading {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 11px;
   margin-bottom: 16px;
 }
+
+.walkin-section-heading-copy { display: flex; align-items: flex-start; gap: 11px; }
+.demo-recording { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: -3px; }
+.demo-recording-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 0 16px; border: 0; border-radius: 9px; background: #2563eb; color: #fff; font: inherit; font-size: 13px; font-weight: 750; box-shadow: 0 7px 16px #2563eb2e; cursor: pointer; }
+.demo-recording-button:hover { background: #1d4ed8; }.demo-recording.is-recording .demo-recording-button { background: #dc3545; box-shadow: 0 7px 16px #dc35452e; }.demo-recording.is-recording .demo-recording-button:hover { background: #b42318; }
+.demo-recording-live { display: grid; gap: 2px; min-width: 155px; }.demo-recording-live small { color: #b42318; font-size: 10px; font-weight: 700; }.demo-waveform { display: flex; align-items: center; justify-content: center; gap: 2px; height: 27px; }.demo-waveform i { display: block; width: 3px; height: var(--wave-height); border-radius: 999px; background: #e5394f; animation: demo-wave 720ms ease-in-out var(--wave-delay) infinite alternate; }
+@keyframes demo-wave { from { transform: scaleY(.45); opacity: .45; } to { transform: scaleY(1); opacity: 1; } }
+.walkin-section-heading > .connected-recorder { flex: 0 0 auto; min-width: 0; margin-top: -5px; }
+.walkin-section-heading > .connected-recorder .session-recording-container { padding: 0; border: 0; box-shadow: none; background: transparent; }
+.walkin-section-heading > .connected-recorder .recorder-panel { display: flex; align-items: center; min-height: 0; padding: 0; border: 0; background: transparent; }
+.walkin-section-heading > .connected-recorder .recorder-visual,
+.walkin-section-heading > .connected-recorder .recorder-copy,
+.walkin-section-heading > .connected-recorder .connected-recording-metrics { display: none; }
+.walkin-section-heading > .connected-recorder .recording-consent { display: flex; align-items: center; margin: 4px 0 0; padding: 0; border: 0; background: transparent; color: #64748b; font-size: 11px; }
+.walkin-section-heading > .connected-recorder .recording-consent .checkbox-field { white-space: nowrap; }
+.walkin-section-heading > .connected-recorder .recorder-controls { margin: 0; flex-wrap: nowrap; }
+.walkin-section-heading > .connected-recorder .voice-level-wave { display: flex; width: 108px; min-width: 90px; height: 30px; margin: 0 2px; align-items: center; gap: 2px; overflow: hidden; }
+.walkin-section-heading > .connected-recorder .voice-level-wave i { flex: 1 1 0; min-width: 2px; max-width: 4px; border-radius: 4px; background: #2563eb; opacity: .82; }
 
 .walkin-section-heading > span {
   display: grid;
@@ -1017,3 +1036,4 @@
 .voice-confidence.high { color: #15803d; }
 @media (max-width: 640px) { .voice-suggestion-actions .walkin-button { flex: 1 1 100%; } }
 .walkin-ai-badge { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #e0ecff; color: #1d4ed8; font-size: 11px; font-weight: 600; }
+@media (max-width: 700px) { .walkin-section-heading { align-items: stretch; flex-direction: column; }.demo-recording { align-items: flex-start; justify-content: flex-start; flex-wrap: wrap; margin-top: 4px; }.demo-recording-live { flex-basis: 100%; } }

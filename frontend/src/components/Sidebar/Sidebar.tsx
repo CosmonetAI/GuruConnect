@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText, Columns3 } from 'lucide-react'
+import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText, Columns3, BookOpen, ChevronDown } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { useScopedResource } from '../../hooks/useScopedResource'
 import { supabase } from '../../services/officeApi'
 export const navigationItems = [
-  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { to: '/enquiries', label: 'Enquiries', icon: ClipboardList }, { to: '/walkins', label: 'Walk-in visits', icon: UsersRound }, { to: '/ai-chats', label: 'Sessions', icon: MessageSquare }, { to: '/products', label: 'Product catalogue', icon: PackageSearch }, { to: '/contacts', label: 'Customer directory', icon: ContactRound }, { to: '/recordings', label: 'Conversation history', icon: AudioLines }, { to: '/quotes', label: 'Quotes', icon: FileText }, { to: '/sales-orders', label: 'Sales orders', icon: ShoppingCart }, { to: '/purchase-orders', label: 'Purchase orders', icon: ClipboardCheck }, { to: '/invoices', label: 'Invoices', icon: ReceiptText }, { to: '/pipelines', label: 'Pipelines', icon: Columns3 }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/zoho', label: 'Connections', icon: PlugZap }, { to: '/settings', label: 'Team & account', icon: Settings },
+  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { to: '/enquiries', label: 'Enquiries', icon: ClipboardList }, { to: '/ai-chats', label: 'Customer Sessions', icon: MessageSquare }, { to: '/pipelines', label: 'Zoho Bigin - CRM', icon: Columns3 }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/recordings', label: 'Customer Recordings', icon: AudioLines }, { to: '/zoho', label: 'Connections', icon: PlugZap }, { to: '/settings', label: 'Team & account', icon: Settings }, { to: '/walkins', label: 'Walk-in visits', icon: UsersRound },
+]
+const zohoBooksItems = [
+  { to: '/contacts', label: 'Contacts', icon: ContactRound }, { to: '/products', label: 'Items', icon: PackageSearch }, { to: '/quotes', label: 'Quotes', icon: FileText }, { to: '/sales-orders', label: 'Sales orders', icon: ShoppingCart }, { to: '/purchase-orders', label: 'Purchase orders', icon: ClipboardCheck }, { to: '/invoices', label: 'Invoices', icon: ReceiptText },
 ]
 export default function Sidebar() {
   const { workspace, workspaces, setWorkspace, captureBusy, user } = useOffice()
@@ -25,14 +28,20 @@ export default function Sidebar() {
     }).catch(() => {})
     return () => { active = false }
   }, [profile.data?.avatar_path, avatarRefresh])
-  const roleItems = workspace?.role === 'owner' ? navigationItems : workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems.filter(item => item.to !== '/walkins' && !item.to.startsWith('/walkins/'))
+  const roleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems.filter(item => item.to !== '/walkins' && !item.to.startsWith('/walkins/'))
+  const [booksOpen, setBooksOpen] = useState(false)
+  const visibleBooksItems = workspace?.role === 'owner' || workspace?.role === 'salesperson' ? zohoBooksItems : []
+  const salesRole = workspace?.role === 'owner' || workspace?.role === 'salesperson'
+  const salesTopItems = roleItems.filter(item => ['/dashboard', '/enquiries', '/ai-chats'].includes(item.to))
+  const salesPipeline = roleItems.find(item => item.to === '/pipelines')
+  const salesBottomItems = roleItems.filter(item => ['/analytics', '/recordings', '/zoho', '/settings'].includes(item.to))
   const displayName = profile.data?.display_name || user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Team member'
   const email = user?.email?.toLowerCase() || ''
   const ownerWorkspace = workspaces.find(item => (item.member_id ?? item.id) === user?.id && item.role === 'owner')
   const canSwitchWorkspace = !!ownerWorkspace && workspaces.length > 1
   const handleAvatarError = () => setAvatarUrl('')
-  return <aside className="sidebar"><div className="sidebar-brand"><div className="brand-mark"><AudioLines size={23} /></div><div><div className="brand-title">GuruConnect</div><small>Conversation history & enquiries</small></div></div>
+  return <aside className="sidebar"><div className="sidebar-brand"><div className="sidebar-brand-logos"><img src="/Cosmonet%20Logo.png" alt="Cosmonet AI" /><span>×</span><img src="/GG%20Logo.jpeg" alt="Guru Group" /></div><div><div className="brand-title">ConnectCosmos</div><small>Cosmonet AI × Guru Group</small></div></div>
     <div className="sidebar-workspace"><div className="workspace-person"><div className="workspace-avatar">{avatarUrl ? <img src={avatarUrl} alt="" onError={handleAvatarError} /> : <span>{displayName.slice(0, 1).toUpperCase()}</span>}</div><div><span className="nav-eyebrow">WORKSPACE</span>{canSwitchWorkspace ? <label className="workspace-switcher"><span className="sr-only">Switch workspace</span><select value={workspace?.member_id ?? workspace?.id ?? ''} onChange={event => setWorkspace(event.target.value)} disabled={captureBusy}>{workspaces.map(item => <option key={item.member_id ?? item.id} value={item.member_id ?? item.id}>{item.role} · {item.display_name || displayName}</option>)}</select></label> : <strong>{workspace?.name}</strong>}</div></div><div className="workspace-member"><span>{workspace?.display_name || displayName}</span><span className="workspace-role-badge">{workspace?.role}</span></div><small>{email}</small></div>
-    <nav className="sidebar-nav" aria-label="Main navigation">{roleItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}{to === '/enquiries' && !!unread.data?.count && <span className="nav-count" aria-label={`${unread.data.count} unread enquiries`}>{unread.data.count > 99 ? '99+' : unread.data.count}</span>}</NavLink>)}</nav>
+    <nav className="sidebar-nav" aria-label="Main navigation">{salesRole ? <>{salesTopItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}{to === '/enquiries' && !!unread.data?.count && <span className="nav-count" aria-label={`${unread.data.count} unread enquiries`}>{unread.data.count > 99 ? '99+' : unread.data.count}</span>}</NavLink>)}{salesPipeline && <NavLink to={salesPipeline.to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><salesPipeline.icon size={18} />{salesPipeline.label}</NavLink>}{visibleBooksItems.length > 0 && <div className="sidebar-nav-group"><button type="button" className={`nav-link nav-group-toggle${booksOpen ? ' expanded' : ''}`} onClick={() => setBooksOpen(open => !open)} aria-expanded={booksOpen}><BookOpen size={18} /><span>Zoho Books</span><ChevronDown size={15} className="nav-group-chevron" /></button>{booksOpen && <div className="nav-group-items">{visibleBooksItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link nav-link-child active' : 'nav-link nav-link-child'}><Icon size={16} />{label}</NavLink>)}</div>}</div>}{salesBottomItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink>)}</> : roleItems.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink>)}</nav>
     <div className="sidebar-footer">Conversation capture · Sales follow-up</div></aside>
 }

@@ -44,7 +44,7 @@ export default function App() {
       <Route path="/reset" element={<ResetPassword />} />
       <Route path="/auth/callback" element={<Navigate to="/" replace />} />
       <Route path="/ticket-tracking" element={<TicketTracking />} />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<ProtectedRoute><Navigate to="/dashboard" replace /></ProtectedRoute>} />
       <Route
         path="/"
         element={

@@ -1,4 +1,5 @@
 import { json, localMode, request } from './officeApi'
+import mockData from './mock-data.json'
 import type { RegisterWalkinInput, WalkinAgent, WalkinFilters, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../types/walkin'
 
 export interface WalkinPage<T> { items: T[]; total: number; page: number; pageSize: number }
@@ -24,6 +25,7 @@ function readLocal<T>(workspaceId: string, section: string, fallback: T): T {
     value = localStorage.getItem(`guru-group:walkin-${section}`)
     if (value) localStorage.setItem(key, value)
   }
+  if (!value && section === 'visits') return structuredClone(mockData.walkins) as T
   if (!value) return fallback
   try { return JSON.parse(value) as T } catch { throw new Error('Saved local walk-in data is invalid. Restore a valid local backup.') }
 }

@@ -78,6 +78,8 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const idRef = useRef<string | null>(initialConversationId || null)
   const notifiedSaved = useRef<string | null>(null)
   const creation = useRef<{ key: string; body: object } | null>(null)
+  const demoTimer = useRef<number | null>(null)
+  const demoElapsed = useRef(0)
   const tabId = useRef(recordingTabId(user?.id, workspace?.id, workspace?.member_id))
   const callbacks = useRef({ onConversationChange, onBusyChange, onSaved, onCaptureChange })
   callbacks.current = { onConversationChange, onBusyChange, onSaved, onCaptureChange }
@@ -111,6 +113,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     mounted.current = true
     return () => {
       mounted.current = false; generation.current++; abort.current?.abort()
+      if (demoTimer.current !== null) window.clearInterval(demoTimer.current)
       const session = active.current; active.current = null
       void session?.dispose().catch(() => undefined)
       callbacks.current.onBusyChange?.(false)
@@ -194,6 +197,22 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
+      // The frontend demo deliberately does not create an audio lease or call
+      // the recording API. It still exercises the same UI lifecycle with a
+      // synthetic meter so the session flow works with the backend stopped.
+      if (localMode && sessionOnly) {
+        demoElapsed.current = 0
+        setPhase('recording')
+        setCapture({ ...emptyCapture, capture: 'recording', level: 0.62 })
+        demoTimer.current = window.setInterval(() => {
+          if (!mounted.current) return
+          demoElapsed.current += 1
+          const level = 0.35 + ((demoElapsed.current * 17) % 55) / 100
+          setCapture(current => ({ ...current, capture: current.capture === 'paused' ? 'paused' : 'recording', elapsedSeconds: demoElapsed.current, level, pendingChunks: Math.floor(demoElapsed.current / Math.max(1, chunkSeconds)), pendingBytes: demoElapsed.current * 480 }))
+        }, 1000)
+        finish(epoch, controller)
+        return
+      }
       const id = await createConversation(controller.signal)
       const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: false }), signal: controller.signal }, workspace!.member_id)
       controller.signal.throwIfAborted()
@@ -216,8 +235,19 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     finally { finish(epoch, controller) }
   }
   async function changeCapture(action: 'pause' | 'resume' | 'stop') {
-    if (operationRef.current || !active.current) return
+    if (operationRef.current || (!active.current && !(localMode && sessionOnly && captureActive))) return
+    if (localMode && sessionOnly && !active.current) {
+      if (action === 'pause' || action === 'resume') {
+        setCapture(current => ({ ...current, capture: action === 'pause' ? 'paused' : 'recording' }))
+        return
+      }
+      if (demoTimer.current !== null) { window.clearInterval(demoTimer.current); demoTimer.current = null }
+      setCapture(current => ({ ...current, capture: 'stopped', saving: false, level: 0 }))
+      setSaved(true); setPhase('saved'); setError('')
+      return
+    }
     const epoch = generation.current; const session = active.current
+    if (!session) return
     operationRef.current = true; setOperation(true); setError('')
     try {
       await session[action]()
