@@ -112,6 +112,11 @@
   .voice-sessions-page .is-cart-focused .lws-conversation-lane { grid-column: 1; grid-row: 1 / 3; overflow-y: auto; scrollbar-width: thin; }
   .voice-sessions-page .is-cart-focused .lws-cart-lane { grid-column: 2; grid-row: 2; overflow: hidden; }
   .voice-sessions-page .is-cart-focused .lws-notes { grid-column: 3; grid-row: 2; }
+  /* Keep the notes rail continuous from the profile header down to the
+     recorder. Grid items otherwise shrink to their content and expose the
+     blank strip beside the recommendation/cart lane. */
+  .voice-sessions-page .is-cart-focused .lws-notes { align-self: stretch; height: 100%; min-height: 0; max-height: none; }
+  .voice-sessions-page .is-cart-focused .lws-notes-list { min-height: 0; }
   .voice-sessions-page .is-cart-focused .lws-recording-footer { grid-column: 1 / -1; grid-row: 3; border: 1px solid #dfe8f3; border-radius: 12px; }
   .voice-sessions-page .is-cart-focused .lws-conversation { min-height: 260px; max-height: 43vh; }
   .voice-sessions-page .is-cart-focused .lws-suggestions { flex: 1 0 auto; }
@@ -132,4 +137,36 @@
   .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-notes { height: 100%; min-height: 0; max-height: none; border-left: 1px solid #e3ebf3; border-radius: 0; }
   .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-notes-list { min-height: 0; }
   .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-recording-footer { flex: 0 0 auto; }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace { height: 100%; min-height: 0; }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-work-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) 292px; align-items: stretch; }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace.is-cart-view .lws-work-grid { grid-template-columns: minmax(205px, .92fr) minmax(0, 2fr) 252px; }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-notes { min-height: 0; height: 100%; }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-notes-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+}
+
+@media (min-width: 1000px) {
+  /* Keep the notes rail continuous to the recorder instead of ending at the
+     height of the recommendation cards. */
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace .lws-notes {
+    align-self: stretch;
+    height: 100%;
+    min-height: 0;
+    margin-bottom: 0;
+  }
+  .voice-sessions-page .is-cart-focused .lws-notes {
+    margin-bottom: -12px;
+    height: calc(100% + 12px);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .voice-sessions-page .voice-sessions-layout > .conversation:has(.voice-composer) .live-session-workspace:not(.is-cart-view) .lws-product-list {
+    grid-auto-flow: initial;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: hidden;
+  }
+  .voice-sessions-page .is-cart-focused .lws-product-list {
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    overflow-x: auto;
+  }
 }

@@ -29,6 +29,8 @@ function expandMockData(data) {
   const existingLeadContacts = new Set((data.pipelines || []).map((lead) => lead.Contact_Name?.id).filter(Boolean));
   const crmStages = ['Qualification', 'Needs Analysis', 'Proposal/Price Quote', 'Negotiation/Review'];
   data.pipelines = data.pipelines || [];
+  data.voice_contexts = data.voice_contexts || {};
+  data.demo_documents = data.demo_documents || [];
   data.contacts.forEach((contact, index) => {
     if (existingLeadContacts.has(contact.contact_id)) return;
     data.pipelines.push({ id: `lead-${contact.contact_id}`, Deal_Name: `${contact.contact_name} · ${contact.project || 'Customer opportunity'}`, Stage: crmStages[index % crmStages.length], Lead_Status: 'Registered', Amount: 4999 + (index % 12) * 750, Expected_Revenue: 3999 + (index % 10) * 600, Probability: 25 + (index % 6) * 10, Closing_Date: `2026-11-${String(1 + (index % 25)).padStart(2, '0')}`, Next_Step: index % 2 ? 'Follow up with product comparison' : 'Confirm requirements and prepare quote', Contact_Name: { id: contact.contact_id, name: contact.contact_name, mobile: contact.mobile }, Phone: contact.mobile, Owner: { name: contact.assigned || executives[index % executives.length] }, Pipeline: { id: 'sales-pipeline', name: 'Sales pipeline' }, Description: `Registered demo lead for ${contact.contact_name}. Product interests and conversation history are available in the customer session.` });
@@ -46,23 +48,45 @@ function mockZoho(path, opts = {}) {
     const lead = data.pipelines.find((item) => item.Contact_Name?.id === contact.contact_id) || data.pipelines.find((item) => item.Contact_Name?.name === contact.contact_name);
     return { transcript_summary: `Customer is comparing quiet, energy-efficient ceiling fans for a ${contact.project || 'home project'} and asked for a 1200mm model with remote control.`, keywords: ['Ceiling fan', '1200mm', 'BLDC', 'Remote control', 'Energy efficient', contact.branch].filter(Boolean), recordings: [{ id: `history-${contact.contact_id}-1`, created_at: '2026-10-29T10:24:00Z', duration_seconds: 192, summary: 'Customer compared regular and BLDC fan options and requested a premium model.', keywords: ['BLDC', 'Remote control', 'Premium model'], status: 'Processed' }, { id: `history-${contact.contact_id}-2`, created_at: '2026-10-27T15:12:00Z', duration_seconds: 137, summary: 'Customer shared budget, installation preference, and a follow-up requirement.', keywords: ['Budget', 'Installation', 'Follow-up'], status: 'Processed' }], quotes: quotes.length ? quotes.map((quote) => ({ id: quote.estimate_id, number: quote.estimate_number, status: quote.status, total: quote.total, date: quote.date })) : [{ id: `quote-${contact.contact_id}`, number: 'QT-2026-1027', status: 'sent', total: lead?.Amount || 6999, date: '2026-10-28' }], lead };
   };
-  const recommendedProducts = data.products.slice(0, 3).map((item, index) => ({ ...item, match_status: 'verified', matched_specs: index === 0 ? ['quiet operation', 'energy efficient'] : ['ceiling fan', 'modern design'], features: index === 0 ? ['Energy efficient BLDC', 'Low noise operation', 'Remote control'] : index === 1 ? ['BLDC motor', 'LED light with dimmer', 'Remote control'] : ['High air delivery', 'Copper motor', 'Easy installation'] }));
+  const variantFor = (contact) => [...String(contact.contact_id || contact.mobile || contact.contact_name)].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 4;
+  const recommendationSets = [
+    { keywords: ['Ceiling fan', '1200mm', 'BLDC', 'Remote control', 'Energy efficient'], intent: 'Compare quiet BLDC ceiling fans', requirements: [{ label: 'Product', value: '1200mm ceiling fan' }, { label: 'Specification', value: 'Quiet BLDC with remote' }, { label: 'Budget', value: '₹12,000' }], guidance: ['Lead with BLDC energy savings', 'Mention remote control and installation', 'Prepare a quote after product selection'], features: [['Energy efficient BLDC', 'Low noise operation', 'Remote control'], ['BLDC motor', 'LED light with dimmer', 'Remote control'], ['High air delivery', 'Copper motor', 'Easy installation']] },
+    { keywords: ['Pedestal fan', '400mm', 'Low noise', 'Office', 'Delivery'], intent: 'Find practical pedestal fans for an office', requirements: [{ label: 'Product', value: '400mm pedestal fan' }, { label: 'Specification', value: 'Low noise with strong airflow' }, { label: 'Budget', value: '₹18,000' }], guidance: ['Confirm the number of workstations', 'Compare sweep and speed controls', 'Offer a bulk delivery timeline'], features: [['Wide sweep', 'Low noise operation', 'Three speed control'], ['Heavy base', 'Adjustable height', 'Thermal protection'], ['Energy efficient motor', 'Compact footprint', 'Easy service access']] },
+    { keywords: ['LED bulb', '9W', 'Pack of 4', 'Warm white', 'Bulk order'], intent: 'Source LED lighting for a residential project', requirements: [{ label: 'Product', value: '9W LED bulbs' }, { label: 'Specification', value: 'Pack of 4, warm white' }, { label: 'Quantity', value: '24 packs' }], guidance: ['Confirm colour temperature', 'Check the required pack quantity', 'Offer a project-rate quote'], features: [['9W LED', 'Pack of 4', 'Long life'], ['Warm white', 'B22 base', 'Energy saving'], ['Cool daylight', 'High lumen output', 'Bulk pack pricing']] },
+    { keywords: ['Smart fan', 'Light', 'Remote', 'Apartment', 'Installation'], intent: 'Choose a smart fan with integrated light', requirements: [{ label: 'Product', value: 'Smart ceiling fan with light' }, { label: 'Specification', value: 'Remote and dimmable LED' }, { label: 'Project', value: 'New apartment' }], guidance: ['Demonstrate the light controls', 'Confirm ceiling height and wiring', 'Include installation in the quote'], features: [['Integrated LED light', 'Remote control', 'Modern design'], ['Dimmable light', 'BLDC motor', 'Sleep mode'], ['Timer function', 'High air delivery', 'Warranty support']] },
+  ];
+  const recommendedProductsFor = (contact) => {
+    const variant = variantFor(contact);
+    const set = recommendationSets[variant];
+    const offset = [0, 3, 6, 9][variant];
+    return [0, 1, 2].map((position) => {
+      const item = data.products[(offset + position) % data.products.length];
+      return { ...item, match_status: 'verified', matched_specs: set.features[position].slice(0, 2), features: set.features[position] };
+    });
+  };
   const sessionPayload = (contact, agent = 'Ravi Kumar') => {
     const now = new Date().toISOString();
+    const variant = variantFor(contact);
+    const set = recommendationSets[variant];
+    const productsForSession = recommendedProductsFor(contact);
+    const productNames = productsForSession.map((product) => product.name);
+    const transcriptSets = [
+      [`I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?`, `Yes, I can suggest ${productNames[0]} and ${productNames[1]} with remote control and good air delivery.`, `Please show me the 1200mm model and a premium option with a light. My budget is around twelve thousand.`, `I will compare the matching products and prepare the quotation with the available discount.`],
+      [`We need fans for a small office and want strong airflow without too much noise.`, `I can compare pedestal options such as ${productNames[0]} and ${productNames[1]} for the office floor.`, `Please check delivery for twelve units and include the service details.`, `I will prepare a bulk quote after confirming the sweep and delivery timeline.`],
+      [`I am sourcing LED bulbs for a residential project and need a reliable pack size.`, `The catalogue has ${productNames[0]} and ${productNames[1]} with different colour and lumen options.`, `Please include the pack pricing for the project quantity.`, `I will verify the project rate and prepare the quotation.`],
+      [`I want a smart ceiling fan with an integrated light for a new apartment.`, `I can show ${productNames[0]} and ${productNames[1]} with remote and dimmable light controls.`, `Please include installation and confirm the wiring requirements.`, `I will compare the matching models and prepare a quote with installation.`],
+    ][variant];
     const transcript = [
-      { start_seconds: 0, recorded_at: now, speaker_role: 'customer', speaker_name: contact.contact_name, english_text: 'I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?', source_text: 'I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?' },
-      { start_seconds: 12, recorded_at: now, speaker_role: 'agent', speaker_name: agent, english_text: 'Yes, I can suggest a few BLDC options with remote control and good air delivery.', source_text: 'Yes, I can suggest a few BLDC options with remote control and good air delivery.' },
-      { start_seconds: 25, recorded_at: now, speaker_role: 'customer', speaker_name: contact.contact_name, english_text: 'Please show me the 1200mm model and a premium option with a light. My budget is around twelve thousand.', source_text: 'Please show me the 1200mm model and a premium option with a light. My budget is around twelve thousand.' },
-      { start_seconds: 39, recorded_at: now, speaker_role: 'agent', speaker_name: agent, english_text: 'I will compare the matching products and prepare the quotation with the available discount.', source_text: 'I will compare the matching products and prepare the quotation with the available discount.' },
+      ...transcriptSets.map((text, index) => ({ start_seconds: [0, 12, 25, 39][index], recorded_at: now, speaker_role: index % 2 ? 'agent' : 'customer', speaker_name: index % 2 ? agent : contact.contact_name, english_text: text, source_text: text })),
     ];
     return {
       messages: transcript.map(turn => ({ role: turn.speaker_role === 'customer' ? 'user' : 'assistant', content: turn.english_text })),
       transcript_preview: transcript,
-      keywords: ['Ceiling fan', 'Regular fan', 'Good air delivery', 'Modern design'],
-      requirements: [{ label: 'Product', value: '1200mm ceiling fan' }, { label: 'Specification', value: 'Quiet BLDC with remote' }, { label: 'Budget', value: '₹12,000' }],
-      current_intent: 'Compare ceiling fan options',
-      agent_guidance: ['Lead with BLDC energy savings', 'Mention remote control and installation', 'Prepare a quote after product selection'],
-      clarification_suggestions: ['Confirm blade colour', 'Confirm delivery timeline'],
+      keywords: set.keywords,
+      requirements: set.requirements,
+      current_intent: set.intent,
+      agent_guidance: set.guidance,
+      clarification_suggestions: variant === 1 ? ['Confirm number of units', 'Confirm delivery location'] : variant === 2 ? ['Confirm colour temperature', 'Confirm pack quantity'] : variant === 3 ? ['Confirm ceiling height', 'Confirm installation date'] : ['Confirm blade colour', 'Confirm delivery timeline'],
       catalogue_status: 'up_to_date',
       analysis_status: 'complete',
       processing_status: { stage: 'complete', message: 'Demo transcript analysed locally.' },
@@ -90,13 +114,13 @@ function mockZoho(path, opts = {}) {
     const contact = data.contacts.find(item => item.mobile === input.phone || item.contact_name === input.name) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process' }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: '₹12,000' }], recommendations: recommendedProducts };
+    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process' }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
   }
   if (clean.startsWith('/voice-sessions/') && clean.endsWith('/history')) {
     const sessionId = clean.split('/')[2]; const contactId = sessionId.replace(/^chat-/, ''); const contact = data.contacts.find(item => item.contact_id === contactId) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: '₹12,000' }], recommendations: recommendedProducts };
+    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
   }
   if (clean.includes('/voice-sessions/') && clean.endsWith('/notes')) {
     if (method === 'POST') { let body = {}; try { body = JSON.parse(opts.body || '{}'); } catch {} return { note: { id: `note-${Date.now()}`, author_name: 'Ravi Kumar', content: body.content || 'Follow up with the customer.', created_at: new Date().toISOString() } }; }
@@ -106,7 +130,61 @@ function mockZoho(path, opts = {}) {
       { id: 'note-3', author_name: 'Sumanth Reddy', content: 'Please confirm colour preference and delivery timeline before preparing the quote.', created_at: '2026-10-30T09:27:00Z' },
     ] };
   }
-  if (clean.includes('/voice-sessions/') && clean.endsWith('/context')) return { product_requirements: [], cart: [] };
+  if (clean.includes('/voice-sessions/') && clean.endsWith('/context')) {
+    const sessionId = clean.split('/')[2];
+    if (method === 'PUT') {
+      let body = {}; try { body = JSON.parse(opts.body || '{}'); } catch {}
+      data.voice_contexts[sessionId] = {
+        product_requirements: Array.isArray(body.product_requirements) ? body.product_requirements : [],
+        cart: Array.isArray(body.cart) ? body.cart : [],
+      };
+      writeMock(data);
+    }
+    return data.voice_contexts[sessionId] || { product_requirements: [], cart: [] };
+  }
+  if (clean.startsWith('/voice-sessions/') && clean.endsWith('/sales-documents/options')) {
+    const sessionId = clean.split('/')[2];
+    const contactId = sessionId.replace(/^chat-/, '');
+    const contact = data.contacts.find((item) => item.contact_id === contactId) || data.contacts[0];
+    return {
+      mode: 'local-demo',
+      document_types: ['invoice', 'quote', 'sales-order'],
+      customer: { name: contact.contact_name, contact_name: contact.contact_name, phone: contact.mobile, email: contact.email },
+      email: { configured: false },
+    };
+  }
+  if (clean.startsWith('/voice-sessions/') && clean.includes('/sales-documents') && method === 'POST') {
+    let body = {}; try { body = JSON.parse(opts.body || '{}'); } catch {}
+    const type = body.type || 'invoice';
+    const lines = Array.isArray(body.line_items) ? body.line_items : [];
+    const subtotal = lines.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
+    const discount = lines.reduce((sum, line) => {
+      const value = Number(line.discount || 0);
+      return sum + (line.discount_type === 'fixed' ? value : Number(line.rate || 0) * Number(line.quantity || 0) * value / 100);
+    }, 0);
+    const taxable = Math.max(0, subtotal - discount);
+    const tax = Math.round(taxable * 0.18 * 100) / 100;
+    const total = Math.round((taxable + tax) * 100) / 100;
+    const sessionId = clean.split('/')[2];
+    const contact = data.contacts.find((item) => `chat-${item.contact_id}` === sessionId) || data.contacts[0];
+    const existing = data.demo_documents.find((item) => item.request_id === body.request_id);
+    if (existing) return existing.response;
+    const serial = 1000 + data.demo_documents.length + 1;
+    const prefixes = { invoice: 'INV-2026-', quote: 'QT-2026-', 'sales-order': 'SO-2026-' };
+    const number = `${prefixes[type] || prefixes.invoice}${serial}`;
+    const id = `demo-${type}-${serial}`;
+    const document = { id, type, number, status: body.delivery === 'email' ? 'sent' : 'created', customer_name: contact.contact_name, customer_phone: contact.mobile, total, subtotal, discount, tax, date: new Date().toISOString().slice(0, 10), demo: true, line_items: lines };
+    const target = type === 'quote' ? data.quotes : type === 'sales-order' ? data.orders : data.invoices;
+    const idKey = type === 'quote' ? 'estimate_id' : type === 'sales-order' ? 'salesorder_id' : 'invoice_id';
+    const numberKey = type === 'quote' ? 'estimate_number' : type === 'sales-order' ? 'salesorder_number' : 'invoice_number';
+    target.unshift({ [idKey]: id, [numberKey]: number, customer_name: contact.contact_name, status: document.status, total, subtotal, discount, tax, date: document.date, line_items: lines });
+    const pdfText = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF`;
+    const base64 = btoa(unescape(encodeURIComponent(pdfText)));
+    const response = { document, delivery: { status: body.delivery === 'email' ? 'accepted' : 'accepted', message: 'Sample document created locally. No external service was called.' }, pdf: { mime_type: 'application/pdf', base64, filename: `${number}.pdf` } };
+    data.demo_documents.unshift({ request_id: body.request_id, response });
+    writeMock(data);
+    return response;
+  }
   if (clean.startsWith('/chats/') && clean.endsWith('/messages')) return [{ role: 'user', content: 'I am looking for a ceiling fan for my living room.' }, { role: 'assistant', content: 'I can suggest quiet BLDC options with remote control.' }];
   if (clean === '/chat' && method === 'POST') return { session_id: 'chat-akshat', answer: 'I found matching products and can prepare a quotation.' };
   if (method === 'POST' && clean.startsWith('/books/')) return { estimate: { estimate_number: `QT-2026-${1030 + data.quotes.length}` }, reference_number: `QT-2026-${1030 + data.quotes.length}` };

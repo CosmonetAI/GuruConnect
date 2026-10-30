@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  ArrowRight, Check, ChevronDown, ChevronUp, Download, FileText, History, MessageSquare,
+  ArrowRight, Check, ChevronDown, ChevronUp, Download, FileText, MessageSquare,
   Minus, Package, Plus, Search, ShoppingCart, Sparkles, Trash2, X,
 } from 'lucide-react';
 import '../styles/live-session-workspace.css';
@@ -131,37 +131,6 @@ function AgentGuidance({ clarificationSuggestions, requirements, currentIntent, 
   </section>;
 }
 
-function Conversation({ transcript, messages, sessionStartedAt, recordingState, customerHistory = {}, onOpenHistory }) {
-  const list = useRef(null);
-  const stick = useRef(true);
-  const turns = transcript.length ? transcript : messages.map((message, index) => ({
-    ...message, id: message.id || `message-${index}`, english_text: message.content,
-    speaker_ref: message.role === 'assistant' ? 'Assistant' : message.role === 'user' ? 'User' : 'Conversation',
-    recorded_at: message.created_at,
-  }));
-  useEffect(() => {
-    if (stick.current && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [turns.length, turns.at(-1)?.english_text, turns.at(-1)?.source_text]);
-  const active = recordingState?.capture === 'recording';
-  const recordings = customerHistory.recordings || [];
-  const quotes = customerHistory.quotes || [];
-  return <section className="lws-conversation lws-panel" aria-label="Customer history">
-    <div className="lws-panel-heading"><h3><History size={17} />Customer history</h3><div className="lws-heading-actions"><span className="lws-subtle">{active ? <><i className="lws-live-dot" />Listening</> : `${recordings.length} recordings`}</span>{onOpenHistory && <button type="button" className="lws-button lws-button-small" onClick={onOpenHistory}>Complete history <ArrowRight size={13} /></button>}</div></div>
-    <div className="lws-history-strip"><div><small>Transcript summary</small><p>{customerHistory.transcript_summary || 'Previous summaries, keywords and commercial records will appear here.'}</p></div><div className="lws-history-meta"><span><strong>{recordings.length}</strong> recordings</span><span><strong>{quotes.length}</strong> quotes</span></div></div>
-    {customerHistory.keywords?.length > 0 && <div className="lws-history-keywords" aria-label="Customer keywords">{customerHistory.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>}
-    <div className="lws-current-session-label"><MessageSquare size={14} />Current session</div>
-    <div className="lws-bubbles" ref={list} onScroll={() => { if (list.current) stick.current = list.current.scrollHeight - list.current.scrollTop - list.current.clientHeight < 70; }} aria-live="polite" aria-relevant="additions text">
-      {turns.length ? turns.map((turn, index) => {
-        const voice = speaker(turn);
-        return <article className={`lws-message${voice.agent ? ' is-agent' : ''}`} key={turnKey(turn, index)}>
-          <span className="lws-avatar" aria-hidden="true">{voice.agent ? 'SA' : initials(voice.label)}</span>
-          <div className="lws-message-body"><div className="lws-message-meta"><strong>{voice.label}</strong><time>{turnTime(turn, sessionStartedAt)}</time></div><p>{turn.english_text || turn.source_text}</p>{!turn.english_text && turn.source_text && <span className="lws-translation-pending">Translation pending</span>}</div>
-        </article>;
-      }) : <div className="lws-empty lws-conversation-empty"><span className="lws-empty-icon"><MessageSquare size={25} strokeWidth={1.5} /></span><strong>{active ? 'Listening to your conversation' : 'Your conversation, as it happens'}</strong><p>{active ? 'Translated text will appear as each short audio segment is processed.' : 'Start recording below. The conversation and English translation will update here as you speak.'}</p></div>}
-    </div>
-  </section>;
-}
-
 function Transcript({ transcript, onDownload, sessionStartedAt }) {
   const [collapsed, setCollapsed] = useState(!transcript.length);
   useEffect(() => { if (transcript.length) setCollapsed(false); }, [transcript.length]);
@@ -275,17 +244,16 @@ export default function LiveSessionWorkspace({
   notes = [], noteText = '', onNoteTextChange, onAddNote, noteBusy = false, noteError = '',
   recordingState = {}, recordingStatus, insightsStatus, catalogueNotice = '', sessionStartedAt,
   catalogueStatus = '', clarificationSuggestions = [], requirements = [], currentIntent = '', agentGuidance = [],
-  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, taxTotal, currencyCode = 'INR', customerHistory = {}, onOpenHistory, children,
+  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
   const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance }} compact={cartView} />;
   return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
-      <div className="lws-conversation-lane"><Conversation {...{ transcript, messages, sessionStartedAt, recordingState, customerHistory, onOpenHistory }} />{!cartView && <Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />}{suggestions}</div>
+      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />{suggestions}</div>
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
-        {cartView && <Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />}
       </div>
       <Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} />
     </div>

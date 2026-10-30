@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   Headphones,
+  History,
   Mic2,
   MessageSquare,
   Plus,
@@ -814,7 +815,7 @@ export default function VoiceSessions() {
     setProducts([]);
   };
   const addToCart = (item) => {
-    if (sessionBusy || contextHydrated !== session) return;
+    if (sessionBusy) return;
     const id = item.item_id || item.id || item.sku;
     const latest = recommendations.find((candidate) => (candidate.item_id || candidate.id || candidate.sku) === id);
     if (latest) item = { ...item, ...latest, match_confirmation_acknowledged: item.match_confirmation_acknowledged && productReviewFingerprint(item) === productReviewFingerprint(latest) };
@@ -829,13 +830,13 @@ export default function VoiceSessions() {
     setCartProductSearchOpen(false);
   };
   const updateCart = (index, key, value) => setCart((current) => current.map((line, i) => {
-    if (sessionBusy || contextHydrated !== session) return line;
+    if (sessionBusy) return line;
     if (i !== index) return line;
     const next = { ...line, [key]: key === 'quantity' ? Math.max(1, Math.floor(Number(value) || 1)) : key === 'discount' ? Math.max(0, Number(value) || 0) : value };
     next.discount = Math.min(Number(next.discount) || 0, next.discount_type === 'fixed' ? Number(next.rate) * Number(next.quantity) : 100);
     return next;
   }));
-  const removeCartItem = (index) => { if (sessionBusy || contextHydrated !== session) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
+  const removeCartItem = (index) => { if (sessionBusy) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
   const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
   const openDocumentModal = async () => {
@@ -863,7 +864,10 @@ export default function VoiceSessions() {
       documentSnapshot.current = snapshot;
       setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
       setDocumentType(supportedTypes[0]); setDocumentEmail(customer.email || "");
-      setDocumentDelivery(options.mode === "local-demo" || !options.email?.configured || !customer.email ? "download" : "email");
+      // A registered customer email should default to the send workflow even
+      // in local demo mode. The mock API records the send without contacting
+      // Zoho Books, SMTP, or any other external service.
+      setDocumentDelivery(customer.email ? "email" : "download");
       setDocumentSubject("Your document from ConnectCosmos");
       setDocumentMessage(`Hi ${customer.name || "there"},\n\nPlease find your document for the selected items attached. Let us know if you have any questions.`);
       setDocumentModalOpen(true);
@@ -924,7 +928,10 @@ export default function VoiceSessions() {
     const snapshot = documentSnapshot.current;
     if (!snapshot || documentInFlight.current || !documentScopeCurrent(snapshot)) return;
     const recipient = documentEmail.trim();
-    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !recipient || documentDelivery === "download";
+    // Local demo delivery is intentionally simulated, so an existing customer
+    // email should follow the same Create & send path as production. No network
+    // email provider is contacted by the frontend-only mock API.
+    const downloadOnly = !recipient || documentDelivery === "download";
     if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email, or choose Download PDF instead of emailing."); return; }
     const existing = snapshot.result;
     if (existing && downloadOnly) {
@@ -955,7 +962,7 @@ export default function VoiceSessions() {
         downloadDocumentPdf(result); setDocumentModalOpen(false);
         setDocumentFeedback(`${result.document.demo ? "Sample document" : "Document"} created and downloaded as PDF.`);
       } else if (deliveryStatus === "accepted") {
-        setDocumentModalOpen(false); setDocumentFeedback("Document created. Submitted for delivery via SMTP2GO.");
+        setDocumentModalOpen(false); setDocumentFeedback(result.document?.demo ? `${type === "quote" ? "Quote" : type === "invoice" ? "Invoice" : "Sales order"} created in Zoho Books and emailed to ${recipient} (demo simulation; no external service was called).` : "Document created. Submitted for delivery via SMTP2GO.");
       } else {
         snapshot.error = result.delivery?.message || (deliveryStatus === "uncertain" ? "Email submission is uncertain. Check its status before retrying. You can download the created PDF." : "The document was created, but email submission failed. Retry email or download the PDF.");
         snapshot.emailFields = { recipient, subject: documentSubject, message: documentMessage };
@@ -1146,10 +1153,10 @@ export default function VoiceSessions() {
                 {cart.length > 0 && <button type="button" className="session-contacts-toggle" onClick={() => setCartOpen(!cartOpen)} aria-pressed={!cartOpen}><BookUser size={16} />{cartOpen ? "Show contacts" : "Focus cart"}</button>}
               </div>
               <nav className="live-session-tabs" aria-label="Customer session views">
-                <button type="button" className={activeTab === "conversation" ? "selected" : ""} onClick={() => setActiveTab("conversation")}><MessageSquare size={15} />Customer history</button>
+                <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><History size={15} />Customer history</button>
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
-                <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Customer recordings ({customerHistory.recordings?.length || recorderSessions.length})</button>
+                <button type="button" className={activeTab === "recordings" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "recordings" ? "conversation" : "recordings")}><Headphones size={15} />Customer recordings ({customerHistory.recordings?.length || recorderSessions.length})</button>
                 {crmLead && <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "lead" ? "conversation" : "lead")}><Columns3 size={15} />CRM lead</button>}
               </nav>
             </>
@@ -1167,8 +1174,8 @@ export default function VoiceSessions() {
             <small className="session-welcome-footnote">You’ll start the microphone in the next step.</small>
           </div></div>}
           {session && <>
-            {(activeTab === "history" || activeTab === "context") && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Customer recordings" : "Enquiry context"}>
-              <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
+            {(activeTab === "recordings" || activeTab === "context") && <section className="session-view-drawer" aria-label={activeTab === "recordings" ? "Customer recordings" : "Enquiry context"}>
+              <div className="session-drawer-heading"><strong>{activeTab === "recordings" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
               {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : (customerHistory.recordings?.length || recorderSessions.length) ? [...customerHistory.recordings, ...recorderSessions].map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {recording.status || String(recording.final_state || "processed").replaceAll("_", " ")}</small><span>{recording.summary || ''}</span></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setFullHistoryOpen(true)}>View history</button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             {activeTab === "lead" && <section className="session-view-drawer session-crm-lead-tab" aria-label="CRM lead">
@@ -1200,8 +1207,6 @@ export default function VoiceSessions() {
               noteBusy={noteBusy}
               noteError={noteError}
               recordingState={captureState}
-              customerHistory={customerHistory}
-              onOpenHistory={() => setFullHistoryOpen(true)}
               recordingStatus={transcriptionUiStatus}
               insightsStatus={{ key: liveAnalysis, label: liveAnalysis === "running" || liveAnalysis === "pending" ? "Finding product matches…" : liveAnalysis === "unavailable" ? "Product analysis temporarily unavailable" : liveAnalysis === "failed" ? "Product analysis needs attention" : liveAnalysis === "complete" ? "Requirements updated" : "Listening for product requirements" }}
               catalogueNotice={[liveNotice, cartSaveError, demoCatalogueNotice, ...catalogueNotices.filter((notice) => !demoCatalogue || notice.code !== "local_demo_catalogue").map((notice) => notice.message)].filter(Boolean).join(" ")}
