@@ -2,7 +2,7 @@ import type { Enquiry } from '../types/enquiry'
 
 let enquiries: Enquiry[] = [
   {
-    id: 'ENQ-2026-0001',
+    id: 'ENQ-13102026-000001',
     customerName: 'ABC Constructions',
     phone: '9876543210',
     email: 'info@abc.co',
@@ -17,7 +17,7 @@ let enquiries: Enquiry[] = [
     createdAt: '2026-10-10',
   },
   {
-    id: 'ENQ-2026-0002',
+    id: 'ENQ-09102026-000002',
     customerName: 'Retail XYZ',
     phone: '9123456780',
     email: 'contact@retailxyz.com',
@@ -84,7 +84,9 @@ export function createEnquiry(data: Omit<Enquiry, 'id' | 'createdAt'>) {
     ? enquiries.find((enquiry) => enquiry.sourceWalkinId === data.sourceWalkinId)
     : undefined
   if (existing) return existing
-  const id = `ENQ-${new Date().getFullYear()}-${String(enquiries.length + 1).padStart(4, '0')}`
+  const now = new Date()
+  const datePart = `${String(now.getDate()).padStart(2, '0')}${String(now.getMonth() + 1).padStart(2, '0')}${now.getFullYear()}`
+  const id = `ENQ-${datePart}-${String(enquiries.length + 1).padStart(6, '0')}`
   const createdAt = new Date().toISOString().slice(0, 10)
   const enq: Enquiry = { id, createdAt, ...data }
   enquiries.push(enq)

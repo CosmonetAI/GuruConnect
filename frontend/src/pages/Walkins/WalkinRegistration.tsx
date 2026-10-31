@@ -39,8 +39,9 @@ export default function WalkinRegistration() {
   const [saveKey, setSaveKey] = useState(() => crypto.randomUUID())
   const [voiceBusy, setVoiceBusy] = useState(false)
   const voiceConversation = useRef<string | null>(null)
+  const allowLeave = useRef(false)
   const [voiceId, setVoiceId] = useState<string | null>(null)
-  const blocker = useBlocker(voiceBusy || saving)
+  const blocker = useBlocker(() => !allowLeave.current && (voiceBusy || saving))
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
   useEffect(() => { if (blocker.state === 'blocked') { setError('End the visitor recording before leaving this page.'); blocker.reset() } }, [blocker])
 
@@ -93,6 +94,7 @@ export default function WalkinRegistration() {
         try { await attachWalkinRecording(workspace.id, visit.id, recordingId); linked = !isWalkinDemoMode() } catch { linked = false }
         if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ } }
       }
+      allowLeave.current = true
       navigate('/walkins', { replace: true })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')

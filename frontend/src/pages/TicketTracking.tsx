@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { apiBase } from '../services/officeApi'
 
-type Result = { ticketNumber: number; date: string; stage: string; salesperson: string; salespersonEmail?: string }
+type Result = { ticketNumber: string; date: string; stage: string; salesperson: string; salespersonEmail?: string }
 
 export default function TicketTracking() {
   const [token, setToken] = useState(''); const [result, setResult] = useState<Result | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)

@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 from typing import Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cryptography.fernet import Fernet
 from psycopg.conninfo import conninfo_to_dict
@@ -53,12 +54,22 @@ class Settings(BaseSettings):
     azure_translator_key: SecretStr | None = None
     azure_translator_region: str = ""
     azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
+    app_timezone: str = "Asia/Kolkata"
 
     @field_validator("openai_translation_model")
     @classmethod
     def validate_translation_model(cls, value):
         from .openai_translator import validate_translation_model
         return validate_translation_model(value)
+
+    @field_validator("app_timezone")
+    @classmethod
+    def validate_app_timezone(cls, value):
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, TypeError):
+            raise ValueError("APP_TIMEZONE must be a valid IANA timezone") from None
+        return value
 
     @field_validator("environment", mode="before")
     @classmethod

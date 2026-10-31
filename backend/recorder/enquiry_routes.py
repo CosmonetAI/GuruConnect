@@ -7,6 +7,7 @@ the recording API, so retrying this form cannot create another paid job.
 import hashlib
 import json
 import re
+import secrets
 from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
@@ -20,7 +21,7 @@ from .errors import fail
 from .routes import audit
 from .security import Workspace, conversation, workspace
 from .walkin_routes import complete_conversion, conversion_visit, validate_conversion_recording
-from .assignment import least_loaded_salesperson
+from .assignment import current_ticket_day, format_enquiry_number, format_ticket_number, least_loaded_salesperson, next_daily_ticket
 from app.zoho import zoho
 
 router = APIRouter(prefix="/api/v1/enquiries", tags=["enquiries"])
@@ -132,7 +133,10 @@ def serialize_enquiry(row: dict) -> dict:
     payload = dict(row["payload"])
     # Stored server ownership and dates always win over submitted metadata.
     payload.update(id=str(row["id"]),
-                   enquiryNumber=f"ENQ-{row['created_at'].year}-{row['enquiry_number']:06d}",
+                   enquiryNumber=format_enquiry_number(
+                       row["ticket_day"] or row["created_at"].date(),
+                       row["daily_sequence"] or row["enquiry_number"],
+                   ),
                    createdAt=row["created_at"].isoformat())
     payload["conversationId"] = str(row["conversation_id"]) if row["conversation_id"] else None
     payload["stage"] = row.get("stage", "new")
@@ -167,7 +171,8 @@ async def list_enquiries(request: Request, context: Workspace = Depends(workspac
     scope_user = context.member_id if not scoped_all else context.user.id
     where = """where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
       and (e.customer_name ilike %s or e.phone ilike %s or e.id::text ilike %s
-           or ('ENQ-'||extract(year from e.created_at)::text||'-'||lpad(e.enquiry_number::text,greatest(6,length(e.enquiry_number::text)),'0')) ilike %s)
+           or ('ENQ-'||to_char(coalesce(e.ticket_day,(e.created_at at time zone 'Asia/Kolkata')::date),'DDMMYYYY')||'-'||
+               lpad(coalesce(e.daily_sequence,e.enquiry_number)::text,6,'0')) ilike %s)
       and (%s='' or e.channel=%s) and (%s='' or e.branch=%s)"""
     params = (context.id, scoped_all, scope_user, scope_user, search, search, search, search, channel, channel, branch, branch)
     async with request.app.state.db.connection() as connection:
@@ -216,7 +221,8 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             if not assignee:
                 fail("walkin_agent_not_found", 409)
         else:
-            assignee = await least_loaded_salesperson(connection, context.id)
+            ticket_day = current_ticket_day(request.app.state.settings.app_timezone)
+            assignee = await least_loaded_salesperson(connection, context.id, ticket_day)
         assigned_to = assignee["user_id"] if assignee else None
         if existing_ticket:
             if existing_ticket["conversation_id"] and existing_ticket["conversation_id"] != body.conversationId:
@@ -262,12 +268,17 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
                  existing_ticket["id"], context.id))
             row = {"id": existing_ticket["id"]}
         else:
+            daily_sequence = await next_daily_ticket(connection, context.id, ticket_day)
+            payload["ticketNumber"] = daily_sequence
+            payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+            tracking_token = secrets.token_urlsafe(12)
+            tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
             row = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,
-             customer_name,phone,channel,branch,assigned_to,stage,unread,books_contact_id)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s) returning id""",
+             customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
                             (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
-                             body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id))
+                             body.customerName, body.phone, body.channel, body.branch, assigned_to, ticket_day, daily_sequence, tracking_hash, books_contact_id))
         await audit(connection, context, "enquiry.converted_from_walkin" if existing_ticket else "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
         if visit:
             await complete_conversion(connection, context, visit, row["id"])
@@ -275,7 +286,7 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
     return serialize_enquiry(saved)
 
 
-async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_name):
+async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_name, timezone_name):
     """Create the editable owner queue item as soon as a walk-in is assigned."""
     product = row["payload"].get("productOrService", "")
     payload = {
@@ -307,10 +318,16 @@ async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_
     existing = await one(connection, "select id from public.guruconnect_enquiries where organisation_id=%s and idempotency_key=%s", (context.id, key))
     if existing:
         return existing["id"]
+    ticket_day = current_ticket_day(timezone_name)
+    daily_sequence = await next_daily_ticket(connection, context.id, ticket_day)
+    payload["ticketNumber"] = daily_sequence
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    tracking_token = secrets.token_urlsafe(12)
+    tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
     created = await one(connection, """insert into public.guruconnect_enquiries
-        (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread)
-        values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true) returning id""",
-        (context.id, context.user.id, key, digest, Jsonb(payload), payload["customerName"], payload["phone"], payload["channel"], payload["branch"], assigned_to))
+        (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash)
+        values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s) returning id""",
+        (context.id, context.user.id, key, digest, Jsonb(payload), payload["customerName"], payload["phone"], payload["channel"], payload["branch"], assigned_to, ticket_day, daily_sequence, tracking_hash))
     await audit(connection, context, "enquiry.created_from_walkin", {"enquiry_id": str(created["id"]), "walkin_id": str(row["id"])})
     return created["id"]
 
@@ -354,7 +371,7 @@ async def track_public_ticket(request: Request, token: str = Query(min_length=16
                                where e.public_token_hash=%s limit 1""", (token_hash,))
     if not row:
         raise HTTPException(404, "Ticket not found or token expired")
-    return {"ticketNumber": row["daily_sequence"], "date": str(row["ticket_day"]), "stage": row["stage"],
+    return {"ticketNumber": format_ticket_number(row["ticket_day"], row["daily_sequence"]), "date": str(row["ticket_day"]), "stage": row["stage"],
             "createdAt": row["created_at"].isoformat(), "salesperson": row["salesperson_name"] or "Awaiting assignment",
             "salespersonEmail": row["salesperson_email"] or ""}
 

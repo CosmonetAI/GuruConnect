@@ -18,7 +18,7 @@ from .db import many, one
 from .errors import fail
 from .routes import audit
 from .security import Workspace, administrator, owned_conversation, workspace
-from .assignment import least_loaded_salesperson, next_daily_ticket
+from .assignment import current_ticket_day, format_ticket_number, least_loaded_salesperson, next_daily_ticket
 from app.zoho import set_member_id, set_organisation_id, zoho
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
@@ -168,14 +168,25 @@ async def ensure_walkin_books_contact(body: WalkinCreate, context: Workspace):
     return contact.get("contact_id") or contact.get("id")
 
 
-SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name
-    from public.guruconnect_walkin_visits v left join public.profiles p on p.id=v.assigned_agent_id """
+SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name,
+                         e.ticket_day,e.daily_sequence
+    from public.guruconnect_walkin_visits v
+    left join public.profiles p on p.id=v.assigned_agent_id
+    left join public.guruconnect_enquiries e
+      on e.id=v.converted_enquiry_id and e.organisation_id=v.organisation_id """
 ACCESS = "(%s or v.assigned_agent_id=%s or v.registered_by=%s)"
 
 
 def serialize_visit(row):
     result = dict(row["payload"])
-    result.update(id=str(row["id"]), visitNumber=f"WI-{row['created_at'].year}-{row['visit_number']:06d}",
+    ticket_day = row.get("ticket_day")
+    daily_sequence = row.get("daily_sequence")
+    visit_number = (
+        format_ticket_number(ticket_day, daily_sequence)
+        if ticket_day is not None and daily_sequence is not None
+        else f"WI-{row['created_at']:%d%m%Y}-{row['visit_number']:06d}"
+    )
+    result.update(id=str(row["id"]), visitNumber=visit_number,
                   registeredBy=str(row["registered_by"]), assignedAgentId=str(row["assigned_agent_id"]) if row["assigned_agent_id"] else None,
                   assignedAgentName=row.get("assigned_agent_name") or ("Salesperson" if row["assigned_agent_id"] else None),
                   assignmentNote=row["assignment_note"], status=row["status"], checkInAt=row["check_in_at"].isoformat(),
@@ -321,7 +332,8 @@ async def list_visits(request: Request, context: Workspace = Depends(workspace),
         fail("invalid_date_range", 422)
     search = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     where = " where v.organisation_id=%s and " + ACCESS + """
-        and (v.customer_name ilike %s or v.mobile_number ilike %s or ('WI-'||extract(year from v.created_at)::text||'-'||lpad(v.visit_number::text,greatest(6,length(v.visit_number::text)),'0')) ilike %s)
+        and (v.customer_name ilike %s or v.mobile_number ilike %s
+             or ('WI-'||to_char(coalesce(e.ticket_day,(v.check_in_at at time zone 'Asia/Kolkata')::date),'DDMMYYYY')||'-'||lpad(coalesce(e.daily_sequence,v.visit_number)::text,6,'0')) ilike %s)
         and (%s::text is null or v.purpose=%s) and (%s::text is null or v.status=%s)
         and (%s::uuid is null or v.assigned_agent_id=%s)
         and (%s::date is null or v.check_in_at>=%s::date)
@@ -359,14 +371,14 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             visible = await visit(connection, context, prior["id"])
             response.status_code = 200
             return serialize_visit(visible)
-        salesperson = await least_loaded_salesperson(connection, context.id)
+        ticket_day = current_ticket_day(request.app.state.settings.app_timezone)
+        salesperson = await least_loaded_salesperson(connection, context.id, ticket_day)
         assigned = salesperson["user_id"] if salesperson else None
         status = "Assigned" if assigned else "Waiting for Assignment"
         row = await one(connection, """insert into public.guruconnect_walkin_visits
             (organisation_id,registered_by,assigned_agent_id,assigned_at,idempotency_key,payload_hash,payload,customer_name,mobile_number,purpose,status)
             values(%s,%s,%s,case when %s::uuid is null then null else now() end,%s,%s,%s,%s,%s,%s,%s) returning id""",
                         (context.id, context.user.id, assigned, assigned, idempotency_key, payload_hash, Jsonb(payload), body.customerName, body.mobileNumber, body.purpose, status))
-        ticket_day = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         daily_sequence = await next_daily_ticket(connection, context.id, ticket_day)
         tracking_token = secrets.token_urlsafe(12)
         tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
@@ -395,7 +407,7 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])
     result = serialize_visit(saved)
-    result["ticket"] = {"number": daily_sequence, "token": tracking_token, "stage": "new"}
+    result["ticket"] = {"number": format_ticket_number(ticket_day, daily_sequence), "token": tracking_token, "stage": "new"}
     return result
 
 
@@ -404,9 +416,14 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
     async with request.app.state.db.connection() as connection:
         await rollup_missed_visitors(connection)
         rows = await many(connection, """
-            select m.*, p.display_name as assigned_agent_name
+            select m.*, p.display_name as assigned_agent_name,
+                   e.daily_sequence, e.ticket_day
             from public.guruconnect_missed_visitors m
             left join public.profiles p on p.id=m.assigned_agent_id
+            left join public.guruconnect_walkin_visits v
+              on v.id=m.visit_id and v.organisation_id=m.organisation_id
+            left join public.guruconnect_enquiries e
+              on e.id=v.converted_enquiry_id and e.organisation_id=v.organisation_id
             where m.organisation_id=%s
               and m.expires_at > now()
               and (%s or m.member_id=%s or m.registered_by=%s or m.assigned_agent_id=%s)
@@ -417,9 +434,17 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
             order by m.missed_at desc, m.id desc
             limit 200
         """, (context.id, context.admin, context.user.id, context.user.id, context.user.id))
+    timezone_name = request.app.state.settings.app_timezone
     return {"items": [{
         "id": str(row["id"]), "visitId": str(row["visit_id"]),
-        "visitNumber": f"WI-{row['check_in_at'].year}-{row['visit_number']:06d}",
+        "visitNumber": (
+            format_ticket_number(row["ticket_day"], row["daily_sequence"])
+            if row["ticket_day"] is not None and row["daily_sequence"] is not None
+            else f"WI-{row['check_in_at']:%d%m%Y}-{row['visit_number']:06d}"
+        ),
+        "ticketNumber": format_ticket_number(row["ticket_day"], row["daily_sequence"]) if row["ticket_day"] is not None and row["daily_sequence"] is not None else None,
+        "ticketDate": str(row["ticket_day"]) if row["ticket_day"] else row["check_in_at"].astimezone(ZoneInfo(timezone_name)).date().isoformat(),
+        "ticketTime": row["check_in_at"].astimezone(ZoneInfo(timezone_name)).strftime("%H:%M:%S"),
         "customerName": row["customer_name"], "mobileNumber": row["mobile_number"],
         "email": row["email"], "purpose": row["purpose"], "payload": row["payload"],
         "assignedAgentName": row["assigned_agent_name"] or "Salesperson",
@@ -454,7 +479,7 @@ async def assign_visit(visit_id: UUID, body: Assignment, request: Request, conte
         if body.agentId and not row["converted_enquiry_id"]:
             from .enquiry_routes import create_walkin_enquiry
             agent = await one(connection, "select display_name from public.profiles where id=%s", (body.agentId,))
-            enquiry_id = await create_walkin_enquiry(connection, context, row, body.agentId, agent["display_name"] if agent else "Salesperson")
+            enquiry_id = await create_walkin_enquiry(connection, context, row, body.agentId, agent["display_name"] if agent else "Salesperson", request.app.state.settings.app_timezone)
             await connection.execute("update public.guruconnect_walkin_visits set converted_enquiry_id=%s where id=%s and organisation_id=%s", (enquiry_id, visit_id, context.id))
         elif body.agentId and row["converted_enquiry_id"]:
             agent = await one(connection, "select display_name from public.profiles where id=%s", (body.agentId,))
