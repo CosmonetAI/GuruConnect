@@ -7,7 +7,7 @@ import { supabase } from '../../services/officeApi'
 export const navigationItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { to: '/enquiries', label: 'Enquiries', icon: ClipboardList }, { to: '/ai-chats', label: 'Customer Sessions', icon: MessageSquare }, { to: '/pipelines', label: 'Zoho Bigin - CRM', icon: Columns3 }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/recordings', label: 'Customer Recordings', icon: AudioLines }, { to: '/zoho', label: 'Connections', icon: PlugZap }, { to: '/settings', label: 'Team & account', icon: Settings }, { to: '/walkins', label: 'Walk-in visits', icon: UsersRound },
 ]
-const zohoBooksItems = [
+export const zohoBooksItems = [
   { to: '/contacts', label: 'Contacts', icon: ContactRound }, { to: '/products', label: 'Items', icon: PackageSearch }, { to: '/quotes', label: 'Quotes', icon: FileText }, { to: '/sales-orders', label: 'Sales orders', icon: ShoppingCart }, { to: '/purchase-orders', label: 'Purchase orders', icon: ClipboardCheck }, { to: '/invoices', label: 'Invoices', icon: ReceiptText },
 ]
 export default function Sidebar() {

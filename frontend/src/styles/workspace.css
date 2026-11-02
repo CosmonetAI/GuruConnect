@@ -61,6 +61,9 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .topbar .button { white-space: nowrap; }
 .workspace-select select { padding: 8px; max-width: 180px; border-radius: 8px; border: 1px solid #dbe3ef; color: #344763; background: #f8faff; }
 .mobile-menu-button, .mobile-navigation { display: none; }
+.mobile-navigation-group { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid #dbe3ef; }
+.mobile-navigation-group-title { display: flex; align-items: center; gap: 12px; padding: 10px; color: #5e7393; font-size: 13px; font-weight: 700; }
+.mobile-navigation-child { padding-left: 22px !important; }
 .local-mode-badge { font-size: 11px; font-weight: 650; white-space: nowrap; color: #567196; background: #eff4fc; border: 1px solid #dce6f4; padding: 5px 8px; border-radius: 20px; }
 .button { display: inline-flex; gap: 8px; align-items: center; justify-content: center; padding: 11px 17px; border: 1px solid #dbe3ef; border-radius: 9px; font-weight: 650; text-decoration: none; min-height: 44px; }
 .button-primary { background: #2563eb; border-color: #2563eb; color: white; }
