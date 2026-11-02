@@ -6,10 +6,10 @@ import {
 import '../styles/live-session-workspace.css';
 
 const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-const productName = (item) => item.name || item.item_name || item.product || 'Catalogue item';
-const itemKey = (item) => item.item_id || item.id || item.sku;
+const productName = (item) => item?.name || item?.item_name || item?.product || 'Catalogue item';
+const itemKey = (item) => item?.item_id || item?.id || item?.sku;
 const initials = (name) => String(name || '?').split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase();
-const intentLabel = (intent) => typeof intent === 'string' ? intent : intent.label || intent.keyword || intent.term || intent.product || intent.name || intent.query || '';
+const intentLabel = (intent) => typeof intent === 'string' ? intent : intent?.label || intent?.keyword || intent?.term || intent?.product || intent?.name || intent?.query || '';
 const detailText = (value) => typeof value === 'string' || typeof value === 'number' ? String(value) : value?.label || value?.text || value?.message || value?.summary || value?.field || value?.name || '';
 const detailList = (value) => Array.isArray(value) ? value.map(detailText).filter(Boolean) : value && typeof value === 'object' ? Object.entries(value).map(([field, entry]) => `${field.replaceAll('_', ' ')}: ${detailText(entry)}`).filter((entry) => !entry.endsWith(': ')) : [];
 const specLabels = (value) => detailList(value).map((field) => field.replaceAll('_', ' '));
@@ -112,9 +112,9 @@ export function ProductCartAction({ item, onAddToCart, className = 'lws-button l
 }
 
 function AgentGuidance({ clarificationSuggestions, requirements, currentIntent, agentGuidance }) {
-  const suggestions = clarificationSuggestions.filter((suggestion) => suggestion?.question);
+  const suggestions = (Array.isArray(clarificationSuggestions) ? clarificationSuggestions : []).filter((suggestion) => suggestion?.question);
   const guidance = (Array.isArray(agentGuidance) ? agentGuidance : agentGuidance ? [agentGuidance] : []).map(detailText).filter(Boolean);
-  const assessments = requirements.filter((requirement) => ['no_match', 'lookup_deferred'].includes(requirement.status) || detailList(requirement.missing_specs).length || detailList(requirement.conflicts).length);
+  const assessments = (Array.isArray(requirements) ? requirements : []).filter(Boolean).filter((requirement) => ['no_match', 'lookup_deferred'].includes(requirement.status) || detailList(requirement.missing_specs).length || detailList(requirement.conflicts).length);
   const deferred = assessments.filter((requirement) => requirement.status === 'lookup_deferred').length;
   const intent = detailText(currentIntent);
   if (!suggestions.length && !guidance.length && !assessments.length && !intent) return null;
