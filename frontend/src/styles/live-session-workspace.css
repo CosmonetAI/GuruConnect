@@ -302,3 +302,14 @@
 @media (prefers-reduced-motion: reduce) {
   .live-session-workspace *, .live-session-workspace *::before, .live-session-workspace *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.lws-document-suggestions { margin-top: 10px; }
+.lws-document-suggestions .lws-panel-heading { align-items: center; }
+.lws-document-suggestion-list { display: grid; gap: 8px; }
+.lws-document-suggestion { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #dce8f2; border-left: 4px solid #3159a7; border-radius: 10px; background: #fbfdff; }
+.lws-document-suggestion.work-invoice { border-left-color: #a65a19; }
+.lws-document-suggestion.work-sales-order { border-left-color: #18734c; }
+.lws-document-suggestion div { display: grid; gap: 3px; min-width: 0; }
+.lws-document-suggestion strong { color: #17375d; font-size: 12px; }
+.lws-document-suggestion small { color: #71839b; font-size: 10px; text-transform: capitalize; }
+.lws-document-suggestion p { margin: 3px 0 0; color: #526f8e; font-size: 11px; line-height: 1.45; }
+.lws-document-suggestion > span { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; color: #3159a7; background: #eef4ff; font-size: 10px; font-weight: 800; }

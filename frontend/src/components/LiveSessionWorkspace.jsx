@@ -163,6 +163,15 @@ function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, on
   </section>;
 }
 
+function SuggestedDocuments({ documents = [] }) {
+  const validDocuments = documents.filter(Boolean);
+  if (!validDocuments.length) return null;
+  return <section className="lws-document-suggestions lws-panel" aria-label="Suggested documents">
+    <div className="lws-panel-heading"><h3><FileText size={18} />Suggested documents</h3><span className="lws-subtle">Referenced in conversation</span></div>
+    <div className="lws-document-suggestion-list">{validDocuments.map((document, index) => <article key={`${document.type || document.document_type}-${document.number || document.document_number || index}`} className={`lws-document-suggestion work-${document.type || document.document_type || 'quote'}`}><div><strong>{document.label || (document.type === 'invoice' ? 'Invoice discussed' : document.type === 'sales-order' ? 'Sales order discussed' : 'Quote discussed')}</strong><small>{document.number || document.document_number || 'Demo document'} · {document.status || 'Draft'}</small><p>{document.description || 'This document was mentioned in the customer conversation.'}</p></div><span>Demo</span></article>)}</div>
+  </section>;
+}
+
 function Cart({ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }) {
   const pricesKnown = cart.every(productPriceAvailable);
   const rows = cart.map((item) => {
@@ -245,14 +254,14 @@ export default function LiveSessionWorkspace({
   notes = [], noteText = '', onNoteTextChange, onAddNote, noteBusy = false, noteError = '',
   recordingState = {}, recordingStatus, insightsStatus, catalogueNotice = '', sessionStartedAt,
   catalogueStatus = '', clarificationSuggestions = [], requirements = [], currentIntent = '', agentGuidance = [],
-  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, taxTotal, currencyCode = 'INR', children,
+  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, suggestedDocuments = [], taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
   const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, recordingState }} compact={cartView} />;
   return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
-      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} />{suggestions}</div>
+      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} />{suggestions}<SuggestedDocuments documents={suggestedDocuments} /></div>
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
       </div>

@@ -83,7 +83,7 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
     line_items: demoLineItems,
   };
   const documentPrompt = demoWorkItem?.type === 'invoice' ? 'Please send me the invoice for the selected fans.' : demoWorkItem?.type === 'sales-order' ? 'The customer approved the options. Please create and share the sales order.' : demoWorkItem?.type === 'quote' ? 'Please prepare a quote and share it with me before I confirm the order.' : '';
-  const documentReply = demoWorkItem?.type === 'invoice' ? 'I will prepare the invoice with GST and send it to your email.' : demoWorkItem?.type === 'sales-order' ? 'I will prepare the sales order with the agreed quantities and GST.' : demoWorkItem?.type === 'quote' ? `I will prepare ${demoWorkItem.number} with the product summary and share it for review.` : '';
+  const documentReply = demoWorkItem?.type === 'invoice' ? `I will prepare invoice ${demoWorkItem.number} with GST and send it to your email.` : demoWorkItem?.type === 'sales-order' ? `I will prepare sales order ${demoWorkItem.number} with the agreed quantities and GST.` : demoWorkItem?.type === 'quote' ? `I will prepare ${demoWorkItem.number} with the product summary and share it for review.` : '';
   if (documentPrompt) {
     transcript[2].english_text = documentPrompt;
     transcript[3].english_text = documentReply;
@@ -1298,6 +1298,7 @@ export default function VoiceSessions() {
               onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onCompleteCart={() => void openDocumentModal()}
               onEditDocument={() => void openDocumentModal()}
+              suggestedDocuments={demoWorkItem ? [demoWorkItem] : []}
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}

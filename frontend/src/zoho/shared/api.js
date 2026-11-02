@@ -132,7 +132,7 @@ function mockZoho(path, opts = {}) {
       ...transcriptSets.map((text, index) => ({ start_seconds: [0, 12, 25, 39][index], recorded_at: now, speaker_role: index % 2 ? 'agent' : 'customer', speaker_name: index % 2 ? agent : contact.contact_name, english_text: text, source_text: text })),
     ];
     const documentPrompt = demoWorkItem.type === 'invoice' ? 'Please send me the invoice for the selected products.' : demoWorkItem.type === 'sales-order' ? 'The customer approved the options. Please create and share the sales order.' : 'Please prepare a quote and share it with me before I confirm the order.';
-    const documentReply = demoWorkItem.type === 'invoice' ? 'I will prepare the invoice with GST and send it to your email.' : demoWorkItem.type === 'sales-order' ? 'I will prepare the sales order with the agreed quantities and GST.' : `I will prepare ${demoWorkItem.number} with the product summary and share it for review.`;
+    const documentReply = demoWorkItem.type === 'invoice' ? `I will prepare invoice ${demoWorkItem.number} with GST and send it to your email.` : demoWorkItem.type === 'sales-order' ? `I will prepare sales order ${demoWorkItem.number} with the agreed quantities and GST.` : `I will prepare ${demoWorkItem.number} with the product summary and share it for review.`;
     transcript[2].english_text = documentPrompt; transcript[3].english_text = documentReply;
     return {
       messages: transcript.map(turn => ({ role: turn.speaker_role === 'customer' ? 'user' : 'assistant', content: turn.english_text })),
