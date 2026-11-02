@@ -303,6 +303,9 @@
   .live-session-workspace *, .live-session-workspace *::before, .live-session-workspace *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 .lws-document-suggestions { margin-top: 10px; }
+.lws-notes-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+.lws-notes-column .lws-document-suggestions { margin-top: 0; }
+.live-session-workspace.is-cart-view .lws-notes-column { grid-column: 1 / -1; min-height: 0; }
 .lws-document-suggestions .lws-panel-heading { align-items: center; }
 .lws-document-suggestion-list { display: grid; gap: 8px; }
 .lws-document-suggestion { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #dce8f2; border-left: 4px solid #3159a7; border-radius: 10px; background: #fbfdff; }
