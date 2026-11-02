@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ call: vi.fn(), busy: vi.fn(), localMode: false, mounts: 0, unmounts: 0, recorder: null as null | { onBusyChange: (busy: boolean) => void; onCaptureChange: (state: { capture: string; elapsedSeconds: number }) => void; onConversationChange: (id: string | null) => Promise<void>; customerName: string } }))
-vi.mock('react-router-dom', async original => ({ ...await original<typeof import('react-router-dom')>(), useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), call: vi.fn(), busy: vi.fn(), localMode: false, mounts: 0, unmounts: 0, recorder: null as null | { onBusyChange: (busy: boolean) => void; onCaptureChange: (state: { capture: string; elapsedSeconds: number }) => void; onConversationChange: (id: string | null) => Promise<void>; customerName: string } }))
+vi.mock('react-router-dom', async original => ({ ...await original<typeof import('react-router-dom')>(), useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }), useNavigate: () => mocks.navigate }))
 vi.mock('../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u' }, workspace: { id: 'w', member_id: 'member' }, localMode: mocks.localMode, setCaptureBusy: mocks.busy }) }))
 vi.mock('../zoho/shared/api.js', () => ({ call: mocks.call }))
 vi.mock('./Enquiries/ConversationRecorder', async () => {
@@ -73,7 +73,7 @@ async function openFirst() {
 }
 
 describe('live session integration', () => {
-  it('labels local sample inventory and opens a download-only demo document review', async () => {
+  it('labels local sample inventory and opens the sample invoice screen from Complete cart', async () => {
     mocks.localMode = true
     installLiveApi(path => path.endsWith('/live') ? { ...liveData(), recommendations: [{ ...fan, catalogue_source: 'local-demo' }], notices: [{ code: 'local_demo_catalogue' }] } : path.endsWith('/sales-documents/options') ? { mode: 'local-demo', email: { provider: 'smtp2go', configured: false }, document_types: ['invoice', 'quote', 'sales-order'], customer: { name: 'Customer A', phone: '9876543210', email: '' } } : undefined)
     await openFirst()
@@ -84,8 +84,8 @@ describe('live session integration', () => {
     await screen.findByRole('button', { name: 'Complete cart' })
     await act(async () => {})
     fireEvent.click(screen.getByRole('button', { name: 'Complete cart' }))
-    expect(await screen.findByRole('dialog', { name: 'Create sales document' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Create & download PDF' })).toBeEnabled()
+    expect(mocks.navigate).toHaveBeenCalledWith('/ai-chats/invoice')
+    expect(screen.queryByRole('dialog', { name: 'Create sales document' })).not.toBeInTheDocument()
     expect(mocks.call.mock.calls.some(([path]) => path === '/zoho/status')).toBe(false)
   })
 
