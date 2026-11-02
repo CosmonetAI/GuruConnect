@@ -163,15 +163,6 @@ function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, on
   </section>;
 }
 
-function SuggestedDocuments({ documents = [], onDownloadDocument }) {
-  const validDocuments = documents.filter(Boolean);
-  if (!validDocuments.length) return null;
-  return <section className="lws-document-suggestions lws-panel" aria-label="Suggested documents">
-    <div className="lws-panel-heading"><h3><FileText size={18} />Suggested documents</h3><span className="lws-subtle">Referenced in conversation</span></div>
-    <div className="lws-document-suggestion-list">{validDocuments.map((document, index) => <article key={`${document.type || document.document_type}-${document.number || document.document_number || index}`} className={`lws-document-suggestion work-${document.type || document.document_type || 'quote'}`}><div><strong>{document.label || (document.type === 'invoice' ? 'Invoice discussed' : document.type === 'sales-order' ? 'Sales order discussed' : 'Quote discussed')}</strong><small>{document.number || document.document_number || 'Demo document'} · {document.status || 'Draft'}</small><p>{document.description || 'This document was mentioned in the customer conversation.'}</p></div><span>Demo</span>{onDownloadDocument && <button type="button" className="lws-document-download" onClick={() => onDownloadDocument(document)}><Download size={14} />Download PDF</button>}</article>)}</div>
-  </section>;
-}
-
 function Cart({ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }) {
   const pricesKnown = cart.every(productPriceAvailable);
   const rows = cart.map((item) => {
@@ -254,7 +245,7 @@ export default function LiveSessionWorkspace({
   notes = [], noteText = '', onNoteTextChange, onAddNote, noteBusy = false, noteError = '',
   recordingState = {}, recordingStatus, insightsStatus, catalogueNotice = '', sessionStartedAt,
   catalogueStatus = '', clarificationSuggestions = [], requirements = [], currentIntent = '', agentGuidance = [],
-  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, suggestedDocuments = [], onDownloadDocument, taxTotal, currencyCode = 'INR', children,
+  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
@@ -265,7 +256,7 @@ export default function LiveSessionWorkspace({
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
       </div>
-      <div className="lws-notes-column"><Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} /><SuggestedDocuments documents={suggestedDocuments} onDownloadDocument={onDownloadDocument} /></div>
+      <Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} />
     </div>
     {children && <div className="lws-recording-footer">{children}</div>}
     {recordingStatus?.key === 'complete' && <div className="lws-sr-only" role="status"><Check size={12} />{recordingStatus.label || 'Processing complete'}</div>}

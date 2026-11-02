@@ -14,6 +14,7 @@ import {
   Search,
   ShoppingCart,
   Download,
+  FileText,
   Trash2,
   UserRound,
   X,
@@ -1267,6 +1268,7 @@ export default function VoiceSessions() {
               <nav className="live-session-tabs" aria-label="Customer session views">
                 <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><History size={15} />Customer history</button>
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
+                <button type="button" className={activeTab === "documents" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "documents" ? "conversation" : "documents")}><FileText size={15} />Documents</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
                 <button type="button" className={activeTab === "recordings" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "recordings" ? "conversation" : "recordings")}><Headphones size={15} />Customer recordings ({customerHistory.recordings?.length || recorderSessions.length})</button>
                 {crmLead && <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "lead" ? "conversation" : "lead")}><Columns3 size={15} />CRM lead</button>}
@@ -1290,6 +1292,10 @@ export default function VoiceSessions() {
               <div className="session-drawer-heading"><strong>{activeTab === "recordings" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
               {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : (customerHistory.recordings?.length || recorderSessions.length) ? [...customerHistory.recordings, ...recorderSessions].map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {recording.status || String(recording.final_state || "processed").replaceAll("_", " ")}</small><span>{recording.summary || ''}</span></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setFullHistoryOpen(true)}>View history</button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
+            {activeTab === "documents" && <section className="session-view-drawer session-documents-page" aria-label="Customer documents">
+              <div className="session-drawer-heading"><strong>Documents mentioned in conversation</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close documents panel"><X size={16} /></button></div>
+              {demoWorkItem ? <article className={`session-document-record work-${demoWorkItem.type || "quote"}`}><div className="session-document-record-icon"><FileText size={22} /></div><div className="session-document-record-copy"><strong>{demoWorkItem.label || "Document discussed"}</strong><span>{demoWorkItem.number || "Demo document"} · {demoWorkItem.status || "Draft"}</span><p>This document was referenced in the customer conversation and includes the demo GST order summary.</p></div><button type="button" className="button button-primary" onClick={() => void downloadSuggestedDocument(demoWorkItem)} disabled={Boolean(documentBusy)}><Download size={15} />{documentBusy ? "Preparing…" : "Download PDF"}</button></article> : <div className="session-documents-empty"><FileText size={24} /><strong>No documents mentioned yet</strong><span>Quotes, invoices, and sales orders appear here when they are discussed in a session.</span></div>}
+            </section>}
             {activeTab === "lead" && <section className="session-view-drawer session-crm-lead-tab" aria-label="CRM lead">
               <div className="session-drawer-heading"><strong>CRM lead</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close CRM lead panel"><X size={16} /></button></div>
               {crmLead ? <div className="session-crm-lead-panel"><div className="session-crm-lead-row"><div><small>ZOHO BIGIN · CRM LEAD</small><strong>{crmLead.Deal_Name || `${identity.name} lead`}</strong><span>{crmLead.Lead_Status || crmLead.Stage || "Registered"} · {crmLead.Phone || identity.phone}</span></div><Link className="button button-primary" to={`/pipelines?lead=${encodeURIComponent(crmLead.id)}`}>Open CRM lead <ChevronRight size={14} /></Link></div><dl className="session-crm-lead-details"><div><dt>Status</dt><dd>{crmLead.Lead_Status || "Registered"}</dd></div><div><dt>Pipeline stage</dt><dd>{crmLead.Stage || "Qualification"}</dd></div><div><dt>Phone</dt><dd>{crmLead.Phone || identity.phone || "Not provided"}</dd></div><div><dt>Owner</dt><dd>{crmLead.Owner?.name || "Assigned team"}</dd></div></dl></div> : <p>No CRM lead is linked to this customer yet.</p>}
@@ -1310,8 +1316,6 @@ export default function VoiceSessions() {
               onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onCompleteCart={() => void openDocumentModal()}
               onEditDocument={() => void openDocumentModal()}
-              suggestedDocuments={demoWorkItem ? [demoWorkItem] : []}
-              onDownloadDocument={downloadSuggestedDocument}
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}

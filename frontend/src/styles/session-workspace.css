@@ -168,6 +168,18 @@ body[data-document-party="customer"] .document-actions button:nth-child(4) { dis
 .sales-document-contact span:not(.session-status-pill) { color:#71839b; font-size:11px; }
 .sales-document-section-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:15px 0 8px; color:#17375d; font-size:13px; }
 .sales-order-summary { padding:0 12px 10px; border:1px solid #dce8f2; border-radius:11px; }
+.session-documents-page { padding: 0; }
+.session-document-record { display:flex; align-items:center; gap:14px; margin:14px; padding:16px; border:1px solid #dce8f2; border-left:4px solid #3159a7; border-radius:12px; background:#fff; }
+.session-document-record.work-invoice { border-left-color:#a65a19; }
+.session-document-record.work-sales-order { border-left-color:#18734c; }
+.session-document-record-icon { display:grid; width:42px; height:42px; flex:0 0 auto; place-items:center; border-radius:10px; color:#3159a7; background:#eef4ff; }
+.session-document-record-copy { display:grid; gap:4px; min-width:0; flex:1; }
+.session-document-record-copy strong { color:#17375d; font-size:14px; }
+.session-document-record-copy span { color:#71839b; font-size:11px; }
+.session-document-record-copy p { margin:2px 0 0; color:#526f8e; font-size:11px; }
+.session-documents-empty { display:grid; justify-items:center; gap:8px; padding:34px 18px; color:#91a6c0; text-align:center; }
+.session-documents-empty strong { color:#526f8e; font-size:13px; }
+.session-documents-empty span { max-width:420px; font-size:11px; }
 .sales-summary-table { overflow:hidden; border:1px solid #e4edf4; border-radius:8px; }
 .sales-summary-header,.sales-summary-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(76px,1fr) minmax(65px,.8fr) 44px minmax(75px,.9fr); gap:8px; align-items:center; padding:9px 10px; }
 .sales-summary-header { background:#f4f8fc; color:#71839b; font-size:10px; font-weight:800; }
