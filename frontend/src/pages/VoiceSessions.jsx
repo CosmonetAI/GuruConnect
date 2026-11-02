@@ -537,6 +537,9 @@ export default function VoiceSessions() {
       startedFromEnquiry.current = true;
       void prepareSession(initialContact);
     }
+    // Dev-only: Strict Mode re-runs effects and the unmount cleanup aborts the in-flight start.
+    if (!import.meta.env.DEV) return undefined;
+    return () => { startedFromEnquiry.current = false; busyRef.current = false; setBusy(false); };
   }, []);
   const chooseContact = (contact) => {
     if (busyRef.current) return;
