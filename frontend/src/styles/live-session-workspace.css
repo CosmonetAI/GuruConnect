@@ -316,3 +316,5 @@
 .lws-document-suggestion small { color: #71839b; font-size: 10px; text-transform: capitalize; }
 .lws-document-suggestion p { margin: 3px 0 0; color: #526f8e; font-size: 11px; line-height: 1.45; }
 .lws-document-suggestion > span { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; color: #3159a7; background: #eef4ff; font-size: 10px; font-weight: 800; }
+.lws-document-download { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; align-self: flex-end; padding: 7px 9px; border: 1px solid #c8d9ef; border-radius: 7px; color: #245aa0; background: #fff; font-size: 10px; font-weight: 750; cursor: pointer; }
+.lws-document-download:hover { border-color: #2476d9; background: #f1f7ff; }

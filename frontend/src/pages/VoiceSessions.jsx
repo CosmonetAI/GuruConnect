@@ -1020,6 +1020,18 @@ export default function VoiceSessions() {
     anchor.download = String(pdf.filename || "ConnectCosmos_document.pdf").replace(/[\\/]/g, "_");
     anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const downloadSuggestedDocument = async (document) => {
+    if (!session || !document || documentBusy) return;
+    const lines = (document.line_items || []).map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity || 1), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.product || line.name || "Catalogue item" })).filter((line) => line.item_id && line.quantity > 0);
+    if (!lines.length) { setError("This demo document has no downloadable order lines."); return; }
+    setDocumentBusy("download"); setError("");
+    try {
+      const requestId = crypto.randomUUID();
+      const response = await sessionCall(`/voice-sessions/${session}/sales-documents`, { method: "POST", headers: { "Idempotency-Key": requestId }, body: JSON.stringify({ type: document.type || document.document_type || "invoice", delivery: "download", customer_name: identity.name, customer_phone: identity.phone, line_items: lines, request_id: requestId }) });
+      downloadDocumentPdf(response);
+    } catch (error) { setError(error.message || "The demo document could not be downloaded."); }
+    finally { setDocumentBusy(""); }
+  };
   const closeDocumentModal = () => { if (!documentInFlight.current) setDocumentModalOpen(false); };
   const documentScopeCurrent = (snapshot) => alive.current && documentSnapshot.current === snapshot && currentDocumentScope.current === snapshot.scope && sessionRef.current === snapshot.session;
   const createDocument = async (type) => {
@@ -1299,6 +1311,7 @@ export default function VoiceSessions() {
               onCompleteCart={() => void openDocumentModal()}
               onEditDocument={() => void openDocumentModal()}
               suggestedDocuments={demoWorkItem ? [demoWorkItem] : []}
+              onDownloadDocument={downloadSuggestedDocument}
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}

@@ -223,7 +223,7 @@ function mockZoho(path, opts = {}) {
     const tax = Math.round(taxable * 0.18 * 100) / 100;
     const total = Math.round((taxable + tax) * 100) / 100;
     const sessionId = clean.split('/')[2];
-    const contact = data.contacts.find((item) => `chat-${item.contact_id}` === sessionId) || data.contacts[0];
+    const contact = data.contacts.find((item) => `chat-${item.contact_id}` === sessionId) || data.contacts.find((item) => item.mobile === body.customer_phone || item.contact_name === body.customer_name) || data.contacts[0];
     const existing = data.demo_documents.find((item) => item.request_id === body.request_id);
     if (existing) return existing.response;
     const serial = 1000 + data.demo_documents.length + 1;
