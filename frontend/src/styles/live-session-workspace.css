@@ -75,6 +75,14 @@
 .live-session-workspace .lws-transcript-lines time { flex: 0 0 42px; color: #8695ac; font-size: 9px; font-variant-numeric: tabular-nums; }
 .live-session-workspace .lws-transcript-lines strong { color: #2a3d5a; font-size: inherit; }
 .live-session-workspace .lws-transcript-lines p.lws-transcript-empty { display: block; margin-top: 14px; color: var(--lws-muted); }
+.live-session-workspace .lws-transcript-loading { display: grid; gap: 8px; min-height: 55px; align-content: center; padding: 10px 0; color: #557193; font-size: 10px; }
+.live-session-workspace .lws-transcript-loading > strong { color: #2f5e98; font-size: 11px; }
+.live-session-workspace .lws-transcript-loading > small { color: #8193aa; font-size: 9px; }
+.live-session-workspace .lws-loading-lines { display: grid; gap: 5px; width: min(100%, 250px); }
+.live-session-workspace .lws-loading-lines i { display: block; height: 7px; border-radius: 999px; background: linear-gradient(90deg, #e6eef9 20%, #c8dcf7 45%, #e6eef9 70%); background-size: 220% 100%; animation: lws-loading-shimmer 1.2s ease-in-out infinite; }
+.live-session-workspace .lws-loading-lines i:nth-child(2) { width: 82%; animation-delay: .15s; }
+.live-session-workspace .lws-loading-lines i:nth-child(3) { width: 58%; animation-delay: .3s; }
+.live-session-workspace .lws-products-empty.is-live-loading { min-height: 145px; }
 .live-session-workspace .lws-transcript.is-collapsed .lws-panel-heading { border-bottom: 0; }
 .live-session-workspace .lws-suggestions { flex: 0 0 auto; padding-bottom: 10px; overflow: hidden; }
 .live-session-workspace .lws-suggestions .lws-panel-heading { min-height: 39px; padding-bottom: 7px; }
@@ -236,6 +244,7 @@
 .live-session-workspace .lws-cart-unit,
 .live-session-workspace .lws-line-total { font-size: 12px; }
 @keyframes lws-message-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes lws-loading-shimmer { 0% { background-position: 100% 0; opacity: .65; } 50% { opacity: 1; } 100% { background-position: -100% 0; opacity: .65; } }
 @keyframes lws-cart-item-enter { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
 @container (max-width: 1180px) {
   .live-session-workspace.is-cart-view .lws-work-grid { grid-template-columns: minmax(195px, .8fr) minmax(0, 2fr); grid-template-rows: max-content max-content; grid-auto-rows: max-content; align-content: start; gap: 12px; }

@@ -417,9 +417,43 @@ export default function VoiceSessions() {
   const sessionRef = useRef(session); sessionRef.current = session;
   const conversationRef = useRef(conversationId); conversationRef.current = conversationId;
   const captureRef = useRef(captureState); captureRef.current = captureState;
+  const demoRevealSource = useRef(null);
+  const demoRevealTimer = useRef(null);
   const catalogueSearch = useRef(0);
   const refreshLive = useRef(null);
   const contextSaves = useRef(new Map());
+
+  const stopDemoReveal = () => {
+    if (demoRevealTimer.current) window.clearInterval(demoRevealTimer.current);
+    demoRevealTimer.current = null;
+  };
+  const startDemoReveal = () => {
+    if (!localMode) return;
+    stopDemoReveal();
+    const source = demoRevealSource.current || {};
+    const transcript = Array.isArray(source.transcript_preview) ? source.transcript_preview : [];
+    const keywords = Array.isArray(source.keywords) ? source.keywords : [];
+    const recommendations = Array.isArray(source.recommendations) ? source.recommendations : [];
+    setTranscriptPreview([]); setLiveKeywords([]); setRecommendations([]); setProducts([]);
+    setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
+    setLiveAnalysis('running'); setLiveProcessing({ processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true }, processingStatus: { stage: 'running', message: 'Listening for speech and matching catalogue products.' } });
+    let step = 0;
+    demoRevealTimer.current = window.setInterval(() => {
+      if (step < transcript.length) setTranscriptPreview(current => [...current, transcript[step]]);
+      else if (step < transcript.length + keywords.length) setLiveKeywords(current => [...current, keywords[step - transcript.length]]);
+      else if (step < transcript.length + keywords.length + recommendations.length) setRecommendations(current => [...current, recommendations[step - transcript.length - keywords.length]]);
+      else { stopDemoReveal(); setLiveAnalysis('complete'); setLiveProcessing({ processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true }, processingStatus: { stage: 'complete', message: 'Demo transcript analysed locally.' } }); }
+      step += 1;
+    }, 850);
+  };
+  const handleCaptureChange = (next) => {
+    const previous = captureRef.current.capture;
+    captureRef.current = next;
+    setCaptureState(next);
+    if (next.capture === 'recording' && previous !== 'recording') startDemoReveal();
+    if (next.capture === 'idle') stopDemoReveal();
+  };
+  useEffect(() => () => stopDemoReveal(), []);
   const blocker = useBlocker(busy);
   useEffect(() => { if (blocker.state === 'blocked') { setError('Finish recording and saving this session before leaving.'); blocker.reset(); } }, [blocker]);
   useEffect(() => {
@@ -458,6 +492,7 @@ export default function VoiceSessions() {
     setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
   };
   const clearLiveWorkspace = () => {
+    stopDemoReveal(); demoRevealSource.current = null;
     documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentFeedback(""); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
     setContextHydrated(null); setCartSaveError("");
     setNoteBusy(false);
@@ -494,6 +529,7 @@ export default function VoiceSessions() {
       clearLiveWorkspace();
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
+      demoRevealSource.current = data;
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
       setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
       setLiveKeywords(data.keywords || []);
@@ -552,6 +588,7 @@ export default function VoiceSessions() {
       );
       setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
+      demoRevealSource.current = data;
       setRecorderSessions(data.recorder_sessions || []);
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
       setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
@@ -1213,7 +1250,7 @@ export default function VoiceSessions() {
               onDownloadTranscript={downloadTranscript}
               sessionStartedAt={recordingSnapshot?.created_at}
             >
-              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
+              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={handleCaptureChange} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
             </LiveSessionWorkspace>
           </>}
         </section>

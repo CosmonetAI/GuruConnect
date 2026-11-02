@@ -131,18 +131,18 @@ function AgentGuidance({ clarificationSuggestions, requirements, currentIntent, 
   </section>;
 }
 
-function Transcript({ transcript, onDownload, sessionStartedAt }) {
+function Transcript({ transcript, onDownload, sessionStartedAt, recordingState }) {
   const [collapsed, setCollapsed] = useState(!transcript.length);
   useEffect(() => { if (transcript.length) setCollapsed(false); }, [transcript.length]);
   return <section className={`lws-transcript lws-panel${collapsed ? ' is-collapsed' : ''}`} aria-label="Latest transcript">
     <div className="lws-panel-heading"><h3><FileText size={18} />Latest transcript <span className="lws-subtle">· Live updates</span></h3><div className="lws-heading-actions"><button type="button" className="lws-button lws-button-small" onClick={onDownload} disabled={!transcript.length || !onDownload}><Download size={14} /><span>Download transcript</span></button><button type="button" className="lws-icon-button" aria-expanded={!collapsed} aria-label={collapsed ? 'Expand latest transcript' : 'Collapse latest transcript'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</button></div></div>
     {!collapsed && <div className="lws-transcript-lines">
-      {transcript.length ? transcript.map((turn, index) => <p key={turnKey(turn, index)}><time>{turnTime(turn, sessionStartedAt)}</time><span><strong>{speaker(turn).label}:</strong> {turn.english_text || turn.source_text}</span></p>) : <p className="lws-transcript-empty">Completed speech segments and their English translation will appear here.</p>}
+      {transcript.length ? transcript.map((turn, index) => <p key={turnKey(turn, index)}><time>{turnTime(turn, sessionStartedAt)}</time><span><strong>{speaker(turn).label}:</strong> {turn.english_text || turn.source_text}</span></p>) : recordingState?.capture === 'recording' ? <div className="lws-transcript-loading" role="status"><span className="lws-live-dot" /><strong>Listening and transcribing live</strong><div className="lws-loading-lines" aria-hidden="true"><i /><i /><i /></div><small>Speech will appear here as the next audio window is processed.</small></div> : <p className="lws-transcript-empty">Completed speech segments and their English translation will appear here.</p>}
     </div>}
   </section>;
 }
 
-function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, compact }) {
+function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, compact, recordingState }) {
   const catalogueState = { syncing: 'Catalogue sync in progress. Product details may still be incomplete.', searching: 'Searching the connected catalogue.', stale: 'Catalogue data needs a refresh. Confirm prices and stock before completing the order.', unavailable: 'Catalogue unavailable. Reconnect the catalogue to verify products, prices and stock.', semantic_unavailable: 'Product similarity search is temporarily unavailable. Confirm catalogue matches before completing the order.' }[catalogueStatus];
   return <section className={`lws-suggestions lws-panel${compact ? ' is-compact' : ''}`} aria-label="Suggested products">
     <div className="lws-panel-heading"><h3><ShoppingCart size={18} />{compact ? 'Recommended products' : 'Suggested products'}</h3>{onSearchProducts && <button className="lws-text-button" type="button" onClick={onSearchProducts}>{compact ? 'View all' : 'Search catalogue'}<ArrowRight size={13} /></button>}</div>
@@ -158,7 +158,7 @@ function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, on
       return <article className="lws-product-card" key={itemKey(item) || `${productName(item)}-${index}`}>
         <ProductImage item={item} /><div className="lws-product-copy"><strong>{productName(item)}</strong><small>{item.sku ? `SKU: ${item.sku}` : item.unit || 'Zoho catalogue'}</small>{compact && features.length > 0 && <ul>{features.map((feature, i) => <li key={i}>{feature}</li>)}</ul>}<ProductMatchDetails item={item} /><Stock item={item} /><b className={priceAvailable ? '' : 'lws-price-review'}>{priceAvailable ? money(price) : 'Confirm price'}</b>{onViewProduct && <button className="lws-text-button lws-product-details" type="button" onClick={() => onViewProduct(item)}>{priceAvailable ? 'View details' : 'Review price details'}</button>}<ProductCartAction item={item} onAddToCart={onAddToCart} /></div>
       </article>;
-    }) : <div className="lws-empty lws-products-empty"><span className="lws-empty-icon"><Sparkles size={22} strokeWidth={1.5} /></span><strong>{intents.length ? 'Finding catalogue matches' : 'Suggestions that follow the conversation'}</strong><p>{intents.length ? 'Matching the products and requirements mentioned with your connected Zoho inventory.' : 'Mention a product, specification, or budget. Relevant items from your Zoho catalogue will appear here.'}</p>{onSearchProducts && <button type="button" className="lws-text-button" onClick={onSearchProducts}><Search size={13} />Browse product catalogue</button>}</div>}</div>
+    }) : <div className={`lws-empty lws-products-empty${recordingState?.capture === 'recording' ? ' is-live-loading' : ''}`}><span className="lws-empty-icon"><Sparkles size={22} strokeWidth={1.5} /></span><strong>{recordingState?.capture === 'recording' ? 'Finding products from the conversation' : intents.length ? 'Finding catalogue matches' : 'Suggestions that follow the conversation'}</strong>{recordingState?.capture === 'recording' ? <><div className="lws-loading-lines" aria-hidden="true"><i /><i /><i /></div><p>Matching keywords and requirements against the product catalogue.</p></> : <><p>{intents.length ? 'Matching the products and requirements mentioned with your connected Zoho inventory.' : 'Mention a product, specification, or budget. Relevant items from your Zoho catalogue will appear here.'}</p>{onSearchProducts && <button type="button" className="lws-text-button" onClick={onSearchProducts}><Search size={13} />Browse product catalogue</button>}</>}</div>}</div>
   </section>;
 }
 
@@ -248,10 +248,10 @@ export default function LiveSessionWorkspace({
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
-  const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance }} compact={cartView} />;
+  const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, recordingState }} compact={cartView} />;
   return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
-      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />{suggestions}</div>
+      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} />{suggestions}</div>
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
       </div>
