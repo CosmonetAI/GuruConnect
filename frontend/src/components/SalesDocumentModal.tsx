@@ -50,7 +50,7 @@ export default function SalesDocumentModal({ open, contact, customerType, cart, 
   const deliveryUncertain = createdDocument?.deliveryStatus === 'uncertain'
   const beforeTax = Math.max(0, subtotal - discount)
   const gstRate = demo ? 18 : 0
-  const cgst = Math.round(beforeTax * (gstRate / 2) * 100) / 100
+  const cgst = Math.round(beforeTax * (gstRate / 2) / 100 * 100) / 100
   const sgst = cgst
   const gstTotal = cgst + sgst
   const grandTotal = beforeTax + gstTotal
