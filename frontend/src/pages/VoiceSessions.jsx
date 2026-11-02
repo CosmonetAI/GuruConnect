@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams, useBlocker } from "react-router-dom";
+import { useSearchParams, useBlocker, useNavigate } from "react-router-dom";
 import {
   BookUser,
+  Columns3,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -150,6 +151,33 @@ function CustomerModal({ contact, onClose }) {
   );
 }
 
+function CrmLeadPanel({ contact, identity, biginContactId, onOpen }) {
+  const stage = String(contact?.enquiry_stage || "new").replaceAll("_", " ");
+  const stageLabel = stage === "new" ? "Qualification" : stage.replace(/^./, (character) => character.toUpperCase());
+  const status = stage === "closed" ? "Closed" : stage === "in process" ? "In progress" : "Registered";
+  const phone = identity.phone || contact?.phone || "Not provided";
+  return (
+    <div className="crm-lead-panel">
+      <div className="crm-lead-card">
+        <div>
+          <small>ZOHO BIGIN · CRM LEAD</small>
+          <h2>{identity.name || contact?.name || "Customer"} · Customer opportunity</h2>
+          <p>{biginContactId ? "Registered" : "Not linked"} · {phone}</p>
+        </div>
+        <button type="button" className="crm-lead-open" onClick={() => onOpen(stageLabel)}>
+          Open CRM lead <ChevronRight size={20} />
+        </button>
+      </div>
+      <div className="crm-lead-stats">
+        <div><small>STATUS</small><strong>{status}</strong></div>
+        <div><small>PIPELINE STAGE</small><strong>{stageLabel}</strong></div>
+        <div><small>PHONE</small><strong>{phone}</strong></div>
+        <div><small>OWNER</small><strong>{contact?.assigned || "Unassigned"}</strong></div>
+      </div>
+    </div>
+  );
+}
+
 function ProductRequirement({
   line,
   index,
@@ -288,6 +316,7 @@ function ProductRequirement({
 
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { user, workspace, localMode, setCaptureBusy } = useOffice();
   const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
@@ -1107,6 +1136,7 @@ export default function VoiceSessions() {
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
                 <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Recordings ({recorderSessions.length})</button>
+                <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "lead" ? "conversation" : "lead")}><Columns3 size={15} />CRM lead</button>
               </nav>
             </>
           )}
@@ -1123,9 +1153,9 @@ export default function VoiceSessions() {
             <small className="session-welcome-footnote">You’ll start the microphone in the next step.</small>
           </div></div>}
           {session && <>
-            {activeTab !== "conversation" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : "Enquiry context"}>
-              <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+            {activeTab !== "conversation" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : activeTab === "lead" ? "CRM lead details" : "Enquiry context"}>
+              <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : activeTab === "lead" ? "CRM lead" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} onOpen={(stage) => navigate(`/pipelines?customer=${encodeURIComponent(identity.name || selectedContact?.name || "")}&stage=${encodeURIComponent(stage)}`)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
