@@ -1248,7 +1248,7 @@ export default function VoiceSessions() {
               identity={identity}
               messages={messages}
               transcript={transcriptPreview}
-              recommendations={[...new Map([...products, ...recommendations].map((item) => [item.item_id || item.id || item.sku, item])).values()]}
+              recommendations={[...new Map([...products, ...recommendations].filter(Boolean).map((item) => [item.item_id || item.id || item.sku, item])).values()]}
               intents={[...new Set([...liveKeywords, ...customIntents])].filter((keyword) => !hiddenIntents.includes(keyword))}
               {...liveGuidance}
               cart={cart}
