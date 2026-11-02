@@ -1024,7 +1024,8 @@ export default function VoiceSessions() {
         downloadDocumentPdf(result); setDocumentModalOpen(false);
         setDocumentFeedback(`${result.document.demo ? "Sample document" : "Document"} created and downloaded as PDF.`);
       } else if (deliveryStatus === "accepted") {
-        setDocumentModalOpen(false); setDocumentFeedback(result.document?.demo ? `${type === "quote" ? "Quote" : type === "invoice" ? "Invoice" : "Sales order"} created in Zoho Books and emailed to ${recipient} (demo simulation; no external service was called).` : "Document created. Submitted for delivery via SMTP2GO.");
+        if (result.document?.demo) downloadDocumentPdf(result);
+        setDocumentModalOpen(false); setDocumentFeedback(result.document?.demo ? `${type === "quote" ? "Quote" : type === "invoice" ? "Invoice" : "Sales order"} created, emailed to ${recipient}, and downloaded as a GST sample PDF (demo simulation; no external service was called).` : "Document created. Submitted for delivery via SMTP2GO.");
       } else {
         snapshot.error = result.delivery?.message || (deliveryStatus === "uncertain" ? "Email submission is uncertain. Check its status before retrying. You can download the created PDF." : "The document was created, but email submission failed. Retry email or download the PDF.");
         snapshot.emailFields = { recipient, subject: documentSubject, message: documentMessage };

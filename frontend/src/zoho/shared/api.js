@@ -41,6 +41,35 @@ function expandMockData(data) {
 }
 function writeMock(data) { sessionStorage.setItem(mockKey, JSON.stringify(data)); }
 function mockList(items, key) { return { [key]: items, has_more: false }; }
+function demoPdf({ number, type, contact, lines, subtotal, discount, taxable, cgst, sgst, total }) {
+  const title = type === 'quote' ? 'QUOTATION' : type === 'sales-order' ? 'SALES ORDER' : 'TAX INVOICE';
+  const escapePdf = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+  const rows = [
+    'Guru Associates', 'GSTIN: 29AAACG1234F1Z5 | Karnataka', '', title, number,
+    `Bill To: ${contact.contact_name}`, `Phone: ${contact.mobile || 'Not provided'}`, '',
+    'ORDER SUMMARY', 'Item                                      Qty     Amount',
+    ...lines.map((line, index) => `${index + 1}. ${String(line.description || 'Catalogue item').slice(0, 38)}   ${line.quantity}     INR ${Number(line.rate || 0) * Number(line.quantity || 0)}`),
+    '', `Subtotal: INR ${subtotal.toFixed(2)}`, `Discount: INR ${discount.toFixed(2)}`, `Taxable amount: INR ${taxable.toFixed(2)}`,
+    `CGST (9%): INR ${cgst.toFixed(2)}`, `SGST (9%): INR ${sgst.toFixed(2)}`, `TOTAL: INR ${total.toFixed(2)}`,
+    '', 'Demo document - sample catalogue and GST values. No external service was called.',
+  ];
+  let y = 760;
+  const commands = ['BT', '/F1 10 Tf'];
+  rows.forEach((row) => { commands.push(`1 0 0 1 48 ${y} Tm (${escapePdf(row)}) Tj`); y -= 16; if (y < 48) y = 760; });
+  commands.push('ET');
+  const stream = commands.join('\n');
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+  ];
+  let pdf = '%PDF-1.4\n'; const offsets = [0];
+  objects.forEach((object, index) => { offsets[index + 1] = pdf.length; pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = pdf.length; pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return btoa(unescape(encodeURIComponent(pdf)));
+}
 function mockZoho(path, opts = {}) {
   const data = readMock(); const clean = path.split('?')[0]; const query = new URLSearchParams(path.split('?')[1] || ''); const method = String(opts.method || 'GET').toUpperCase();
   const search = (query.get('search') || '').toLowerCase();
@@ -175,13 +204,14 @@ function mockZoho(path, opts = {}) {
     const prefixes = { invoice: 'INV-2026-', quote: 'QT-2026-', 'sales-order': 'SO-2026-' };
     const number = `${prefixes[type] || prefixes.invoice}${serial}`;
     const id = `demo-${type}-${serial}`;
-    const document = { id, type, number, status: body.delivery === 'email' ? 'sent' : 'created', customer_name: contact.contact_name, customer_phone: contact.mobile, total, subtotal, discount, tax, date: new Date().toISOString().slice(0, 10), demo: true, line_items: lines };
+    const cgst = Math.round(taxable * 0.09 * 100) / 100;
+    const sgst = cgst;
+    const document = { id, type, number, status: body.delivery === 'email' ? 'sent' : 'created', customer_name: contact.contact_name, customer_phone: contact.mobile, total, subtotal, discount, taxable, tax, cgst, sgst, gst_rate: 18, gstin: '29AAACG1234F1Z5', date: new Date().toISOString().slice(0, 10), demo: true, line_items: lines };
     const target = type === 'quote' ? data.quotes : type === 'sales-order' ? data.orders : data.invoices;
     const idKey = type === 'quote' ? 'estimate_id' : type === 'sales-order' ? 'salesorder_id' : 'invoice_id';
     const numberKey = type === 'quote' ? 'estimate_number' : type === 'sales-order' ? 'salesorder_number' : 'invoice_number';
-    target.unshift({ [idKey]: id, [numberKey]: number, customer_name: contact.contact_name, status: document.status, total, subtotal, discount, tax, date: document.date, line_items: lines });
-    const pdfText = `%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF`;
-    const base64 = btoa(unescape(encodeURIComponent(pdfText)));
+    target.unshift({ [idKey]: id, [numberKey]: number, customer_name: contact.contact_name, status: document.status, total, subtotal, discount, taxable, tax, cgst, sgst, gst_rate: 18, gstin: '29AAACG1234F1Z5', date: document.date, line_items: lines });
+    const base64 = demoPdf({ number, type, contact, lines, subtotal, discount, taxable, cgst, sgst, total });
     const response = { document, delivery: { status: body.delivery === 'email' ? 'accepted' : 'accepted', message: 'Sample document created locally. No external service was called.' }, pdf: { mime_type: 'application/pdf', base64, filename: `${number}.pdf` } };
     data.demo_documents.unshift({ request_id: body.request_id, response });
     writeMock(data);

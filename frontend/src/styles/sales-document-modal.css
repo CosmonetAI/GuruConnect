@@ -18,6 +18,10 @@
 .sdm-account-type select { min-width:100px; padding:7px 9px; border:1px solid #d9e5f3; border-radius:7px; color:#315879; background:white; font:inherit; font-size:11px; opacity:1; }
 .sdm-demo-tag { background:#fff3d8; color:#8d5b0c; }
 .sdm-demo-notice { padding:9px 11px; border:1px solid #f1dfb1; border-radius:8px; color:#855c18; background:#fffbf1; font-size:11px; line-height:1.5; }
+.sdm-business-details { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; padding:11px 12px; border:1px solid #dce8f2; border-radius:9px; background:#fbfdff; }
+.sdm-business-details div { display:grid; gap:3px; }
+.sdm-business-details strong { color:#17375d; font-size:12px; }
+.sdm-business-details span { color:#71839b; font-size:10px; }
 .sdm-summary { margin:20px 0; }
 .sdm-section-title { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:10px; }
 .sdm-section-title h3,.sdm-type-fieldset legend { margin:0; color:#18375f; font-size:13px; font-weight:750; }
