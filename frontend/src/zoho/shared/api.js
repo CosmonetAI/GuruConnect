@@ -24,16 +24,18 @@ function expandMockData(data) {
   const productImages = ['/product-aero-bldc.jpg', '/product-luxe-led.jpg', '/product-led-bulb.jpg', '/product-pedestal-fan.jpg'];
   data.products = data.products.map((item, index) => ({ ...item, image_url: item.image_url || productImages[index % productImages.length] }));
   const workTypes = [
-    ['quote', 'Quote ready', 'QT-2026-1001', 'Draft'],
-    ['invoice', 'Invoice ready', 'INV-2026-1002', 'Sent'],
-    ['sales-order', 'Sales order ready', 'SO-2026-1003', 'Confirmed'],
+    ['quote', 'Quote discussed', 'QT-2026-1001', 'Draft'],
+    ['invoice', 'Invoice discussed', 'INV-2026-1002', 'Sent'],
+    ['sales-order', 'Sales order discussed', 'SO-2026-1003', 'Confirmed'],
   ];
   data.contacts.forEach((contact, index) => {
+    const isAkshat = String(contact.contact_name || '').trim().toLowerCase() === 'akshat saxena' || String(contact.mobile || '').replace(/\D/g, '') === '9311854768';
+    if (isAkshat) { contact.demo_work_type = null; contact.demo_work_label = null; contact.demo_work_number = null; contact.demo_work_status = null; return; }
     const [type, label, number, status] = workTypes[index % workTypes.length];
-    contact.demo_work_type = contact.demo_work_type || type;
-    contact.demo_work_label = contact.demo_work_label || label;
-    contact.demo_work_number = contact.demo_work_number || number;
-    contact.demo_work_status = contact.demo_work_status || status;
+    contact.demo_work_type = type;
+    contact.demo_work_label = label;
+    contact.demo_work_number = number;
+    contact.demo_work_status = status;
   });
   const fanNames = ['Aero', 'Luxe', 'Havells', 'Atomberg', 'Crompton', 'Orient', 'Usha', 'Bajaj', 'Superfan', 'V-Guard'];
   while (data.products.length < 100) { const i = data.products.length + 1; data.products.push({ item_id: `item-mock-${i}`, name: `${fanNames[i % fanNames.length]} Ceiling Fan ${1000 + (i % 4) * 100}mm`, sku: `FAN-MOCK-${String(i).padStart(3, '0')}`, rate: 1999 + (i % 12) * 500, status: 'active', stock_on_hand: 5 + (i % 40), description: 'Approved catalogue product for the frontend demo.', unit: 'pcs', image_url: productImages[i % productImages.length] }); }
@@ -169,13 +171,13 @@ function mockZoho(path, opts = {}) {
     const contact = data.contacts.find(item => item.mobile === input.phone || item.contact_name === input.name) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: payload.document_recommendation ? [payload.document_recommendation] : recommendedProductsFor(contact) };
+    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
   }
   if (clean.startsWith('/voice-sessions/') && clean.endsWith('/history')) {
     const sessionId = clean.split('/')[2]; const contactId = sessionId.replace(/^chat-/, ''); const contact = data.contacts.find(item => item.contact_id === contactId) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id, demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: payload.document_recommendation ? [payload.document_recommendation] : recommendedProductsFor(contact) };
+    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id, demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
   }
   if (clean.includes('/voice-sessions/') && clean.endsWith('/notes')) {
     if (method === 'POST') { let body = {}; try { body = JSON.parse(opts.body || '{}'); } catch {} return { note: { id: `note-${Date.now()}`, author_name: 'Ravi Kumar', content: body.content || 'Follow up with the customer.', created_at: new Date().toISOString() } }; }

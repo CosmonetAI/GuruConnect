@@ -76,13 +76,12 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
   const demoWorkItem = isAkshat ? null : workItem?.line_items?.length ? workItem : {
     ...(workItem || {}),
     type,
-    label: workItem?.label || next.demo_work_label || (type === "invoice" ? "Invoice ready" : type === "sales-order" ? "Sales order ready" : "Quote ready"),
+    label: workItem?.label || next.demo_work_label || (type === "invoice" ? "Invoice discussed" : type === "sales-order" ? "Sales order discussed" : "Quote discussed"),
     number: workItem?.number || next.demo_work_number || "QT-2026-1001",
     status: workItem?.status || next.demo_work_status || "Draft",
     editable: true,
     line_items: demoLineItems,
   };
-  const documentRecommendation = demoWorkItem ? [{ recommendation_kind: 'document', name: `${demoWorkItem.label} ${demoWorkItem.number}`, document_type: demoWorkItem.type, document_number: demoWorkItem.number, status: demoWorkItem.status, description: `The customer asked for this ${demoWorkItem.type === 'sales-order' ? 'sales order' : demoWorkItem.type} to be prepared and shared. Edit the order summary before sending.` }] : [];
   const documentPrompt = demoWorkItem?.type === 'invoice' ? 'Please send me the invoice for the selected fans.' : demoWorkItem?.type === 'sales-order' ? 'The customer approved the options. Please create and share the sales order.' : demoWorkItem?.type === 'quote' ? 'Please prepare a quote and share it with me before I confirm the order.' : '';
   const documentReply = demoWorkItem?.type === 'invoice' ? 'I will prepare the invoice with GST and send it to your email.' : demoWorkItem?.type === 'sales-order' ? 'I will prepare the sales order with the agreed quantities and GST.' : demoWorkItem?.type === 'quote' ? `I will prepare ${demoWorkItem.number} with the product summary and share it for review.` : '';
   if (documentPrompt) {
@@ -100,7 +99,7 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
       demo_work_item: demoWorkItem,
     },
     messages: transcript.map((turn) => ({ role: turn.speaker_role === "customer" ? "user" : "assistant", content: turn.english_text })),
-    recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: documentRecommendation.length ? documentRecommendation : products,
+    recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: products,
     customer_history: { transcript_summary: `${next.name} is comparing quiet, energy-efficient ceiling fans and asked for a 1200mm model with remote control.`, keywords: ["Ceiling fan", "1200mm", "BLDC", "Remote control", "Energy efficient"], recordings: [{ id: `history-${next.phone}-1`, created_at: "2026-10-29T10:24:00Z", duration_seconds: 192, summary: "Customer compared regular and BLDC fan options and requested a premium model.", keywords: ["BLDC", "Remote control", "Premium model"], status: "Processed" }, { id: `history-${next.phone}-2`, created_at: "2026-10-27T15:12:00Z", duration_seconds: 137, summary: "Customer shared budget, installation preference, and a follow-up requirement.", keywords: ["Budget", "Installation", "Follow-up"], status: "Processed" }], quotes: [{ id: `quote-${next.phone}`, number: "QT-2026-1027", status: "sent", total: 12448, date: "2026-10-28" }], lead: { id: `lead-${next.phone}`, Deal_Name: `${next.name} · Ceiling fan opportunity`, Stage: "Qualification", Lead_Status: "Registered", Phone: next.phone, Contact_Name: { name: next.name, mobile: next.phone }, Owner: { name: "Ravi Kumar" } } },
     insights: [{ label: "Customer intent", value: "Compare ceiling fan options" }, { label: "Budget", value: "₹12,000" }],
     keywords: ["Ceiling fan", "Regular fan", "Good air delivery", "Modern design"],
@@ -531,7 +530,7 @@ export default function VoiceSessions() {
     if (!alive.current || ticket !== selection.current) return;
     setNotes(noteData.notes || []);
     const requirements = contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()];
-    const savedCart = contextData.cart?.length ? contextData.cart : (demoWorkItemRef.current?.line_items || []);
+    const savedCart = localMode ? [] : (contextData.cart || []);
     contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: savedCart }), running: false, pending: null });
     setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
   };
@@ -1207,6 +1206,7 @@ export default function VoiceSessions() {
                 {contact.phone || contact.email || "No phone or email"}
               </small>
               <em>{contact.sources.join(" · ")}</em>
+              {contact.demo_work_label && <span className={`contact-work-pill work-${contact.demo_work_type || "quote"}`}>{contact.demo_work_label}</span>}
               {contact.recording_status && <span className="contact-status-pill">{contact.recording_status}</span>}
             </button>
           ))}
