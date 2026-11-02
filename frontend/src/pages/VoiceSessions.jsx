@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams, useBlocker, useNavigate } from "react-router-dom";
+import { Link, useSearchParams, useBlocker } from "react-router-dom";
 import {
   BookUser,
   Columns3,
@@ -421,7 +421,6 @@ export default function VoiceSessions() {
   const refreshLive = useRef(null);
   const contextSaves = useRef(new Map());
   const blocker = useBlocker(busy);
-  const navigate = useNavigate();
   useEffect(() => { if (blocker.state === 'blocked') { setError('Finish recording and saving this session before leaving.'); blocker.reset(); } }, [blocker]);
   useEffect(() => {
     if (!cartSaving && !documentBusy) return;
@@ -1197,7 +1196,7 @@ export default function VoiceSessions() {
               onUpdateCart={updateCart}
               onRemoveCart={removeCartItem}
               onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
-              onCompleteCart={() => demoCatalogue ? navigate("/ai-chats/invoice") : void openDocumentModal()}
+              onCompleteCart={() => void openDocumentModal()}
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}

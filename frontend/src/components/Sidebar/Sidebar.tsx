@@ -28,13 +28,13 @@ export default function Sidebar() {
     }).catch(() => {})
     return () => { active = false }
   }, [profile.data?.avatar_path, avatarRefresh])
-  const roleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : workspace?.role === 'owner' ? navigationItems : navigationItems.filter(item => item.to !== '/walkins' && !item.to.startsWith('/walkins/'))
+  const roleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems.filter(item => item.to !== '/walkins' && !item.to.startsWith('/walkins/'))
   const [booksOpen, setBooksOpen] = useState(false)
   const visibleBooksItems = workspace?.role === 'owner' || workspace?.role === 'salesperson' ? zohoBooksItems : []
   const salesRole = workspace?.role === 'owner' || workspace?.role === 'salesperson'
   const salesTopItems = roleItems.filter(item => ['/dashboard', '/enquiries', '/ai-chats'].includes(item.to))
   const salesPipeline = roleItems.find(item => item.to === '/pipelines')
-  const salesBottomItems = roleItems.filter(item => ['/analytics', '/recordings', '/zoho', '/settings', '/walkins'].includes(item.to))
+  const salesBottomItems = roleItems.filter(item => ['/analytics', '/recordings', '/zoho', '/settings'].includes(item.to))
   const displayName = profile.data?.display_name || user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Team member'
   const email = user?.email?.toLowerCase() || ''
   const ownerWorkspace = workspaces.find(item => (item.member_id ?? item.id) === user?.id && item.role === 'owner')

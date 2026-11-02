@@ -26,7 +26,6 @@ const SalesOrders = lazy(() => import('../pages/GGPages').then(module => ({ defa
 const PurchaseOrders = lazy(() => import('../pages/GGPages').then(module => ({ default: module.PurchaseOrders })))
 const Invoices = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Invoices })))
 const Pipelines = lazy(() => import('../pages/Pipelines'))
-const InvoiceReview = lazy(() => import('../pages/InvoiceReview'))
 import { useOffice } from '../contexts/OfficeContext'
 
 const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
@@ -78,7 +77,6 @@ export default function App() {
         <Route path="purchase-orders" element={<PurchaseOrders />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="pipelines" element={<Pipelines />} />
-        <Route path="ai-chats/invoice" element={<InvoiceReview />} />
       </Route>
       <Route path="*" element={<div style={{padding:20}}>Page not found. Open Overview or Enquiries from the navigation.</div>} />
     </Routes></Suspense>
