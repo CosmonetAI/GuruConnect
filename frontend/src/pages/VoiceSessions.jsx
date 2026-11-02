@@ -58,7 +58,7 @@ const customerFields = [
   ["Preferred contact", "preferredContact"],
 ];
 
-function localDemoSession(next, enquiryId = null, enquiryStage = "in_process") {
+function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", workItem = null) {
   const transcript = [
     { start_seconds: 0, speaker_role: "customer", speaker_name: next.name, english_text: "I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?" },
     { start_seconds: 12, speaker_role: "agent", speaker_name: "Ravi Kumar", english_text: "Yes, I can suggest a few BLDC options with remote control and good air delivery." },
@@ -70,6 +70,17 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process") {
     { item_id: "item-2", name: "Luxe Ceiling Fan 1200mm with LED", sku: "FAN-LUXE-1200", rate: 6999, stock_on_hand: 12, image_url: "/product-luxe-led.jpg", match_status: "verified", matched_specs: ["ceiling fan", "modern design"], features: ["BLDC motor", "LED light with dimmer", "Remote control"] },
     { item_id: "item-3", name: "LED Bulb 9W (Pack of 4)", sku: "LED-9W-4", rate: 1999, stock_on_hand: 48, image_url: "/product-led-bulb.jpg", match_status: "verified", matched_specs: ["ceiling fan", "modern design"], features: ["Bright white light", "Energy efficient", "Easy installation"] },
   ];
+  const type = workItem?.type || next.demo_work_type || "quote";
+  const demoLineItems = products.slice(0, 2).map((product, index) => ({ ...product, product: product.name, quantity: type === "sales-order" ? (index ? 3 : 12) : index ? 1 : 2, discount: index ? 0 : 5, discount_type: "percentage" }));
+  const demoWorkItem = workItem?.line_items?.length ? workItem : {
+    ...(workItem || {}),
+    type,
+    label: workItem?.label || next.demo_work_label || (type === "invoice" ? "Invoice ready" : type === "sales-order" ? "Sales order ready" : "Quote ready"),
+    number: workItem?.number || next.demo_work_number || "QT-2026-1001",
+    status: workItem?.status || next.demo_work_status || "Draft",
+    editable: true,
+    line_items: demoLineItems,
+  };
   return {
     session: {
       id: `demo-session-${next.phone}`,
@@ -78,6 +89,7 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process") {
       email: next.email || "",
       enquiry_id: enquiryId || `enquiry-${next.phone}`,
       enquiry_stage: enquiryStage || "in_process",
+      demo_work_item: demoWorkItem,
     },
     messages: transcript.map((turn) => ({ role: turn.speaker_role === "customer" ? "user" : "assistant", content: turn.english_text })),
     recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: products,
@@ -364,6 +376,7 @@ export default function VoiceSessions() {
     [identity, setIdentity] = useState(initialIdentity),
     [conversationId, setConversationId] = useState(null),
     [selectedContact, setSelectedContact] = useState(null);
+  const [demoWorkItem, setDemoWorkItem] = useState(null);
   const [sessionBusy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [contactBusy, setContactBusy] = useState(false),
@@ -443,6 +456,8 @@ export default function VoiceSessions() {
   const catalogueSearch = useRef(0);
   const refreshLive = useRef(null);
   const contextSaves = useRef(new Map());
+  const demoWorkItemRef = useRef(null);
+  demoWorkItemRef.current = demoWorkItem;
 
   const stopDemoReveal = () => {
     if (demoRevealTimer.current) window.clearInterval(demoRevealTimer.current);
@@ -508,7 +523,7 @@ export default function VoiceSessions() {
     if (!alive.current || ticket !== selection.current) return;
     setNotes(noteData.notes || []);
     const requirements = contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()];
-    const savedCart = contextData.cart || [];
+    const savedCart = contextData.cart?.length ? contextData.cart : (demoWorkItemRef.current?.line_items || []);
     contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: savedCart }), running: false, pending: null });
     setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
   };
@@ -523,6 +538,7 @@ export default function VoiceSessions() {
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
     setCart([]); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
+    setDemoWorkItem(null); demoWorkItemRef.current = null;
     setActiveTab("conversation"); setArchivedConversationId(null);
     setCartProductSearchOpen(false); setViewProduct(null); setCartSearchError("");
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
@@ -563,7 +579,10 @@ export default function VoiceSessions() {
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
-      setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', sources: ['Session'], enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
+      const openedWorkItem = data.session?.demo_work_item || data.demo_work_item || null;
+      demoWorkItemRef.current = openedWorkItem;
+      setDemoWorkItem(openedWorkItem);
+      setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', sources: ['Session'], demo_work_item: openedWorkItem, enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
       await loadSessionExtras(id, ticket);
     } catch (e) { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); }
     finally { if (alive.current && ticket === selection.current) { setBusy(false); busyRef.current = false; } }
@@ -576,6 +595,10 @@ export default function VoiceSessions() {
           name: contact.name,
           phone: contact.phone || "",
           email: contact.email || "",
+          demo_work_type: contact.demo_work_type,
+          demo_work_label: contact.demo_work_label,
+          demo_work_number: contact.demo_work_number,
+          demo_work_status: contact.demo_work_status,
         }
       : identity;
     if (!next.name.trim() || !next.phone.trim()) {
@@ -594,11 +617,16 @@ export default function VoiceSessions() {
     setRecordingSnapshot(null);
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
     try {
+      const nextWorkItem = contact?.demo_work_item || (contact?.demo_work_type ? { type: contact.demo_work_type, label: contact.demo_work_label, number: contact.demo_work_number, status: contact.demo_work_status, editable: true } : null);
+      demoWorkItemRef.current = nextWorkItem;
       const data = localMode
-        ? localDemoSession(next, contact?.enquiry_id || initialEnquiryId, contact?.enquiry_stage || searchParams.get("stage") || "in_process")
+        ? localDemoSession(next, contact?.enquiry_id || initialEnquiryId, contact?.enquiry_stage || searchParams.get("stage") || "in_process", nextWorkItem)
         : await sessionCall("/voice-sessions", { method: "POST", body: JSON.stringify(next) });
       if (!alive.current || ticket !== selection.current) return;
       const initialData = blankInitialDemoSession(data);
+      const openedWorkItem = data.session?.demo_work_item || data.demo_work_item || nextWorkItem;
+      demoWorkItemRef.current = openedWorkItem;
+      setDemoWorkItem(openedWorkItem);
       setSelectedContact(
         contact || {
           id: `session:${data.session.id}`,
@@ -609,6 +637,7 @@ export default function VoiceSessions() {
           enquiry_id: data.session?.enquiry_id || initialEnquiryId,
           enquiry_stage: data.session?.enquiry_stage || searchParams.get("stage") || "new",
           records: {},
+          demo_work_item: openedWorkItem,
         },
       );
       setSession(data.session.id); sessionRef.current = data.session.id;
@@ -1170,6 +1199,7 @@ export default function VoiceSessions() {
                 {contact.phone || contact.email || "No phone or email"}
               </small>
               <em>{contact.sources.join(" · ")}</em>
+              {contact.demo_work_label && <span className={`contact-work-pill work-${contact.demo_work_type || "quote"}`}>{contact.demo_work_label}</span>}
               {contact.recording_status && <span className="contact-status-pill">{contact.recording_status}</span>}
             </button>
           ))}
@@ -1210,6 +1240,7 @@ export default function VoiceSessions() {
                     <i />{transcriptionUiStatus.label}
                   </span>
                   {demoCatalogue && <span className="live-header-pill status-ready" title={demoCatalogueNotice}>Demo catalogue</span>}
+                  {demoWorkItem && <span className={`live-header-pill work-pill work-${demoWorkItem.type || "quote"}`} title="Editable demo work item">{demoWorkItem.label} · {demoWorkItem.number}</span>}
                   {transcriptionUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
                 </div>
                 {selectedContact.enquiry_id && <label className="session-stage-control"><span>Enquiry stage</span><select value={selectedContact.enquiry_stage || "new"} onChange={(event) => void changeEnquiryStage(event.target.value)} disabled={stageBusy}><option value="new">New enquiry</option><option value="in_process">In process</option><option value="closed">Closed</option><option value="customer_did_not_show">Customer didn’t show up</option></select></label>}
