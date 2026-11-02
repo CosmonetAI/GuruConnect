@@ -101,7 +101,8 @@ export function liveProcessingStatus({ snapshot = null, captureState = {}, provi
   const finalState = snapshot?.final_state ?? snapshot?.finalState;
   const capture = ["recording", "paused"].includes(captureState.capture) ? captureState.capture : snapshot?.capture_state;
   const capturing = ["recording", "paused"].includes(capture);
-  const hasEnglish = turns.some((turn) => Boolean(turn.english_text?.trim()));
+  const safeTurns = Array.isArray(turns) ? turns.filter(Boolean) : [];
+  const hasEnglish = safeTurns.some((turn) => Boolean(turn.english_text?.trim()));
   const status = (key, label, detail, available = hasEnglish) => ({ key, label, detail, available });
   if (finalState === "complete" && english === "complete") return status("complete", "Processing complete", "The recording transcript and English translation are available.", true);
 
@@ -123,7 +124,7 @@ export function liveProcessingStatus({ snapshot = null, captureState = {}, provi
 
   if (["running", "processing"].includes(transcription)) return status("transcribing", "Transcribing", "The speech service is processing the latest audio.");
   if (["running", "processing"].includes(english)) return status("translating", "Translating", "Preparing the English version of the latest speech.");
-  if (capturing && hasEnglish && !turns.some((turn) => turn.source_text && turn.english_text == null)) return status("ready", "Live translation up to date", "Showing processed speech. New text follows as the next audio window is ready.");
+  if (capturing && hasEnglish && !safeTurns.some((turn) => turn.source_text && turn.english_text == null)) return status("ready", "Live translation up to date", "Showing processed speech. New text follows as the next audio window is ready.");
   if (capturing && (stage === "waiting" || !snapshot || transcription === "pending" || !transcription)) return status("ready", "Waiting for first audio window", "Audio capture is active. Text appears when the first short audio window has been processed.");
   if (transcription === "queued") return status("transcribing", "Transcription queued", "Saved audio is waiting for the speech service.");
   if (["pending", "queued"].includes(english) && (["complete", "available"].includes(transcription) || turns.length)) return status("translating", "Translation queued", "The source transcript is available; its English translation is waiting to be processed.");
@@ -431,9 +432,9 @@ export default function VoiceSessions() {
     if (!localMode) return;
     stopDemoReveal();
     const source = demoRevealSource.current || {};
-    const transcript = Array.isArray(source.transcript_preview) ? source.transcript_preview : [];
+    const transcript = Array.isArray(source.transcript_preview) ? source.transcript_preview.filter(Boolean) : [];
     const keywords = Array.isArray(source.keywords) ? source.keywords : [];
-    const recommendations = Array.isArray(source.recommendations) ? source.recommendations : [];
+    const recommendations = Array.isArray(source.recommendations) ? source.recommendations.filter(Boolean) : [];
     setTranscriptPreview([]); setLiveKeywords([]); setRecommendations([]); setProducts([]);
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis('running'); setLiveProcessing({ processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true }, processingStatus: { stage: 'running', message: 'Listening for speech and matching catalogue products.' } });
@@ -531,7 +532,7 @@ export default function VoiceSessions() {
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
       demoRevealSource.current = data;
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
+      setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
       setLiveKeywords(data.keywords || []);
       setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
       setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
@@ -591,7 +592,7 @@ export default function VoiceSessions() {
       demoRevealSource.current = data;
       setRecorderSessions(data.recorder_sessions || []);
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []); setRecommendations(data.recommendations || []);
+      setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
       setLiveKeywords(data.keywords || []);
       setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
       setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
@@ -792,10 +793,10 @@ export default function VoiceSessions() {
         const data = await sessionCall(`/voice-sessions/${session}/live`, { signal: controller.signal });
         if (!isCurrent() || (data.conversation_id && data.conversation_id !== conversationId)) return;
         latest = data;
-        if (Array.isArray(data.transcript_preview)) setTranscriptPreview(data.transcript_preview);
+        if (Array.isArray(data.transcript_preview)) setTranscriptPreview(data.transcript_preview.filter(Boolean));
         if (Array.isArray(data.insights)) setInsights(data.insights);
         if (Array.isArray(data.keywords)) setLiveKeywords(data.keywords);
-        if (Array.isArray(data.recommendations)) setRecommendations(data.recommendations);
+        if (Array.isArray(data.recommendations)) setRecommendations(data.recommendations.filter(Boolean));
         setLiveGuidance({ requirements: Array.isArray(data.requirements) ? data.requirements : [], clarificationSuggestions: Array.isArray(data.clarification_suggestions) ? data.clarification_suggestions : [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
         if (data.recording) setRecordingSnapshot(data.recording);
         setLiveProcessing({ providerReadiness: data.provider_readiness, processingStatus: data.processing_status, processingMode: data.processing_mode });
