@@ -84,6 +84,19 @@ function localDemoSession(next) {
   };
 }
 
+function blankInitialDemoSession(data) {
+  const name = String(data?.session?.name || '').trim().toLowerCase();
+  const phone = String(data?.session?.phone || '').replace(/\D/g, '');
+  if (name !== 'akshat saxena' && phone !== '9311854768') return data;
+  return {
+    ...data,
+    messages: [], transcript_preview: [], recommendations: [], insights: [], keywords: [],
+    requirements: [], current_intent: '', agent_guidance: [], clarification_suggestions: [],
+    catalogue_status: '', analysis_status: 'waiting_for_translation',
+    processing_status: { stage: 'waiting', message: 'Ready to start recording.' }, notices: [],
+  };
+}
+
 // Capture and speech processing have independent lifecycles. A running microphone
 // is not evidence that a provider has received or translated an audio window.
 /**
@@ -528,16 +541,17 @@ export default function VoiceSessions() {
       const data = await sessionCall(`/voice-sessions/${id}/history`);
       if (!alive.current || ticket !== selection.current) return;
       clearLiveWorkspace();
+      const initialData = blankInitialDemoSession(data);
       setSession(id); sessionRef.current = id;
-      setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
+      setMessages(initialData.messages || []); setRecorderSessions(initialData.recorder_sessions || []);
       demoRevealSource.current = data;
-      setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
-      setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
-      setLiveKeywords(Array.isArray(data.keywords) ? [...new Set(data.keywords.filter(Boolean))] : []);
-      setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
-      setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
-      setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
-      setCatalogueNotices(data.notices || []);
+      setCustomerHistory(initialData.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(initialData.crm_lead || initialData.customer_history?.lead || null);
+      setTranscriptPreview(Array.isArray(initialData.transcript_preview) ? initialData.transcript_preview.filter(Boolean) : []); setInsights(initialData.insights || []); setRecommendations(Array.isArray(initialData.recommendations) ? initialData.recommendations.filter(Boolean) : []);
+      setLiveKeywords(Array.isArray(initialData.keywords) ? [...new Set(initialData.keywords.filter(Boolean))] : []);
+      setLiveGuidance({ requirements: initialData.requirements || [], clarificationSuggestions: initialData.clarification_suggestions || [], currentIntent: initialData.current_intent || '', agentGuidance: initialData.agent_guidance || [], catalogueStatus: initialData.catalogue_status || '' });
+      setLiveAnalysis(initialData.analysis_status || 'waiting_for_translation');
+      setLiveProcessing({ processingStatus: initialData.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
+      setCatalogueNotices(initialData.notices || []);
       setNoteText(""); setNoteError("");
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
@@ -577,6 +591,7 @@ export default function VoiceSessions() {
         ? localDemoSession(next)
         : await sessionCall("/voice-sessions", { method: "POST", body: JSON.stringify(next) });
       if (!alive.current || ticket !== selection.current) return;
+      const initialData = blankInitialDemoSession(data);
       setSelectedContact(
         contact || {
           id: `session:${data.session.id}`,
@@ -588,16 +603,16 @@ export default function VoiceSessions() {
         },
       );
       setSession(data.session.id); sessionRef.current = data.session.id;
-      setMessages(data.messages || []);
+      setMessages(initialData.messages || []);
       demoRevealSource.current = data;
-      setRecorderSessions(data.recorder_sessions || []);
-      setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
-      setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
-      setLiveKeywords(Array.isArray(data.keywords) ? [...new Set(data.keywords.filter(Boolean))] : []);
-      setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
-      setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
-      setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
-      setCatalogueNotices(data.notices || []);
+      setRecorderSessions(initialData.recorder_sessions || []);
+      setCustomerHistory(initialData.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(initialData.crm_lead || initialData.customer_history?.lead || null);
+      setTranscriptPreview(Array.isArray(initialData.transcript_preview) ? initialData.transcript_preview.filter(Boolean) : []); setInsights(initialData.insights || []); setRecommendations(Array.isArray(initialData.recommendations) ? initialData.recommendations.filter(Boolean) : []);
+      setLiveKeywords(Array.isArray(initialData.keywords) ? [...new Set(initialData.keywords.filter(Boolean))] : []);
+      setLiveGuidance({ requirements: initialData.requirements || [], clarificationSuggestions: initialData.clarification_suggestions || [], currentIntent: initialData.current_intent || '', agentGuidance: initialData.agent_guidance || [], catalogueStatus: initialData.catalogue_status || '' });
+      setLiveAnalysis(initialData.analysis_status || 'waiting_for_translation');
+      setLiveProcessing({ processingStatus: initialData.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
+      setCatalogueNotices(initialData.notices || []);
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       // Render the live workspace as soon as the session payload arrives.
