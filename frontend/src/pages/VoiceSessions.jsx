@@ -938,6 +938,7 @@ export default function VoiceSessions() {
   const removeCartItem = (index) => { if (sessionBusy) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
   const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
+  const cartTaxTotal = localMode ? Math.round(Math.max(0, cartSubtotal - cartDiscount) * 0.18 * 100) / 100 : undefined;
   const openDocumentModal = async () => {
     if (!session || !cart.length || documentInFlight.current || contextHydrated !== session) return;
     if (!cart.every(productPriceAvailable)) { setCartSaveError('Confirm catalogue prices before completing this cart.'); return; }
@@ -1317,6 +1318,7 @@ export default function VoiceSessions() {
               onCompleteCart={() => void openDocumentModal()}
               onEditDocument={() => void openDocumentModal()}
               onViewProduct={setViewProduct}
+              taxTotal={cartTaxTotal}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
               notes={notes}
