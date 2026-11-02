@@ -530,7 +530,8 @@ class LocalStore:
                     raise ValueError("recording_already_linked")
             value = {**data, "id": str(uuid4()), "createdAt": now()}
             cursor = db.execute("insert into enquiries(id,idempotency_key,request_hash,conversation_id,data) values(?,?,?,?,?)", (value["id"], idem, digest, data.get("conversationId"), encoded(value)))
-            value["enquiryNumber"] = f"ENQ-{datetime.now(timezone.utc).year}-{cursor.lastrowid:06d}"
+            created_day = datetime.fromisoformat(value["createdAt"].replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%d%m%Y")
+            value["enquiryNumber"] = f"ENQ-{created_day}-{cursor.lastrowid:06d}"
             db.execute("update enquiries set data=? where id=?", (encoded(value), value["id"]))
         return value, True
 

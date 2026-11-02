@@ -1,17 +1,33 @@
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
+
 from .db import one
+
+
+def current_ticket_day(timezone_name: str, now: datetime | None = None) -> date:
+    return (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(timezone_name)).date()
+
+
+def format_ticket_number(ticket_day: date, daily_sequence: int) -> str:
+    return f"WI-{ticket_day:%d%m%Y}-{daily_sequence:06d}"
+
+
+def format_enquiry_number(enquiry_day: date, daily_sequence: int) -> str:
+    return f"ENQ-{enquiry_day:%d%m%Y}-{daily_sequence:06d}"
+
 
 async def next_daily_ticket(connection, organisation_id, ticket_day):
     await connection.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"daily-ticket:{organisation_id}:{ticket_day}",))
     row = await one(connection, "select coalesce(max(daily_sequence),0)+1 as sequence from guruconnect_enquiries where organisation_id=%s and ticket_day=%s", (organisation_id, ticket_day))
     return row["sequence"]
 
-async def least_loaded_salesperson(connection, organisation_id):
-    """Pick an eligible salesperson with the fewest assigned enquiries."""
+async def least_loaded_salesperson(connection, organisation_id, ticket_day):
+    """Pick one eligible salesperson with the fewest enquiries for that day."""
     # Serialise selection with walk-in/enquiry creation so concurrent registrations
     # cannot all observe the same queue length and overload one salesperson.
     await connection.execute(
         "select pg_advisory_xact_lock(hashtextextended(%s,0))",
-        (f"salesperson-assignment:{organisation_id}",),
+        (f"salesperson-assignment:{organisation_id}:{ticket_day}",),
     )
     await connection.execute("""
         update profiles p
@@ -31,7 +47,10 @@ async def least_loaded_salesperson(connection, organisation_id):
         left join profiles p on p.id=m.user_id
         left join guruconnect_walkin_agents wa
           on wa.organisation_id=m.organisation_id and wa.user_id=m.user_id
-        left join guruconnect_enquiries e on e.organisation_id=m.organisation_id and e.assigned_to=m.user_id
+        left join guruconnect_enquiries e
+          on e.organisation_id=m.organisation_id
+         and e.assigned_to=m.user_id
+         and e.ticket_day=%s
         where m.organisation_id=%s and m.role in ('owner','salesperson') and m.status='active'
           and (
               coalesce(p.availability_status,'active')='active'
@@ -41,4 +60,4 @@ async def least_loaded_salesperson(connection, organisation_id):
         group by m.user_id,p.display_name,u.email
         order by count(e.id) asc, random()
         limit 1
-    """, (organisation_id,))
+    """, (ticket_day, organisation_id))

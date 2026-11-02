@@ -107,10 +107,13 @@ export async function registerWalkin(workspaceId: string, input: RegisterWalkinI
   }
   const now = new Date().toISOString(), id = crypto.randomUUID()
   const availability = readLocal<Record<string, WalkinAgent['availability']>>(workspaceId, 'availability', {})
-  const openVisits = (agentId: string) => visits.filter(visit => visit.assignedAgentId === agentId && !closedStatuses.includes(visit.status)).length
+  const today = now.slice(0, 10)
+  const dailyEnquiries = (agentId: string) => visits.filter(visit => visit.assignedAgentId === agentId && visit.checkInAt.slice(0, 10) === today).length
   const availableAgents = demoAgents.filter(agent => (availability[agent.id] ?? agent.availability) === 'Available')
-  const assignedAgent = availableAgents.sort((left, right) => openVisits(left.id) - openVisits(right.id))[0]
-  const visit: WalkinVisit = { ...input, id, visitNumber: `WI-${now.slice(0, 10).replaceAll('-', '')}-${id.slice(0, 6).toUpperCase()}`, registeredBy: 'Local reception', assignedAgentId: assignedAgent?.id ?? null, assignedAgentName: assignedAgent?.name ?? null, assignmentNote: '', status: assignedAgent ? 'Assigned' : 'Waiting for Assignment', checkInAt: now, assignedAt: assignedAgent ? now : null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
+  const assignedAgent = availableAgents.sort((left, right) => dailyEnquiries(left.id) - dailyEnquiries(right.id))[0]
+  const dailySequence = visits.filter(visit => visit.checkInAt.slice(0, 10) === today).length + 1
+  const datePart = `${today.slice(8, 10)}${today.slice(5, 7)}${today.slice(0, 4)}`
+  const visit: WalkinVisit = { ...input, id, visitNumber: `WI-${datePart}-${String(dailySequence).padStart(6, '0')}`, registeredBy: 'Local reception', assignedAgentId: assignedAgent?.id ?? null, assignedAgentName: assignedAgent?.name ?? null, assignmentNote: '', status: assignedAgent ? 'Assigned' : 'Waiting for Assignment', checkInAt: now, assignedAt: assignedAgent ? now : null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
   visits.push(visit)
   saveLocal(workspaceId, 'visits', visits)
   keys[idempotencyKey] = { id, payload: JSON.stringify(input) }
