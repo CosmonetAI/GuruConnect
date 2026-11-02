@@ -118,6 +118,7 @@ function mockZoho(path, opts = {}) {
     const set = recommendationSets[variant];
     const productsForSession = recommendedProductsFor(contact);
     const demoWorkItem = demoWorkItemFor(contact, productsForSession);
+    const documentRecommendation = { recommendation_kind: 'document', name: `${demoWorkItem.label} ${demoWorkItem.number}`, document_type: demoWorkItem.type, document_number: demoWorkItem.number, status: demoWorkItem.status, description: `The customer asked for this ${demoWorkItem.type === 'sales-order' ? 'sales order' : demoWorkItem.type} to be prepared and shared. Edit the order summary before sending.` };
     const productNames = productsForSession.map((product) => product.name);
     const transcriptSets = [
       [`I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?`, `Yes, I can suggest ${productNames[0]} and ${productNames[1]} with remote control and good air delivery.`, `Please show me the 1200mm model and a premium option with a light. My budget is around twelve thousand.`, `I will compare the matching products and prepare the quotation with the available discount.`],
@@ -128,6 +129,9 @@ function mockZoho(path, opts = {}) {
     const transcript = [
       ...transcriptSets.map((text, index) => ({ start_seconds: [0, 12, 25, 39][index], recorded_at: now, speaker_role: index % 2 ? 'agent' : 'customer', speaker_name: index % 2 ? agent : contact.contact_name, english_text: text, source_text: text })),
     ];
+    const documentPrompt = demoWorkItem.type === 'invoice' ? 'Please send me the invoice for the selected products.' : demoWorkItem.type === 'sales-order' ? 'The customer approved the options. Please create and share the sales order.' : 'Please prepare a quote and share it with me before I confirm the order.';
+    const documentReply = demoWorkItem.type === 'invoice' ? 'I will prepare the invoice with GST and send it to your email.' : demoWorkItem.type === 'sales-order' ? 'I will prepare the sales order with the agreed quantities and GST.' : `I will prepare ${demoWorkItem.number} with the product summary and share it for review.`;
+    transcript[2].english_text = documentPrompt; transcript[3].english_text = documentReply;
     return {
       messages: transcript.map(turn => ({ role: turn.speaker_role === 'customer' ? 'user' : 'assistant', content: turn.english_text })),
       transcript_preview: transcript,
@@ -141,6 +145,7 @@ function mockZoho(path, opts = {}) {
       processing_status: { stage: 'complete', message: 'Demo transcript analysed locally.' },
       notices: [{ code: 'local_demo_catalogue', message: 'Demo catalogue: products, prices and stock are sample data.' }],
       demo_work_item: demoWorkItem,
+      document_recommendation: documentRecommendation,
     };
   };
   if (clean === '/products') return mockList(filter(data.products), 'items');
@@ -164,13 +169,13 @@ function mockZoho(path, opts = {}) {
     const contact = data.contacts.find(item => item.mobile === input.phone || item.contact_name === input.name) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
+    return { session: { id: `chat-${contact.contact_id}`, name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: payload.document_recommendation ? [payload.document_recommendation] : recommendedProductsFor(contact) };
   }
   if (clean.startsWith('/voice-sessions/') && clean.endsWith('/history')) {
     const sessionId = clean.split('/')[2]; const contactId = sessionId.replace(/^chat-/, ''); const contact = data.contacts.find(item => item.contact_id === contactId) || data.contacts[0];
     const payload = sessionPayload(contact);
     payload.customer_history = customerHistory(contact); payload.crm_lead = payload.customer_history.lead;
-    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id, demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: recommendedProductsFor(contact) };
+    return { session: { name: contact.contact_name, phone: contact.mobile, email: contact.email, enquiry_id: `enquiry-${contact.contact_id.replace('contact-', '')}`, enquiry_stage: 'In process', books_contact_id: contact.contact_id, demo_work_item: payload.demo_work_item }, ...payload, recorder_sessions: [], conversation_id: null, insights: [{ label: 'Customer intent', value: payload.current_intent }, { label: 'Budget', value: payload.requirements?.find((item) => item.label === 'Budget')?.value || 'Project pricing' }], recommendations: payload.document_recommendation ? [payload.document_recommendation] : recommendedProductsFor(contact) };
   }
   if (clean.includes('/voice-sessions/') && clean.endsWith('/notes')) {
     if (method === 'POST') { let body = {}; try { body = JSON.parse(opts.body || '{}'); } catch {} return { note: { id: `note-${Date.now()}`, author_name: 'Ravi Kumar', content: body.content || 'Follow up with the customer.', created_at: new Date().toISOString() } }; }

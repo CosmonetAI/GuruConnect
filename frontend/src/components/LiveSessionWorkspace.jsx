@@ -142,7 +142,7 @@ function Transcript({ transcript, onDownload, sessionStartedAt, recordingState }
   </section>;
 }
 
-function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, compact, recordingState }) {
+function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, compact, recordingState }) {
   const catalogueState = { syncing: 'Catalogue sync in progress. Product details may still be incomplete.', searching: 'Searching the connected catalogue.', stale: 'Catalogue data needs a refresh. Confirm prices and stock before completing the order.', unavailable: 'Catalogue unavailable. Reconnect the catalogue to verify products, prices and stock.', semantic_unavailable: 'Product similarity search is temporarily unavailable. Confirm catalogue matches before completing the order.' }[catalogueStatus];
   return <section className={`lws-suggestions lws-panel${compact ? ' is-compact' : ''}`} aria-label="Suggested products">
     <div className="lws-panel-heading"><h3><ShoppingCart size={18} />{compact ? 'Recommended products' : 'Suggested products'}</h3>{onSearchProducts && <button className="lws-text-button" type="button" onClick={onSearchProducts}>{compact ? 'View all' : 'Search catalogue'}<ArrowRight size={13} /></button>}</div>
@@ -152,6 +152,7 @@ function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, on
     {(insightsStatus?.detail || insightsStatus?.label) && ['running', 'pending', 'translating', 'failed', 'unavailable'].includes(insightsStatus.key) && <p className={`lws-analysis-state${['failed', 'unavailable'].includes(insightsStatus.key) ? ' is-error' : ''}`} role="status"><Sparkles size={12} />{insightsStatus.detail || insightsStatus.label}</p>}
     <AgentGuidance {...{ clarificationSuggestions, requirements, currentIntent, agentGuidance }} />
     <div className="lws-product-list">{recommendations.length ? recommendations.map((item, index) => {
+      if (item.recommendation_kind === 'document') return <article className="lws-product-card lws-document-recommendation" key={`${item.document_type}-${item.document_number || index}`}><div className="lws-product-image"><FileText size={30} strokeWidth={1.35} /></div><div className="lws-product-copy"><strong>{item.name}</strong><small>{String(item.document_type || 'document').replaceAll('-', ' ')} · {item.status || 'Draft'}</small><p>{item.description}</p>{onEditDocument && <button type="button" className="lws-button lws-button-primary" onClick={onEditDocument}>Edit and share</button>}</div></article>;
       const price = item.rate ?? item.price;
       const priceAvailable = productPriceAvailable(item);
       const features = (Array.isArray(item.features) ? item.features : typeof item.description === 'string' ? item.description.split(/[\n•]/).filter(Boolean) : []).slice(0, 3);
@@ -244,11 +245,11 @@ export default function LiveSessionWorkspace({
   notes = [], noteText = '', onNoteTextChange, onAddNote, noteBusy = false, noteError = '',
   recordingState = {}, recordingStatus, insightsStatus, catalogueNotice = '', sessionStartedAt,
   catalogueStatus = '', clarificationSuggestions = [], requirements = [], currentIntent = '', agentGuidance = [],
-  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, taxTotal, currencyCode = 'INR', children,
+  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
-  const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, recordingState }} compact={cartView} />;
+  const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, recordingState }} compact={cartView} />;
   return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
       <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} />{suggestions}</div>

@@ -59,6 +59,7 @@ const customerFields = [
 ];
 
 function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", workItem = null) {
+  const isAkshat = String(next.name || '').trim().toLowerCase() === 'akshat saxena' || String(next.phone || '').replace(/\D/g, '') === '9311854768';
   const transcript = [
     { start_seconds: 0, speaker_role: "customer", speaker_name: next.name, english_text: "I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?" },
     { start_seconds: 12, speaker_role: "agent", speaker_name: "Ravi Kumar", english_text: "Yes, I can suggest a few BLDC options with remote control and good air delivery." },
@@ -72,7 +73,7 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
   ];
   const type = workItem?.type || next.demo_work_type || "quote";
   const demoLineItems = products.slice(0, 2).map((product, index) => ({ ...product, product: product.name, quantity: type === "sales-order" ? (index ? 3 : 12) : index ? 1 : 2, discount: index ? 0 : 5, discount_type: "percentage" }));
-  const demoWorkItem = workItem?.line_items?.length ? workItem : {
+  const demoWorkItem = isAkshat ? null : workItem?.line_items?.length ? workItem : {
     ...(workItem || {}),
     type,
     label: workItem?.label || next.demo_work_label || (type === "invoice" ? "Invoice ready" : type === "sales-order" ? "Sales order ready" : "Quote ready"),
@@ -81,6 +82,13 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
     editable: true,
     line_items: demoLineItems,
   };
+  const documentRecommendation = demoWorkItem ? [{ recommendation_kind: 'document', name: `${demoWorkItem.label} ${demoWorkItem.number}`, document_type: demoWorkItem.type, document_number: demoWorkItem.number, status: demoWorkItem.status, description: `The customer asked for this ${demoWorkItem.type === 'sales-order' ? 'sales order' : demoWorkItem.type} to be prepared and shared. Edit the order summary before sending.` }] : [];
+  const documentPrompt = demoWorkItem?.type === 'invoice' ? 'Please send me the invoice for the selected fans.' : demoWorkItem?.type === 'sales-order' ? 'The customer approved the options. Please create and share the sales order.' : demoWorkItem?.type === 'quote' ? 'Please prepare a quote and share it with me before I confirm the order.' : '';
+  const documentReply = demoWorkItem?.type === 'invoice' ? 'I will prepare the invoice with GST and send it to your email.' : demoWorkItem?.type === 'sales-order' ? 'I will prepare the sales order with the agreed quantities and GST.' : demoWorkItem?.type === 'quote' ? `I will prepare ${demoWorkItem.number} with the product summary and share it for review.` : '';
+  if (documentPrompt) {
+    transcript[2].english_text = documentPrompt;
+    transcript[3].english_text = documentReply;
+  }
   return {
     session: {
       id: `demo-session-${next.phone}`,
@@ -92,7 +100,7 @@ function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", w
       demo_work_item: demoWorkItem,
     },
     messages: transcript.map((turn) => ({ role: turn.speaker_role === "customer" ? "user" : "assistant", content: turn.english_text })),
-    recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: products,
+    recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: documentRecommendation.length ? documentRecommendation : products,
     customer_history: { transcript_summary: `${next.name} is comparing quiet, energy-efficient ceiling fans and asked for a 1200mm model with remote control.`, keywords: ["Ceiling fan", "1200mm", "BLDC", "Remote control", "Energy efficient"], recordings: [{ id: `history-${next.phone}-1`, created_at: "2026-10-29T10:24:00Z", duration_seconds: 192, summary: "Customer compared regular and BLDC fan options and requested a premium model.", keywords: ["BLDC", "Remote control", "Premium model"], status: "Processed" }, { id: `history-${next.phone}-2`, created_at: "2026-10-27T15:12:00Z", duration_seconds: 137, summary: "Customer shared budget, installation preference, and a follow-up requirement.", keywords: ["Budget", "Installation", "Follow-up"], status: "Processed" }], quotes: [{ id: `quote-${next.phone}`, number: "QT-2026-1027", status: "sent", total: 12448, date: "2026-10-28" }], lead: { id: `lead-${next.phone}`, Deal_Name: `${next.name} · Ceiling fan opportunity`, Stage: "Qualification", Lead_Status: "Registered", Phone: next.phone, Contact_Name: { name: next.name, mobile: next.phone }, Owner: { name: "Ravi Kumar" } } },
     insights: [{ label: "Customer intent", value: "Compare ceiling fan options" }, { label: "Budget", value: "₹12,000" }],
     keywords: ["Ceiling fan", "Regular fan", "Good air delivery", "Modern design"],
@@ -1199,7 +1207,6 @@ export default function VoiceSessions() {
                 {contact.phone || contact.email || "No phone or email"}
               </small>
               <em>{contact.sources.join(" · ")}</em>
-              {contact.demo_work_label && <span className={`contact-work-pill work-${contact.demo_work_type || "quote"}`}>{contact.demo_work_label}</span>}
               {contact.recording_status && <span className="contact-status-pill">{contact.recording_status}</span>}
             </button>
           ))}
@@ -1240,7 +1247,6 @@ export default function VoiceSessions() {
                     <i />{transcriptionUiStatus.label}
                   </span>
                   {demoCatalogue && <span className="live-header-pill status-ready" title={demoCatalogueNotice}>Demo catalogue</span>}
-                  {demoWorkItem && <span className={`live-header-pill work-pill work-${demoWorkItem.type || "quote"}`} title="Editable demo work item">{demoWorkItem.label} · {demoWorkItem.number}</span>}
                   {transcriptionUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
                 </div>
                 {selectedContact.enquiry_id && <label className="session-stage-control"><span>Enquiry stage</span><select value={selectedContact.enquiry_stage || "new"} onChange={(event) => void changeEnquiryStage(event.target.value)} disabled={stageBusy}><option value="new">New enquiry</option><option value="in_process">In process</option><option value="closed">Closed</option><option value="customer_did_not_show">Customer didn’t show up</option></select></label>}
@@ -1263,7 +1269,7 @@ export default function VoiceSessions() {
               <label>Customer name<input placeholder="Customer name" value={identity.name} onChange={(event) => setIdentity({ ...identity, name: event.target.value })} /></label>
               <label>Phone number<input inputMode="tel" maxLength="15" placeholder="Phone number" value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value.replace(/\D/g, "").slice(0, 15) })} /></label>
               <label>Email address (optional)<input aria-label="Email address" type="email" placeholder="Email address" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label>
-              <button type="button" className="primary voice-open-button" onClick={() => void prepareSession()} disabled={busy || !identity.name.trim() || !identity.phone.trim()}>{busy ? "Opening…" : "Open customer session"}<ChevronRight size={16} /></button>
+              <button type="button" className="primary voice-open-button" onClick={() => void prepareSession()} disabled={busy || !identity.name.trim() || !identity.phone.trim()}>{busy ? "Opening…" : String(identity.name).trim().toLowerCase() === "akshat saxena" ? "Start conversation" : "Open customer session"}<ChevronRight size={16} /></button>
             </div>
             <small className="session-welcome-footnote">You’ll start the microphone in the next step.</small>
           </div></div>}
@@ -1291,6 +1297,7 @@ export default function VoiceSessions() {
               onRemoveCart={removeCartItem}
               onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onCompleteCart={() => void openDocumentModal()}
+              onEditDocument={() => void openDocumentModal()}
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
