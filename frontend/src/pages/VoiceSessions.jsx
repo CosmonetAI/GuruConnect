@@ -533,7 +533,7 @@ export default function VoiceSessions() {
       demoRevealSource.current = data;
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
       setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
-      setLiveKeywords(data.keywords || []);
+      setLiveKeywords(Array.isArray(data.keywords) ? [...new Set(data.keywords.filter(Boolean))] : []);
       setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
       setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
       setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
@@ -593,7 +593,7 @@ export default function VoiceSessions() {
       setRecorderSessions(data.recorder_sessions || []);
       setCustomerHistory(data.customer_history || { recordings: [], quotes: [], keywords: [], transcript_summary: '' }); setCrmLead(data.crm_lead || data.customer_history?.lead || null);
       setTranscriptPreview(Array.isArray(data.transcript_preview) ? data.transcript_preview.filter(Boolean) : []); setInsights(data.insights || []); setRecommendations(Array.isArray(data.recommendations) ? data.recommendations.filter(Boolean) : []);
-      setLiveKeywords(data.keywords || []);
+      setLiveKeywords(Array.isArray(data.keywords) ? [...new Set(data.keywords.filter(Boolean))] : []);
       setLiveGuidance({ requirements: data.requirements || [], clarificationSuggestions: data.clarification_suggestions || [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
       setLiveAnalysis(data.analysis_status || 'waiting_for_translation');
       setLiveProcessing({ processingStatus: data.processing_status, processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true } });
@@ -795,7 +795,7 @@ export default function VoiceSessions() {
         latest = data;
         if (Array.isArray(data.transcript_preview)) setTranscriptPreview(data.transcript_preview.filter(Boolean));
         if (Array.isArray(data.insights)) setInsights(data.insights);
-        if (Array.isArray(data.keywords)) setLiveKeywords(data.keywords);
+        if (Array.isArray(data.keywords)) setLiveKeywords([...new Set(data.keywords.filter(Boolean))]);
         if (Array.isArray(data.recommendations)) setRecommendations(data.recommendations.filter(Boolean));
         setLiveGuidance({ requirements: Array.isArray(data.requirements) ? data.requirements : [], clarificationSuggestions: Array.isArray(data.clarification_suggestions) ? data.clarification_suggestions : [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
         if (data.recording) setRecordingSnapshot(data.recording);
