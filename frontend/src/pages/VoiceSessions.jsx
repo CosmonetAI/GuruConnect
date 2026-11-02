@@ -58,7 +58,7 @@ const customerFields = [
   ["Preferred contact", "preferredContact"],
 ];
 
-function localDemoSession(next) {
+function localDemoSession(next, enquiryId = null, enquiryStage = "in_process") {
   const transcript = [
     { start_seconds: 0, speaker_role: "customer", speaker_name: next.name, english_text: "I am looking for a quiet ceiling fan for my living room. Do you have something energy efficient?" },
     { start_seconds: 12, speaker_role: "agent", speaker_name: "Ravi Kumar", english_text: "Yes, I can suggest a few BLDC options with remote control and good air delivery." },
@@ -71,7 +71,14 @@ function localDemoSession(next) {
     { item_id: "item-3", name: "LED Bulb 9W (Pack of 4)", sku: "LED-9W-4", rate: 1999, stock_on_hand: 48, image_url: "/product-led-bulb.jpg", match_status: "verified", matched_specs: ["ceiling fan", "modern design"], features: ["Bright white light", "Energy efficient", "Easy installation"] },
   ];
   return {
-    session: { id: `demo-session-${next.phone}`, name: next.name, phone: next.phone, email: next.email || "", enquiry_id: `enquiry-${next.phone}`, enquiry_stage: "In process" },
+    session: {
+      id: `demo-session-${next.phone}`,
+      name: next.name,
+      phone: next.phone,
+      email: next.email || "",
+      enquiry_id: enquiryId || `enquiry-${next.phone}`,
+      enquiry_stage: enquiryStage || "in_process",
+    },
     messages: transcript.map((turn) => ({ role: turn.speaker_role === "customer" ? "user" : "assistant", content: turn.english_text })),
     recorder_sessions: [], conversation_id: null, transcript_preview: transcript, recommendations: products,
     customer_history: { transcript_summary: `${next.name} is comparing quiet, energy-efficient ceiling fans and asked for a 1200mm model with remote control.`, keywords: ["Ceiling fan", "1200mm", "BLDC", "Remote control", "Energy efficient"], recordings: [{ id: `history-${next.phone}-1`, created_at: "2026-10-29T10:24:00Z", duration_seconds: 192, summary: "Customer compared regular and BLDC fan options and requested a premium model.", keywords: ["BLDC", "Remote control", "Premium model"], status: "Processed" }, { id: `history-${next.phone}-2`, created_at: "2026-10-27T15:12:00Z", duration_seconds: 137, summary: "Customer shared budget, installation preference, and a follow-up requirement.", keywords: ["Budget", "Installation", "Follow-up"], status: "Processed" }], quotes: [{ id: `quote-${next.phone}`, number: "QT-2026-1027", status: "sent", total: 12448, date: "2026-10-28" }], lead: { id: `lead-${next.phone}`, Deal_Name: `${next.name} · Ceiling fan opportunity`, Stage: "Qualification", Lead_Status: "Registered", Phone: next.phone, Contact_Name: { name: next.name, mobile: next.phone }, Owner: { name: "Ravi Kumar" } } },
@@ -588,7 +595,7 @@ export default function VoiceSessions() {
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
     try {
       const data = localMode
-        ? localDemoSession(next)
+        ? localDemoSession(next, contact?.enquiry_id || initialEnquiryId, contact?.enquiry_stage || searchParams.get("stage") || "in_process")
         : await sessionCall("/voice-sessions", { method: "POST", body: JSON.stringify(next) });
       if (!alive.current || ticket !== selection.current) return;
       const initialData = blankInitialDemoSession(data);
@@ -599,6 +606,8 @@ export default function VoiceSessions() {
           phone: next.phone,
           email: next.email,
           sources: ["Session"],
+          enquiry_id: data.session?.enquiry_id || initialEnquiryId,
+          enquiry_stage: data.session?.enquiry_stage || searchParams.get("stage") || "new",
           records: {},
         },
       );
