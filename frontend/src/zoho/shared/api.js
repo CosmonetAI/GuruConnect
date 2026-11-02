@@ -1,7 +1,8 @@
 import seedData from '../../services/mock-data.json';
-import { localMode } from '../../services/officeApi';
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
 export const API = `${API_BASE}/api`;
+
+const demoZohoHosts = new Set(['connectcosmos.onrender.com']);
 
 const mockKey = 'guruconnect-frontend-zoho-mock-data';
 function readMock() {
@@ -194,7 +195,9 @@ function mockZoho(path, opts = {}) {
 
 /** @param {string} path @param {Record<string, any>} opts @param {string | null} workspaceId */
 export async function call(path, opts = {}, workspaceId = null) {
-  if (localMode || location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '[::1]') return mockZoho(path, opts);
+  const hostname = location.hostname;
+  const demoMode = import.meta.env.VITE_DEMO_MODE === 'true' || demoZohoHosts.has(hostname) || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  if (demoMode) return mockZoho(path, opts);
   const { timeoutMs = 30000, ...requestOptions } = opts;
   const headers = new Headers({ 'Content-Type': 'application/json', ...(requestOptions.headers || {}) });
   const workspace = workspaceId
