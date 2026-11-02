@@ -58,6 +58,8 @@ const customerFields = [
   ["Project / site", "project"],
   ["Preferred contact", "preferredContact"],
 ];
+const productKey = (item) => item?.item_id || item?.id || item?.sku || "";
+const validProduct = (item) => Boolean(item && typeof item === "object" && productKey(item));
 
 function localDemoSession(next, enquiryId = null, enquiryStage = "in_process", workItem = null) {
   const isAkshat = String(next.name || '').trim().toLowerCase() === 'akshat saxena' || String(next.phone || '').replace(/\D/g, '') === '9311854768';
@@ -440,7 +442,7 @@ export default function VoiceSessions() {
   useEffect(() => {
     setViewProduct((current) => {
       if (!current) return current;
-      const latest = recommendations.find((item) => (item.item_id || item.id || item.sku) === (current.item_id || current.id || current.sku));
+      const latest = recommendations.find((item) => productKey(item) === productKey(current));
       return latest ? { ...current, ...latest } : current;
     });
   }, [recommendations]);
@@ -477,7 +479,7 @@ export default function VoiceSessions() {
     const source = demoRevealSource.current || {};
     const transcript = Array.isArray(source.transcript_preview) ? source.transcript_preview.filter(Boolean) : [];
     const keywords = Array.isArray(source.keywords) ? source.keywords : [];
-    const recommendations = Array.isArray(source.recommendations) ? source.recommendations.filter(Boolean) : [];
+    const recommendations = Array.isArray(source.recommendations) ? source.recommendations.filter(validProduct) : [];
     setTranscriptPreview([]); setLiveKeywords([]); setRecommendations([]); setProducts([]);
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis('running'); setLiveProcessing({ processingMode: 'demo', providerReadiness: { speech_configured: true, translation_configured: true }, processingStatus: { stage: 'running', message: 'Listening for speech and matching catalogue products.' } });
@@ -782,10 +784,11 @@ export default function VoiceSessions() {
     try {
       const data = await sessionCall(`/products?search=${encodeURIComponent(query)}`);
       if (!alive.current || ticket !== catalogueSearch.current || selected !== sessionRef.current) return;
-      setCartSearchResults(Array.isArray(data.items) ? data.items.filter(Boolean) : []);
+      const items = Array.isArray(data.items) ? data.items.filter(validProduct) : [];
+      setCartSearchResults(items);
       if (intentSearch) {
         setCustomIntents((current) => [...new Set([...current, query])]);
-        setProducts((current) => [...new Map([...current, ...(Array.isArray(data.items) ? data.items.filter(Boolean) : [])].filter(Boolean).map((item) => [item.item_id || item.id, item])).values()]);
+        setProducts((current) => [...new Map([...current, ...items].filter(validProduct).map((item) => [productKey(item), item])).values()]);
       }
     } catch (e) {
       if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchError(e.message);
@@ -916,7 +919,7 @@ export default function VoiceSessions() {
   const addToCart = (item) => {
     if (sessionBusy) return;
     const id = item.item_id || item.id || item.sku;
-    const latest = recommendations.find((candidate) => (candidate.item_id || candidate.id || candidate.sku) === id);
+    const latest = recommendations.find((candidate) => productKey(candidate) === id);
     if (latest) item = { ...item, ...latest, match_confirmation_acknowledged: item.match_confirmation_acknowledged && productReviewFingerprint(item) === productReviewFingerprint(latest) };
     const rate = Number(item.rate ?? item.price);
     if (!id || !productPriceAvailable(item) || productOutOfStock(item) || (productNeedsConfirmation(item) && !item.match_confirmation_acknowledged)) return;
@@ -1305,7 +1308,7 @@ export default function VoiceSessions() {
               identity={identity}
               messages={messages}
               transcript={transcriptPreview}
-              recommendations={[...new Map([...products, ...recommendations].filter(Boolean).map((item) => [item.item_id || item.id || item.sku, item])).values()]}
+              recommendations={[...new Map([...products, ...recommendations].filter(validProduct).map((item) => [productKey(item), item])).values()]}
               intents={[...new Set([...liveKeywords, ...customIntents])].filter((keyword) => !hiddenIntents.includes(keyword))}
               {...liveGuidance}
               cart={cart}
@@ -1339,10 +1342,10 @@ export default function VoiceSessions() {
           </>}
         </section>
       </div>
-      {cartProductSearchOpen && <div className="session-modal-backdrop cart-search-backdrop" onClick={() => setCartProductSearchOpen(false)}><section className="product-search-modal" role="dialog" aria-modal="true" aria-labelledby="inventory-search-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>ZOHO INVENTORY</small><h2 id="inventory-search-title">{intentSearch ? "Add a product requirement" : "Add another product"}</h2></div><button type="button" onClick={() => setCartProductSearchOpen(false)} aria-label="Close inventory search"><X size={20} /></button></div><form className="cart-product-search-form" onSubmit={(event) => { event.preventDefault(); void searchCartProducts(); }}><input autoFocus aria-label="Search inventory" placeholder="Search by product, description, or SKU" value={cartSearch} onChange={(event) => { ++catalogueSearch.current; setCartSearch(event.target.value); setCartSearchBusy(false); setCartSearchError(""); }} /><button type="submit" className="primary" disabled={cartSearchBusy || !cartSearch.trim()}>{cartSearchBusy ? "Searching…" : "Search"}</button></form><div className="cart-product-results" aria-busy={cartSearchBusy}>{cartSearchError && <p role="alert">{cartSearchError}</p>}{cartSearchResults.map((result) => {
-          const match = recommendations.find((item) => (item.item_id || item.id || item.sku) === (result.item_id || result.id || result.sku));
+      {cartProductSearchOpen && <div className="session-modal-backdrop cart-search-backdrop" onClick={() => setCartProductSearchOpen(false)}><section className="product-search-modal" role="dialog" aria-modal="true" aria-labelledby="inventory-search-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><div><small>ZOHO INVENTORY</small><h2 id="inventory-search-title">{intentSearch ? "Add a product requirement" : "Add another product"}</h2></div><button type="button" onClick={() => setCartProductSearchOpen(false)} aria-label="Close inventory search"><X size={20} /></button></div><form className="cart-product-search-form" onSubmit={(event) => { event.preventDefault(); void searchCartProducts(); }}><input autoFocus aria-label="Search inventory" placeholder="Search by product, description, or SKU" value={cartSearch} onChange={(event) => { ++catalogueSearch.current; setCartSearch(event.target.value); setCartSearchBusy(false); setCartSearchError(""); }} /><button type="submit" className="primary" disabled={cartSearchBusy || !cartSearch.trim()}>{cartSearchBusy ? "Searching…" : "Search"}</button></form><div className="cart-product-results" aria-busy={cartSearchBusy}>{cartSearchError && <p role="alert">{cartSearchError}</p>}{cartSearchResults.filter(validProduct).map((result) => {
+          const match = recommendations.find((item) => productKey(item) === productKey(result));
           const item = match ? { ...result, ...match } : result;
-          return <article className="cart-product-result" key={item.item_id || item.id || item.sku}>
+          return <article className="cart-product-result" key={productKey(item)}>
             <span className="cart-product-result-image"><ShoppingCart size={20} /></span>
             <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(item.rate ?? item.price).toLocaleString("en-IN")}` : "Confirm price"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
             <ProductCartAction item={item} onAddToCart={addToCart} />
