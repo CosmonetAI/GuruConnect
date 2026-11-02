@@ -15,23 +15,23 @@ const detailList = (value) => Array.isArray(value) ? value.map(detailText).filte
 const specLabels = (value) => detailList(value).map((field) => field.replaceAll('_', ' '));
 
 export const productPriceAvailable = (item) => {
-  const value = item.rate ?? item.price;
+  const value = item?.rate ?? item?.price;
   return (!item.price_status || item.price_status === 'known') && value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
 };
-export const productNeedsConfirmation = (item) => (Boolean(item.match_status) && item.match_status !== 'verified') || detailList(item.missing_specs).length > 0 || detailList(item.conflicts).length > 0;
+export const productNeedsConfirmation = (item) => (Boolean(item?.match_status) && item.match_status !== 'verified') || detailList(item?.missing_specs).length > 0 || detailList(item?.conflicts).length > 0;
 export const productReviewFingerprint = (item) => JSON.stringify([itemKey(item), item.match_status, item.matched_specs, item.missing_specs, item.conflicts]);
 export const productStockNotTracked = (item) => {
-  const tracking = String(item.track_inventory ?? '').toLowerCase();
-  const itemType = String(item.item_type || '').toLowerCase();
+  const tracking = String(item?.track_inventory ?? '').toLowerCase();
+  const itemType = String(item?.item_type || '').toLowerCase();
   if (['true', 'yes', '1'].includes(tracking) || itemType === 'inventory') return false;
   return ['not_tracked', 'not_applicable'].includes(item.availability_status) || item.stock_tracking_status === 'not_tracked'
     || ['false', 'no', '0'].includes(tracking) || ['sales', 'sales_and_purchases'].includes(itemType)
-    || ['service', 'digital_service', 'capital_service'].includes(String(item.product_type || '').toLowerCase());
+    || ['service', 'digital_service', 'capital_service'].includes(String(item?.product_type || '').toLowerCase());
 };
 export const productOutOfStock = (item) => {
   if (productStockNotTracked(item)) return false;
-  const stock = item.available_stock ?? item.stock_on_hand ?? item.actual_available_stock;
-  return item.availability_status === 'out_of_stock' || (!['needs_review', 'unknown'].includes(item.availability_status) && stock !== undefined && stock !== null && stock !== '' && Number.isFinite(Number(stock)) && Number(stock) <= 0);
+  const stock = item?.available_stock ?? item?.stock_on_hand ?? item?.actual_available_stock;
+  return item?.availability_status === 'out_of_stock' || (!['needs_review', 'unknown'].includes(item?.availability_status) && stock !== undefined && stock !== null && stock !== '' && Number.isFinite(Number(stock)) && Number(stock) <= 0);
 };
 
 function speaker(turn) {

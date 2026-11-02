@@ -493,13 +493,13 @@ export default function VoiceSessions() {
   const startedFromEnquiry = useRef(false);
   const load = () =>
     sessionCall("/chats")
-      .then(data => { if (alive.current) setChats(data); })
+      .then(data => { if (alive.current) setChats(Array.isArray(data) ? data.filter(Boolean) : []); })
       .catch((e) => { if (alive.current && e.name !== 'AbortError') setError(e.message); });
   const loadContacts = async (value) => {
     const ticket = ++contactRequest.current; setContactBusy(true);
     try {
       const data = await sessionCall(`/session-contacts${value ? `?search=${encodeURIComponent(value)}` : ''}`);
-      if (alive.current && ticket === contactRequest.current) setContacts(data.contacts || []);
+      if (alive.current && ticket === contactRequest.current) setContacts(Array.isArray(data.contacts) ? data.contacts.filter(Boolean) : []);
     } catch (e) { if (alive.current && ticket === contactRequest.current && e.name !== 'AbortError') setError(e.message); }
     finally { if (alive.current && ticket === contactRequest.current) setContactBusy(false); }
   };
@@ -731,7 +731,7 @@ export default function VoiceSessions() {
       const data = await sessionCall(
         `/products?search=${encodeURIComponent(value.trim())}`,
       );
-      setProducts(data.items || []);
+      setProducts(Array.isArray(data.items) ? data.items.filter(Boolean) : []);
     } catch (e) {
       setError(e.message);
     }
@@ -745,10 +745,10 @@ export default function VoiceSessions() {
     try {
       const data = await sessionCall(`/products?search=${encodeURIComponent(query)}`);
       if (!alive.current || ticket !== catalogueSearch.current || selected !== sessionRef.current) return;
-      setCartSearchResults(data.items || []);
+      setCartSearchResults(Array.isArray(data.items) ? data.items.filter(Boolean) : []);
       if (intentSearch) {
         setCustomIntents((current) => [...new Set([...current, query])]);
-        setProducts((current) => [...new Map([...current, ...(data.items || [])].map((item) => [item.item_id || item.id, item])).values()]);
+        setProducts((current) => [...new Map([...current, ...(Array.isArray(data.items) ? data.items.filter(Boolean) : [])].filter(Boolean).map((item) => [item.item_id || item.id, item])).values()]);
       }
     } catch (e) {
       if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchError(e.message);
@@ -1078,13 +1078,13 @@ export default function VoiceSessions() {
       setStageBusy(false);
     }
   };
-  const currentRecordingSnapshot = recordingSnapshot || (recorderSessions.find((item) => item.id === conversationId) || null);
+  const currentRecordingSnapshot = recordingSnapshot || (recorderSessions.filter(Boolean).find((item) => item.id === conversationId) || null);
   const transcriptionUiStatus = liveProcessingStatus({ snapshot: currentRecordingSnapshot, captureState, turns: transcriptPreview, ...liveProcessing });
-  const demoCatalogue = localMode && (catalogueNotices.some((notice) => notice.code === "local_demo_catalogue") || recommendations.some((item) => item.catalogue_source === "local-demo") || cart.some((item) => item.catalogue_source === "local-demo"));
+  const demoCatalogue = localMode && (catalogueNotices.filter(Boolean).some((notice) => notice.code === "local_demo_catalogue") || recommendations.filter(Boolean).some((item) => item.catalogue_source === "local-demo") || cart.filter(Boolean).some((item) => item.catalogue_source === "local-demo"));
   const demoCatalogueNotice = demoCatalogue ? "Demo catalogue: products, prices and stock are sample data. Zoho Books is not connected." : "";
-  const aiInsightStatus = insights.some((item) => item.status === "failed")
+  const aiInsightStatus = insights.filter(Boolean).some((item) => item.status === "failed")
     ? { key: "failed", label: "AI analysis failed", detail: "Previously completed transcript content is preserved." }
-    : insights.some((item) => item.status === "running" || item.status === "pending")
+    : insights.filter(Boolean).some((item) => item.status === "running" || item.status === "pending")
       ? { key: "translating", label: "Updating recommendations", detail: "New translated content is being analyzed." }
       : transcriptPreview.length
         ? { key: "complete", label: "Insights available", detail: "Requirements and recommendations reflect completed chunks." }
