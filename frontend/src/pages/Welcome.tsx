@@ -3,10 +3,12 @@ import { AudioLines, ArrowRight, Check, ChevronDown, Languages, Search, ShieldCh
 import { useOffice } from '../contexts/OfficeContext'
 import { json, request, supabase, message } from '../services/officeApi'
 import PageLoader from '../components/PageLoader'
+import ProductDemoVideo from '../components/ProductDemoVideo'
 
 function WelcomeFrame({ children }: { children: ReactNode }) {
   return <main className="welcome-page"><section className="welcome-story"><div className="welcome-brand"><div className="brand-collaboration-logos"><img src="/Cosmonet%20Logo.png" alt="Cosmonet AI" /><span>×</span><img src="/GG%20Logo.jpeg" alt="Guru Group" /></div><div><strong>ConnectCosmos</strong><small>Cosmonet AI × Guru Group</small></div></div><div className="welcome-kicker">CONVERSATION-TO-COMMERCE WORKSPACE</div>
     <h1>Turn every visit<br /><span>into the next sale.</span></h1><p>Register walk-in visitors, capture customer conversations, route enquiries, and move from product interest to quotation and order.</p>
+    <ProductDemoVideo />
     <ol className="welcome-steps"><li><AudioLines /> Capture visitor and sales conversations</li><li><Languages /> Structure products, requirements, and intent</li><li><ShieldCheck /> Follow up with a clear commercial record</li></ol>
   </section><section className="welcome-card">{children}</section></main>
 }
