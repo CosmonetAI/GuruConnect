@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Clock3, Plus, RefreshCw, UsersRound } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinVisit } from '../../types/walkin'
-import { isWalkinDemoMode, listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
+import { listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
 import PageLoader from '../../components/PageLoader'
 import WalkinPagination from './WalkinPagination'
@@ -78,7 +78,6 @@ export default function WalkinsOverview() {
         </div>
       </header>
 
-      {isWalkinDemoMode() && <div className="walkin-notice">Demo mode — walk-in records are stored in this browser. No production authentication or database is configured.</div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
       <section className="walkin-stat-grid" aria-label="Walk-in summary">

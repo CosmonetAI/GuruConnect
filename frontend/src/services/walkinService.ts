@@ -11,8 +11,14 @@ const demoAgents: WalkinAgent[] = [
   { id: demoAgentId, name: 'Sneha Rao', department: 'Sales', specialization: 'Product solutions', availability: 'Available', openVisits: 0 },
   { id: 'demo-agent-rajesh', name: 'Rajesh Kumar', department: 'Projects', specialization: 'Project sales', availability: 'Available', openVisits: 0 },
   { id: 'demo-agent-ananya', name: 'Ananya Shah', department: 'Support', specialization: 'Service and support', availability: 'Busy', openVisits: 0 },
+  { id: 'demo-agent-ravi', name: 'Ravi Kumar', department: 'Sales', specialization: 'Key accounts', availability: 'Available', openVisits: 0 },
 ]
 const closedStatuses = ['Completed', 'Cancelled', 'Converted to Enquiry']
+function normalizeDemoVisits(visits: WalkinVisit[]) {
+  return visits.map((visit) => visit.customerName === 'Akshat Saxena' || visit.mobileNumber === '9311854768'
+    ? { ...visit, assignedAgentId: 'demo-agent-ravi', assignedAgentName: 'Ravi Kumar', assignmentNote: 'Dummy contact held by Ravi Kumar' }
+    : visit)
+}
 export function isWalkinDemoMode() { return localMode }
 export async function listDemoCustomers(): Promise<DemoCustomer[]> {
   if (!localMode) return []
@@ -40,9 +46,9 @@ function readLocal<T>(workspaceId: string, section: string, fallback: T): T {
     value = localStorage.getItem(`guru-group:walkin-${section}`)
     if (value) localStorage.setItem(key, value)
   }
-  if (!value && section === 'visits') return structuredClone(mockData.walkins) as T
+  if (!value && section === 'visits') return normalizeDemoVisits(structuredClone(mockData.walkins) as WalkinVisit[]) as T
   if (!value) return fallback
-  try { return JSON.parse(value) as T } catch { throw new Error('Saved local walk-in data is invalid. Restore a valid local backup.') }
+  try { const parsed = JSON.parse(value) as T; return section === 'visits' ? normalizeDemoVisits(parsed as WalkinVisit[]) as T : parsed } catch { throw new Error('Saved local walk-in data is invalid. Restore a valid local backup.') }
 }
 function saveLocal<T>(workspaceId: string, section: string, value: T) {
   if (!localMode) throw new Error('Browser walk-in storage is only available in demo mode.')
