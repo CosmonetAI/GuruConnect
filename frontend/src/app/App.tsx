@@ -44,7 +44,7 @@ export default function App() {
       <Route path="/reset" element={<ResetPassword />} />
       <Route path="/auth/callback" element={<Navigate to="/" replace />} />
       <Route path="/ticket-tracking" element={<TicketTracking />} />
-      <Route path="/" element={<ProtectedRoute><Navigate to="/dashboard" replace /></ProtectedRoute>} />
+      <Route path="/" element={<ProtectedRoute><DefaultLanding /></ProtectedRoute>} />
       <Route
         path="/"
         element={
@@ -90,4 +90,9 @@ function ScopedLayout() {
   // still check their identity tickets before accepting late responses.
   if (workspace?.role === 'receptionist' && location.pathname !== '/settings' && !location.pathname.startsWith('/walkins')) return <Navigate to="/walkins" replace />
   return <AppLayout key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} />
+}
+
+function DefaultLanding() {
+  const { workspace } = useOffice()
+  return <Navigate to={workspace?.role === 'owner' || workspace?.role === 'receptionist' ? '/walkins' : '/dashboard'} replace />
 }

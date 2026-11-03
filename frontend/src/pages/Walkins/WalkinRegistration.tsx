@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useBlocker } from 'react-router-dom'
 import { CheckCircle2, ClipboardPlus, Mic, Square } from 'lucide-react'
 import { z } from 'zod'
@@ -191,8 +191,7 @@ export default function WalkinRegistration() {
 
 function DemoRecordingButton({ recording, onClick }: { recording: boolean; onClick: () => void }) {
   return <div className={`demo-recording${recording ? ' is-recording' : ''}`}>
-    <button type="button" className="demo-recording-button" onClick={onClick}>{recording ? <><Square size={15} fill="currentColor" /> Stop recording</> : <><Mic size={16} /> Start recording</>}</button>
-    {recording && <div className="demo-recording-live"><span className="demo-waveform" aria-label="Recording waveform">{Array.from({ length: 22 }, (_, index) => <i key={index} style={{ '--wave-delay': `${index * 45}ms`, '--wave-height': `${10 + ((index * 13) % 20)}px` } as CSSProperties} />)}</span><small>Listening and filling the form...</small></div>}
+    <button type="button" className="demo-recording-button" onClick={onClick} aria-pressed={recording}>{recording ? <><Square size={15} fill="currentColor" /> Stop recording</> : <><Mic size={16} /> Start recording</>}</button>
   </div>
 }
 

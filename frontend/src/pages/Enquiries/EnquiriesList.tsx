@@ -105,7 +105,7 @@ function MissedVisitorCard({ visitor }: { visitor: MissedVisitor }) {
         </div>
         <div>
           <dt>Email</dt>
-          <dd>{visitor.email || "Not provided"}</dd>
+          <dd>{visitor.email?.toLowerCase() || "Not provided"}</dd>
         </div>
         <div>
           <dt>Purpose</dt>

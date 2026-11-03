@@ -135,6 +135,8 @@
   align-items: start;
   gap: 18px;
 }
+.enquiry-registration-layout { display: block; }
+.enquiry-registration-layout .enquiry-main-column { display: grid; max-width: none; }
 
 .enquiry-main-column,
 .enquiry-side-column {
