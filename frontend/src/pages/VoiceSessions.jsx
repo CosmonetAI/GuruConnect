@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { call } from "../zoho/shared/api.js";
 import ConversationRecorder from "./Enquiries/ConversationRecorder";
+import { activePersistentSession } from "../recording/persistentSession";
 import ConversationTranscript from "../components/ConversationTranscript";
 import ProgressivePlayback from "../components/ProgressivePlayback";
 import PageLoader from "../components/PageLoader";
@@ -461,6 +462,7 @@ export default function VoiceSessions() {
   const sessionRef = useRef(session); sessionRef.current = session;
   const conversationRef = useRef(conversationId); conversationRef.current = conversationId;
   const captureRef = useRef(captureState); captureRef.current = captureState;
+  const captureBusyRef = useRef(captureBusy); captureBusyRef.current = captureBusy;
   const demoRevealSource = useRef(null);
   const demoRevealTimer = useRef(null);
   const catalogueSearch = useRef(0);
@@ -500,7 +502,7 @@ export default function VoiceSessions() {
     if (next.capture === 'idle') stopDemoReveal();
   };
   useEffect(() => () => stopDemoReveal(), []);
-  const blocker = useBlocker(busy);
+  const blocker = useBlocker(sessionBusy || cartSaving || Boolean(documentBusy));
   useEffect(() => { if (blocker.state === 'blocked') { setError('Finish recording and saving this session before leaving.'); blocker.reset(); } }, [blocker]);
   useEffect(() => {
     if (!cartSaving && !documentBusy) return;
@@ -509,7 +511,7 @@ export default function VoiceSessions() {
     return () => window.removeEventListener('beforeunload', preventLoss);
   }, [cartSaving, documentBusy]);
   useEffect(() => { setCaptureBusy(busy); return () => setCaptureBusy(false); }, [busy, setCaptureBusy]);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; ++selection.current; controllers.current.forEach(controller => controller.abort()); }; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; ++selection.current; if (captureBusyRef.current || ['recording', 'paused'].includes(captureRef.current.capture)) return; controllers.current.forEach(controller => controller.abort()); }; }, []);
   const sessionCall = async (path, options = {}) => {
     const controller = new AbortController(); controllers.current.add(controller);
     try { return await call(path, { ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || user?.id } }, workspace?.id); }
@@ -685,6 +687,13 @@ export default function VoiceSessions() {
       startedFromEnquiry.current = true;
       void prepareSession(initialContact);
     }
+  }, []);
+  useEffect(() => {
+    if (searchParams.get("start") === "1" || startedFromEnquiry.current || session) return;
+    const activeSession = activePersistentSession();
+    if (!activeSession?.sessionId) return;
+    startedFromEnquiry.current = true;
+    void open(activeSession.sessionId);
   }, []);
   const chooseContact = (contact) => {
     if (busyRef.current) return;
@@ -1337,7 +1346,7 @@ export default function VoiceSessions() {
               onDownloadTranscript={downloadTranscript}
               sessionStartedAt={recordingSnapshot?.created_at}
             >
-              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={handleCaptureChange} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
+              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} sessionId={session} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={handleCaptureChange} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
             </LiveSessionWorkspace>
           </>}
         </section>

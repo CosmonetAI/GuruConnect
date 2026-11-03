@@ -6,6 +6,7 @@ import { recordingHooks } from '../../recording/apiHooks'
 import { discardRecovery, listRecoveries, recoverRecording, RecorderSession, type CaptureState } from '../../recording/session'
 import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
+import { ensurePersistentSession, getPersistentSession, persistentSessionKey, publishPersistentCapture, removePersistentSession, subscribePersistentCapture, type PersistentSessionEntry } from '../../recording/persistentSession'
 import '../../styles/recording.css'
 
 export interface ConversationRecorderProps {
@@ -14,6 +15,7 @@ export interface ConversationRecorderProps {
   customerEmail?: string
   title?: string
   initialConversationId?: string | null
+  sessionId?: string | null
   onConversationChange: (id: string | null) => void | Promise<void>
   onBusyChange?: (busy: boolean) => void
   onSaved?: (id: string) => void
@@ -55,7 +57,7 @@ const ConversationRecorder = forwardRef<ConversationRecorderHandle, Conversation
 
 export default ConversationRecorder
 
-const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, onConsentChange, providerReadiness, processingStatus, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
+const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, sessionId = null, onConversationChange, onBusyChange, onSaved, onCaptureChange, onConsentChange, providerReadiness, processingStatus, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
   const { user, workspace, loading, localMode, error: authError } = useOffice()
   const [consent, setConsent] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -80,9 +82,16 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const creation = useRef<{ key: string; body: object } | null>(null)
   const demoTimer = useRef<number | null>(null)
   const demoElapsed = useRef(0)
+  // A live session must have a stable session identity before it is kept alive
+  // across route changes.  The session page supplies this id; standalone
+  // recorder instances should retain their normal mount/unmount lifecycle.
+  const persistentKey = sessionOnly && sessionId ? persistentSessionKey({ userId: user?.id, workspaceId: workspace?.id, memberId: workspace?.member_id, customerPhone, customerName }) : ''
+  const persistent = useRef<PersistentSessionEntry | null>(null)
   const tabId = useRef(recordingTabId(user?.id, workspace?.id, workspace?.member_id))
   const callbacks = useRef({ onConversationChange, onBusyChange, onSaved, onCaptureChange })
   callbacks.current = { onConversationChange, onBusyChange, onSaved, onCaptureChange }
+  const captureRef = useRef(capture)
+  captureRef.current = capture
   const captureActive = ['recording', 'paused'].includes(capture.capture)
   const unfinished = !!conversationId && !saved
   const anotherMemberView = !!user && !!workspace?.member_id && workspace.member_id !== user.id
@@ -90,13 +99,23 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const blocked = loading || !user || !workspace || anotherMemberView
   const meterLevel = Math.min(1, Math.max(0, capture.level * 8))
 
+  function ensurePersistent() {
+    if (!sessionOnly || !persistentKey || !user || !workspace) return null
+    const entry = ensurePersistentSession({ key: persistentKey, userId: user.id, workspaceId: workspace.id, memberId: workspace.member_id || user.id, customerName, customerPhone: customerPhone || '', customerEmail: customerEmail || '', sessionId, conversationId: idRef.current })
+    persistent.current = entry
+    return entry
+  }
+
   useImperativeHandle(ref, () => ({
     start: () => startMicrophone(true),
     stop: () => changeCapture('stop'),
   }))
 
   function isCurrent(epoch: number, controller: AbortController) { return mounted.current && epoch === generation.current && !controller.signal.aborted }
-  async function notify(id: string | null) { await callbacks.current.onConversationChange(id) }
+  async function notify(id: string | null) {
+    if (!mounted.current && persistentKey) return
+    await callbacks.current.onConversationChange(id)
+  }
   async function showSaved(id: string, reportChange = true) {
     if (!mounted.current || idRef.current !== id) return
     setConversationId(id); setSaved(true); setPhase('saved'); setError(''); setRetryFile(false); setFile(null)
@@ -112,15 +131,40 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   useEffect(() => {
     mounted.current = true
     return () => {
-      mounted.current = false; generation.current++; abort.current?.abort()
-      if (demoTimer.current !== null) window.clearInterval(demoTimer.current)
-      const session = active.current; active.current = null
-      void session?.dispose().catch(() => undefined)
+      const keepSessionAlive = sessionOnly && Boolean(persistent.current && (persistent.current.recorder === active.current || persistent.current.demoTimer !== null || operationRef.current))
+      mounted.current = false; generation.current++
+      if (!keepSessionAlive) {
+        abort.current?.abort()
+        if (demoTimer.current !== null) window.clearInterval(demoTimer.current)
+        const session = active.current; active.current = null
+        void session?.dispose().catch(() => undefined)
+      }
       callbacks.current.onBusyChange?.(false)
     }
-  }, [])
+  }, [sessionOnly])
   useEffect(() => { callbacks.current.onBusyChange?.(busy) }, [busy])
   useEffect(() => { callbacks.current.onCaptureChange?.(capture) }, [capture])
+  useEffect(() => {
+    if (!sessionOnly || !persistentKey) return
+    const entry = getPersistentSession(persistentKey)
+    if (!entry || (!entry.recorder && entry.demoTimer === null)) return
+    persistent.current = entry
+    entry.sessionId = sessionId || entry.sessionId
+    active.current = entry.recorder
+    demoTimer.current = entry.demoTimer
+    demoElapsed.current = entry.demoElapsed
+    idRef.current = entry.conversationId || initialConversationId || null
+    setConversationId(idRef.current)
+    setSaved(entry.saved)
+    setCapture(entry.capture)
+    if (['recording', 'paused'].includes(entry.capture.capture)) setPhase('recording')
+    const unsubscribe = subscribePersistentCapture(entry, state => {
+      setCapture(state)
+      if (['recording', 'paused'].includes(state.capture)) setPhase('recording')
+      callbacks.current.onCaptureChange?.(state)
+    })
+    return () => { unsubscribe() }
+  }, [initialConversationId, persistentKey, sessionId, sessionOnly])
   useEffect(() => {
     if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file); setPreview(url)
@@ -191,10 +235,13 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     if (operationRef.current || captureActive || (!startNew && (saved || unfinished))) return
     try { validateStart() } catch (reason) { setError(message(reason)); return }
     if (startNew && (saved || unfinished)) {
+      if (persistent.current) removePersistentSession(persistent.current)
+      persistent.current = null
       idRef.current = null; creation.current = null; notifiedSaved.current = null
       setConversationId(null); setSaved(false); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setPhase('idle')
       await notify(null)
     }
+    const persistentEntry = ensurePersistent()
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
       // The frontend demo deliberately does not create an audio lease or call
@@ -202,14 +249,24 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
       // synthetic meter so the session flow works with the backend stopped.
       if (localMode && sessionOnly) {
         demoElapsed.current = 0
+        if (persistentEntry) {
+          persistentEntry.conversationId = null
+          persistentEntry.saved = false
+          persistentEntry.demoElapsed = 0
+          publishPersistentCapture(persistentEntry, { ...emptyCapture, capture: 'recording', level: 0.62 })
+        }
         setPhase('recording')
         setCapture({ ...emptyCapture, capture: 'recording', level: 0.62 })
-        demoTimer.current = window.setInterval(() => {
-          if (!mounted.current) return
+        const timer = window.setInterval(() => {
+          if (persistentEntry) persistentEntry.demoElapsed += 1
           demoElapsed.current += 1
           const level = 0.35 + ((demoElapsed.current * 17) % 55) / 100
-          setCapture(current => ({ ...current, capture: current.capture === 'paused' ? 'paused' : 'recording', elapsedSeconds: demoElapsed.current, level, pendingChunks: Math.floor(demoElapsed.current / Math.max(1, chunkSeconds)), pendingBytes: demoElapsed.current * 480 }))
+          const state: CaptureState = { ...emptyCapture, capture: persistentEntry?.capture.capture === 'paused' || captureRef.current.capture === 'paused' ? 'paused' : 'recording', elapsedSeconds: demoElapsed.current, level, pendingChunks: Math.floor(demoElapsed.current / Math.max(1, chunkSeconds)), pendingBytes: demoElapsed.current * 480 }
+          if (persistentEntry) publishPersistentCapture(persistentEntry, state)
+          if (mounted.current) setCapture(state)
         }, 1000)
+        demoTimer.current = timer
+        if (persistentEntry) persistentEntry.demoTimer = timer
         finish(epoch, controller)
         return
       }
@@ -220,6 +277,10 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
         scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, chunkSeconds, signal: controller.signal,
         hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal, workspace!.member_id),
         onState: state => {
+          if (persistentEntry) {
+            persistentEntry.conversationId = id
+            publishPersistentCapture(persistentEntry, state)
+          }
           if (!isCurrent(epoch, controller)) return
           setCapture(state)
           if (['recording', 'paused'].includes(state.capture)) setPhase('recording')
@@ -229,21 +290,33 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
         },
       })
       active.current = session
+      if (persistentEntry) {
+        persistentEntry.recorder = session
+        persistentEntry.conversationId = id
+      }
       await session.start()
-      if (!isCurrent(epoch, controller)) await session.dispose()
+      if (!isCurrent(epoch, controller) && !persistentEntry) await session.dispose()
     } catch (reason) { if (isCurrent(epoch, controller)) { setError(message(reason)); setPhase('error') } }
     finally { finish(epoch, controller) }
   }
   async function changeCapture(action: 'pause' | 'resume' | 'stop') {
     if (operationRef.current || (!active.current && !(localMode && sessionOnly && captureActive))) return
     if (localMode && sessionOnly && !active.current) {
+      const entry = persistent.current
       if (action === 'pause' || action === 'resume') {
-        setCapture(current => ({ ...current, capture: action === 'pause' ? 'paused' : 'recording' }))
+        const state: CaptureState = { ...(entry?.capture || captureRef.current), capture: action === 'pause' ? 'paused' : 'recording' }
+        if (entry) publishPersistentCapture(entry, state)
+        setCapture(state)
         return
       }
       if (demoTimer.current !== null) { window.clearInterval(demoTimer.current); demoTimer.current = null }
-      setCapture(current => ({ ...current, capture: 'stopped', saving: false, level: 0 }))
+      if (entry) entry.demoTimer = null
+      const state: CaptureState = { ...(entry?.capture || captureRef.current), capture: 'stopped', saving: false, level: 0 }
+      if (entry) { entry.saved = true; publishPersistentCapture(entry, state) }
+      setCapture(state)
       setSaved(true); setPhase('saved'); setError('')
+      if (entry) removePersistentSession(entry)
+      persistent.current = null
       return
     }
     const epoch = generation.current; const session = active.current
@@ -251,7 +324,11 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     operationRef.current = true; setOperation(true); setError('')
     try {
       await session[action]()
-      if (mounted.current && epoch === generation.current && action === 'stop' && idRef.current) { await showSaved(idRef.current); active.current = null }
+      if (mounted.current && epoch === generation.current && action === 'stop' && idRef.current) {
+        await showSaved(idRef.current)
+        active.current = null
+        if (persistent.current) { removePersistentSession(persistent.current); persistent.current = null }
+      }
     } catch (reason) { if (mounted.current && epoch === generation.current) { setError(message(reason)); if (action === 'stop') setPhase('error') } }
     finally { if (mounted.current && epoch === generation.current) { operationRef.current = false; setOperation(false); void refreshRecoveries().catch(() => undefined) } }
   }

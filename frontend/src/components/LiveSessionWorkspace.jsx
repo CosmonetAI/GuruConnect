@@ -248,15 +248,16 @@ export default function LiveSessionWorkspace({
   onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
+  const hasConversation = messages.some(Boolean) || transcript.some(Boolean);
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
   const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onEditDocument, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance, recordingState }} compact={cartView} />;
-  return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
+  return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}${hasConversation ? '' : ' is-empty-session'}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
-      <div className="lws-conversation-lane"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} />{suggestions}</div>
+      <div className="lws-conversation-lane"><div className="lws-transcript-region" role="region" aria-label="Live translated conversation"><Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} recordingState={recordingState} /></div>{suggestions}</div>
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
       </div>
-      <Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} />
+      {hasConversation && <Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} />}
     </div>
     {children && <div className="lws-recording-footer">{children}</div>}
     {recordingStatus?.key === 'complete' && <div className="lws-sr-only" role="status"><Check size={12} />{recordingStatus.label || 'Processing complete'}</div>}

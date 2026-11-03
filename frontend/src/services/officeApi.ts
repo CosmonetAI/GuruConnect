@@ -63,7 +63,7 @@ async function mockRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   return {} as T;
 }
 const serviceErrorMessages: Record<string, string> = {
-  api_unreachable: localMode ? 'Local services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
+  api_unreachable: localMode ? 'Demo services could not be reached. Check the running API and refresh this screen.' : 'Workspace services could not be reached. Check your connection and try again.',
   configuration_mismatch: 'Workspace services are using different modes. Ask your administrator to finish the workspace setup, then try again.',
   engine_unconfigured: 'The managed speech service is unavailable. Contact your administrator, then retry the failed stage. Your saved audio is preserved.',
   database_schema_missing: 'ConnectCosmos setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
@@ -116,7 +116,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
 export async function request<T>(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<T> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode) return mockRequest<T>(path, init);
-  if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
+  if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Demo mode needs a localhost API address.');
   const abort = new AbortController();
   const cancelled = () => abort.abort(init.signal?.reason ?? new DOMException('The request was cancelled.', 'AbortError'));
   init.signal?.addEventListener('abort', cancelled, { once: true });
@@ -162,7 +162,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
 export async function requestStream(path: string, workspace?: string | null, init: RequestInit = {}, memberId?: string | null): Promise<Response> {
   if (!supabase && !localMode) throw new ApiError(503, 'configuration_missing', 'Workspace services are not ready yet. Ask your administrator for help.');
   if (localMode) throw new ApiError(503, 'local_demo_only', 'Live audio processing is disabled in frontend demo mode.');
-  if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Local mode needs a localhost API address.');
+  if (localMode && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(apiBase).hostname)) throw new ApiError(503, 'configuration_missing', 'Demo mode needs a localhost API address.');
   const signal = init.signal ?? undefined;
   signal?.throwIfAborted();
   try {

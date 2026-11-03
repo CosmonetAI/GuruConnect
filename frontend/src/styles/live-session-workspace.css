@@ -4,7 +4,7 @@
   --lws-muted: #7185a1;
   --lws-line: #e2ebf6;
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
@@ -19,7 +19,9 @@
 .live-session-workspace button { cursor: pointer; }
 .live-session-workspace button:disabled { opacity: .5; cursor: default; }
 .live-session-workspace button:focus-visible, .live-session-workspace input:focus-visible, .live-session-workspace select:focus-visible, .live-session-workspace textarea:focus-visible { outline: 2px solid #5185ff; outline-offset: 3px; }
-.live-session-workspace .lws-work-grid { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) 292px; gap: 0 12px; min-height: 0; padding: 12px; overflow: auto; transition: grid-template-columns .48s cubic-bezier(.2,.8,.2,1); }
+.live-session-workspace .lws-work-grid { display: grid; flex: 1 1 0; grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) 292px; gap: 0 12px; min-height: 0; padding: 12px 12px 24px; overflow: auto; transition: grid-template-columns .48s cubic-bezier(.2,.8,.2,1); }
+.live-session-workspace.is-empty-session .lws-work-grid { grid-template-columns: minmax(0, 1fr); }
+.live-session-workspace.is-empty-session .lws-cart-lane { display: none; }
 .live-session-workspace.is-cart-view .lws-work-grid { grid-template-columns: minmax(205px, .92fr) minmax(0, 2fr) 252px; }
 .live-session-workspace .lws-conversation-lane, .live-session-workspace .lws-cart-lane { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
 .live-session-workspace .lws-cart-lane { opacity: 0; visibility: hidden; overflow: hidden; transition: opacity .25s ease, visibility .25s; }
@@ -209,7 +211,7 @@
 .live-session-workspace .lws-order-totals > .lws-order-grand-total > strong:last-child { font-size: 16px; }
 .live-session-workspace .lws-tax-note { margin: 0; color: #8797b0; font-size: 9px; line-height: 1.5; }
 .live-session-workspace .lws-complete-cart { min-height: 35px; margin-top: 2px; }
-.live-session-workspace .lws-recording-footer { flex: 0 0 auto; min-width: 0; padding: 10px 12px 12px; border-top: 1px solid var(--lws-line); background: #fff; box-shadow: 0 -3px 12px #203b6004; }
+.live-session-workspace .lws-recording-footer { flex: 0 0 auto; min-width: 0; margin-top: 12px; padding: 10px 12px 12px; border-top: 1px solid var(--lws-line); background: #fff; box-shadow: 0 -3px 12px #203b6004; }
 .live-session-workspace .lws-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .live-session-workspace.is-cart-view .lws-conversation { flex: 1 1 250px; min-height: 180px; max-height: 42vh; }
 .live-session-workspace.is-cart-view .lws-message { max-width: 96%; gap: 0; }

@@ -17,7 +17,7 @@ function scope(workspaceId: string) {
   return workspaceId
 }
 function readLocal<T>(workspaceId: string, section: string, fallback: T): T {
-  if (!localMode) throw new Error('Browser walk-in storage is only available in local mode.')
+  if (!localMode) throw new Error('Browser walk-in storage is only available in demo mode.')
   const key = `guru-group:walkin:${scope(workspaceId)}:${section}`
   let value = localStorage.getItem(key)
   // Preserve pre-workspace standalone data only in its original local workspace.
@@ -30,7 +30,7 @@ function readLocal<T>(workspaceId: string, section: string, fallback: T): T {
   try { return JSON.parse(value) as T } catch { throw new Error('Saved local walk-in data is invalid. Restore a valid local backup.') }
 }
 function saveLocal<T>(workspaceId: string, section: string, value: T) {
-  if (!localMode) throw new Error('Browser walk-in storage is only available in local mode.')
+  if (!localMode) throw new Error('Browser walk-in storage is only available in demo mode.')
   localStorage.setItem(`guru-group:walkin:${scope(workspaceId)}:${section}`, JSON.stringify(value))
 }
 function addLocalHistory(workspaceId: string, visit: WalkinVisit, eventType: string, oldValue: string | null = null, newValue: string | null = null, notes = '') {
@@ -85,7 +85,7 @@ export async function canManageWalkinAgents(workspaceId: string): Promise<boolea
   return (await request<{ canManage: boolean }>('/walkins/agents', workspaceId)).canManage
 }
 export function setCurrentDemoWalkinAgentId(workspaceId: string, agentId: string) {
-  if (!localMode || !demoAgents.some(agent => agent.id === agentId)) throw new Error('Choose a configured local demo agent.')
+  if (!localMode || !demoAgents.some(agent => agent.id === agentId)) throw new Error('Choose a configured demo agent.')
   saveLocal(workspaceId, 'demo-agent', agentId)
 }
 export async function getWalkinVisit(workspaceId: string, id: string): Promise<WalkinVisit | null> {
@@ -134,7 +134,7 @@ export async function assignWalkin(workspaceId: string, id: string, agentId: str
   const { visits, visit } = localEditable(workspaceId, id, expectedUpdatedAt)
   if (closedStatuses.includes(visit.status)) throw new Error('A closed visit cannot be reassigned.')
   const agent = demoAgents.find(item => item.id === agentId)
-  if (agentId && !agent) throw new Error('Choose a configured local demo agent.')
+  if (agentId && !agent) throw new Error('Choose a configured demo agent.')
   const previous = visit.assignedAgentName
   if (visit.assignedAgentId !== agentId) {
     visit.assignedAt = agentId ? new Date().toISOString() : null
@@ -219,7 +219,7 @@ export async function markWalkinConverted(workspaceId: string, id: string, enqui
 export async function updateWalkinAgentAvailability(workspaceId: string, agentId: string, availability: WalkinAgent['availability']) {
   scope(workspaceId)
   if (!localMode) return request(`/walkins/agents/${encodeURIComponent(agentId)}`, workspaceId, json('PATCH', { availability }))
-  if (!demoAgents.some(agent => agent.id === agentId)) throw new Error('Choose a configured local demo agent.')
+  if (!demoAgents.some(agent => agent.id === agentId)) throw new Error('Choose a configured demo agent.')
   const all = readLocal<Record<string, WalkinAgent['availability']>>(workspaceId, 'availability', {})
   all[agentId] = availability; saveLocal(workspaceId, 'availability', all)
 }

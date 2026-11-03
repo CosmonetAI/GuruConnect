@@ -191,7 +191,7 @@ export class RecorderSession {
       await putChunk(this.options.scope, { key: `${next.key}/${meta.sequence}`, scope: next.scope, meta, audio: data.buffer }, next, this.options.outboxLimitBytes);
       this.recovery = next; await this.refreshQueue(); void this.pump();
       if (this.state.pendingBytes >= (this.options.outboxLimitBytes ?? 64*1024*1024) - 320088 && !this.closing) void this.interrupt('Local upload queue is nearly full. Capture stopped so pending audio can be saved.');
-    }).catch(error => { this.update({ error: error instanceof Error ? error.message : 'Local audio persistence failed' }); void this.interrupt('Local storage could not save new audio. Capture stopped immediately.'); throw error; });
+    }).catch(error => { this.update({ error: error instanceof Error ? error.message : 'Demo audio persistence failed' }); void this.interrupt('Demo storage could not save new audio. Capture stopped immediately.'); throw error; });
     // The failure remains visible to Stop, with an attached handler to avoid an unhandled rejection.
     void this.persisting.catch(() => undefined);
   }
