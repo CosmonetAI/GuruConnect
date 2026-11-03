@@ -14,11 +14,163 @@ export const supabase: ReturnType<typeof createClient> | null = null;
 export const apiBase = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8010').replace(/\/$/, '');
 const mockDataKey = 'guruconnect-frontend-mock-data';
 type MockData = typeof seedData & { profile: Record<string, unknown>; team: Record<string, unknown>[]; enquiries: Record<string, any>[]; conversations: Record<string, any>[]; connections: Record<string, any>[] };
+const demoMembers = [
+  { id: 'owner-akshat', name: 'Akshat Saxena', role: 'owner' },
+  { id: 'owner-meera', name: 'Meera Iyer', role: 'owner' },
+  ...Array.from({ length: 22 }, (_, index) => ({ id: `sales-${index + 1}`, name: ['Ravi Kumar', 'Sumanth Reddy', 'Priya Gupta', 'Sneha Kapoor', 'Arjun Mehta', 'Neha Sharma', 'Karan Malhotra', 'Divya Nair', 'Aditya Rao', 'Rohan Bhat', 'Pooja Iyer', 'Manish Verma', 'Kavita Joshi', 'Nikhil Jain', 'Aditi Menon', 'Varun Shah', 'Meenal Patil', 'Sameer Khan', 'Ishita Bose', 'Rahul Nair', 'Tanvi Kulkarni', 'Mohit Sethi'][index], role: 'salesperson' })),
+  { id: 'reception-nisha', name: 'Nisha Rao', role: 'receptionist' },
+  { id: 'reception-kavya', name: 'Kavya Menon', role: 'receptionist' },
+  { id: 'reception-arjun', name: 'Arjun Das', role: 'receptionist' },
+] as const;
+const salesMembers = demoMembers.filter(member => member.role === 'salesperson');
+function demoMemberEmail(member: { name: string }) { return `${member.name.toLowerCase().replace(/[^a-z]+/g, '.').replace(/^\.|\.$/g, '')}@zoho.in`; }
+function demoTeamRows(existing: Record<string, any>[]) {
+  const generated = demoMembers.map(member => ({ user_id: member.id, display_name: member.name, email: demoMemberEmail(member), role: member.role, status: 'active', availability_status: 'active' }));
+  const generatedIds = new Set(generated.map(member => member.user_id));
+  const generatedNames = new Set(generated.map(member => member.display_name));
+  return [...generated, ...existing.filter(member => !generatedIds.has(String(member.user_id)) && !generatedNames.has(String(member.display_name ?? '')))];
+}
+const customerFirstNames = ['Aarav', 'Aditi', 'Ananya', 'Arjun', 'Asha', 'Dev', 'Diya', 'Ishaan', 'Ira', 'Kabir', 'Kavya', 'Kiran', 'Mihir', 'Naina', 'Neha', 'Nikhil', 'Pooja', 'Ritesh', 'Riya', 'Rohan', 'Sahil', 'Sameer', 'Sanya', 'Shreya', 'Tanvi', 'Varun', 'Vikram', 'Yash', 'Zoya', 'Anika'];
+const customerLastNames = ['Sharma', 'Verma', 'Mehta', 'Iyer', 'Nair', 'Rao', 'Kapoor', 'Malhotra', 'Bose', 'Joshi', 'Patel', 'Jain', 'Menon', 'Chopra', 'Desai', 'Bhat'];
+function demoCustomerName(index: number) { return `${customerFirstNames[(index - 1) % customerFirstNames.length]} ${customerLastNames[Math.floor((index - 1) / customerFirstNames.length) % customerLastNames.length]}`; }
+function demoCustomerPhone(index: number) { const prefix = ['98', '99', '97', '96'][index % 4]; return `${prefix}${String(10000000 + ((index * 7919) % 89999999)).padStart(8, '0')}`; }
+function activeDemoMember() {
+  const workspaceMemberId = localStorage.getItem('guruconnect-active-workspace') || '';
+  if (workspaceMemberId) return demoMembers.find(member => member.id === workspaceMemberId) ?? demoMembers[0];
+  const email = sessionStorage.getItem('guruconnect-demo-account')?.toLowerCase() ?? '';
+  const account = demoMembers.find(member => demoMemberEmail(member) === email)?.id ?? 'owner-akshat';
+  return demoMembers.find(member => member.id === account) ?? demoMembers[0];
+}
+function assignDemoMember(item: Record<string, any>, index: number) {
+  const knownAssignments: Record<string, string> = { 'Akshat Saxena': 'sales-1', 'Rahul Sharma': 'sales-2', 'Priya Gupta': 'sales-3', 'Rakesh Kumar': 'sales-4' };
+  if (knownAssignments[item.customerName]) return demoMembers.find(member => member.id === knownAssignments[item.customerName])!;
+  if (item.customerName === 'Akshat Saxena' || item.phone === '9311854768') return demoMembers.find(member => member.id === 'sales-1')!;
+  if (item.assignedMemberId) return demoMembers.find(member => member.id === item.assignedMemberId) ?? salesMembers[index % salesMembers.length];
+  return salesMembers[index % salesMembers.length];
+}
+function visibleDemoEnquiries(data: MockData) {
+  const member = activeDemoMember();
+  return member.role === 'receptionist' ? data.enquiries : data.enquiries.filter(item => (item as Record<string, any>).assignedMemberId === member.id);
+}
+type AnalyticsGranularity = 'day' | 'week' | 'month' | 'quarter' | 'half-year' | 'year';
+type DemoAnalyticsEvent = { date: string; memberId: string; memberName: string; branch: string; calls: number; conversations: number; enquiries: number; newEnquiries: number; inProcess: number; quoted: number; won: number; visitors: number; followUpsDue: number; followUpsOverdue: number; followUpsCompleted: number; activeMinutes: number; pipelineValue: number; channel: string };
+const analyticsYear = 2025;
+const analyticsFrom = '2025-01-01';
+const analyticsTo = new Date().toISOString().slice(0, 10);
+const analyticsChannels = ['Retail Walk-in', 'Incoming Call', 'Referral', 'Email', 'WhatsApp'];
+const analyticsMembers = demoMembers.filter(member => member.role !== 'receptionist');
+let demoAnalyticsEvents: DemoAnalyticsEvent[] | null = null;
+function buildDemoAnalyticsEvents() {
+  if (demoAnalyticsEvents) return demoAnalyticsEvents;
+  const seed = (seedData as any).analytics?.seed ?? { base_calls: 7, seasonality: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], member_offsets: [0], conversion_rates: [0.16] };
+  const events: DemoAnalyticsEvent[] = [];
+  const totalDays = Math.floor((new Date(`${analyticsTo}T00:00:00Z`).getTime() - Date.parse(`${analyticsFrom}T00:00:00Z`)) / 86400000) + 1;
+  for (let dayIndex = 0; dayIndex < totalDays; dayIndex += 1) {
+    const date = new Date(Date.UTC(analyticsYear, 0, dayIndex + 1));
+    const dateKey = date.toISOString().slice(0, 10);
+    const monthIndex = date.getUTCMonth();
+    const weekday = date.getUTCDay();
+    analyticsMembers.forEach((member, memberIndex) => {
+      const variation = Number(seed.member_offsets?.[memberIndex % seed.member_offsets.length] ?? 0);
+      const weekdayLift = weekday === 0 ? -2 : weekday === 6 ? -1 : 0;
+      const calls = Math.max(1, Math.round((Number(seed.base_calls) + variation + ((dayIndex * 3 + memberIndex) % 5) + weekdayLift) * Number(seed.seasonality?.[monthIndex] ?? 1)));
+      const conversations = Math.max(1, calls - ((dayIndex + memberIndex) % 4));
+      const enquiries = Math.max(1, Math.round(conversations * (0.45 + ((memberIndex + 1) % 3) * 0.08)));
+      const newEnquiries = Math.max(0, Math.round(enquiries * (0.44 + (dayIndex % 4) * 0.03)));
+      const inProcess = Math.max(0, Math.round(enquiries * (0.30 + (memberIndex % 3) * 0.04)));
+      const quoted = Math.max(0, Math.round(enquiries * (0.18 + (monthIndex % 3) * 0.04)));
+      const won = Math.max(0, Math.round(enquiries * Number(seed.conversion_rates?.[memberIndex % seed.conversion_rates.length] ?? 0.16)));
+      const visitors = Math.max(0, Math.round((calls / 4) + ((dayIndex + memberIndex) % 3) - 1));
+      const followUpsDue = Math.max(1, Math.round(enquiries * 0.7));
+      const followUpsOverdue = Math.max(0, Math.round(followUpsDue * (0.12 + (memberIndex % 4) * 0.03)));
+      const followUpsCompleted = Math.max(0, followUpsDue - followUpsOverdue - ((dayIndex + memberIndex) % 3));
+      events.push({ date: dateKey, memberId: member.id, memberName: member.name, branch: ['Bengaluru Central', 'Mysuru', 'Hyderabad'][memberIndex % 3], calls, conversations, enquiries, newEnquiries, inProcess, quoted, won, visitors, followUpsDue, followUpsOverdue, followUpsCompleted, activeMinutes: calls * (11 + ((memberIndex + dayIndex) % 8)), pipelineValue: enquiries * (4200 + ((memberIndex * 700 + dayIndex * 125) % 6800)), channel: analyticsChannels[(dayIndex + memberIndex) % analyticsChannels.length] });
+    });
+  }
+  demoAnalyticsEvents = events;
+  return events;
+}
+function analyticsRange(path: string) {
+  const params = new URLSearchParams(path.split('?')[1] ?? '');
+  const validGranularities: AnalyticsGranularity[] = ['day', 'week', 'month', 'quarter', 'half-year', 'year'];
+  const clamp = (value: string | null, fallback: string) => value && /^\d{4}-\d{2}-\d{2}$/.test(value) && value >= analyticsFrom && value <= analyticsTo ? value : fallback;
+  let from = clamp(params.get('from'), analyticsFrom);
+  let to = clamp(params.get('to'), analyticsTo);
+  if (from > to) [from, to] = [to, from];
+  const granularity = validGranularities.includes(params.get('groupBy') as AnalyticsGranularity) ? params.get('groupBy') as AnalyticsGranularity : 'month';
+  return { from, to, granularity };
+}
+function analyticsBucket(dateValue: string, granularity: AnalyticsGranularity) {
+  if (granularity === 'day') return dateValue;
+  if (granularity === 'month') return dateValue.slice(0, 7);
+  if (granularity === 'quarter') return `${dateValue.slice(0, 4)}-Q${Math.floor((Number(dateValue.slice(5, 7)) - 1) / 3) + 1}`;
+  if (granularity === 'half-year') return `${dateValue.slice(0, 4)}-H${Number(dateValue.slice(5, 7)) <= 6 ? 1 : 2}`;
+  if (granularity === 'year') return dateValue.slice(0, 4);
+  const current = new Date(`${dateValue}T00:00:00Z`);
+  const mondayOffset = (current.getUTCDay() + 6) % 7;
+  current.setUTCDate(current.getUTCDate() - mondayOffset);
+  return current.toISOString().slice(0, 10);
+}
+function buildAnalyticsResponse(path: string) {
+  const member = activeDemoMember();
+  const range = analyticsRange(path);
+  const allEvents = buildDemoAnalyticsEvents();
+  const events = allEvents.filter(event => event.date >= range.from && event.date <= range.to && (member.role === 'owner' || member.role === 'receptionist' || event.memberId === member.id));
+  const sum = (key: keyof DemoAnalyticsEvent) => events.reduce((total, event) => total + Number(event[key] || 0), 0);
+  const grouped = new Map<string, DemoAnalyticsEvent>();
+  for (const event of events) {
+    const key = analyticsBucket(event.date, range.granularity);
+    const current = grouped.get(key);
+    if (current) for (const metric of ['calls', 'conversations', 'enquiries', 'newEnquiries', 'inProcess', 'quoted', 'won', 'visitors', 'followUpsDue', 'followUpsOverdue', 'followUpsCompleted', 'activeMinutes', 'pipelineValue'] as const) current[metric] += event[metric];
+    else grouped.set(key, { ...event, date: key });
+  }
+  const groupedValues = [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([label, event]) => ({ label, calls: event.calls, conversations: event.conversations, visitors: event.visitors, enquiries: event.enquiries }));
+  const team = analyticsMembers.filter(candidate => member.role === 'owner' || member.role === 'receptionist' || candidate.id === member.id).map(candidate => {
+    const rows = events.filter(event => event.memberId === candidate.id);
+    const calls = rows.reduce((total, event) => total + event.calls, 0);
+    const conversations = rows.reduce((total, event) => total + event.conversations, 0);
+    const won = rows.reduce((total, event) => total + event.won, 0);
+    const enquiries = rows.reduce((total, event) => total + event.enquiries, 0);
+    const minutes = rows.reduce((total, event) => total + event.activeMinutes, 0);
+    return { id: candidate.id, name: candidate.name, calls, conversations, pending: rows.reduce((total, event) => total + event.inProcess, 0), visitors: rows.reduce((total, event) => total + event.visitors, 0), activeMinutes: minutes, active: `${Math.floor(minutes / 60)}h ${minutes % 60}m`, conversion: `${enquiries ? Math.round((won / enquiries) * 100) : 0}%` };
+  });
+  const channels = analyticsChannels.map(channel => ({ channel, count: events.filter(event => event.channel === channel).reduce((total, event) => total + event.calls, 0) })).filter(item => item.count > 0);
+  const stages = [{ stage: 'new', count: sum('newEnquiries') }, { stage: 'in_process', count: sum('inProcess') }, { stage: 'quoted', count: sum('quoted') }, { stage: 'closed', count: sum('won') }];
+  const periodDate = groupedValues[groupedValues.length - 1]?.label || range.to;
+  const directory = readMockData().enquiries.filter(item => !String(item.customerName ?? '').startsWith('Demo Customer'));
+  const visibleDirectory = member.role === 'owner' || member.role === 'receptionist' ? directory : directory.filter(item => (item as Record<string, any>).assignedMemberId === member.id);
+  const latestVisitors = Array.from({ length: Math.min(6, Math.max(3, groupedValues.length)) }, (_, index) => {
+    const contact = visibleDirectory[index % Math.max(visibleDirectory.length, 1)];
+    return { id: `analytics-visitor-${index}`, customerName: contact?.customerName ?? `${member.name} account visitor ${index + 1}`, createdAt: `${range.to.slice(0, 8)}${String(Math.max(1, Number(range.to.slice(8, 10)) - index)).padStart(2, '0')}T10:15:00Z`, stage: contact?.stage ?? ['new', 'in_process', 'closed'][index % 3], channel: contact?.channel ?? analyticsChannels[index % analyticsChannels.length], branch: contact?.branch ?? ['Bengaluru Central', 'Mysuru', 'Hyderabad'][index % 3], assignedName: contact?.assignedSalesperson ?? (member.role === 'owner' || member.role === 'receptionist' ? analyticsMembers[index % analyticsMembers.length].name : member.name) };
+  });
+  return { year: analyticsYear, range, totals: { calls: sum('calls'), conversations: sum('conversations'), pending: sum('inProcess'), visitors: sum('visitors'), activeMinutes: sum('activeMinutes'), followUpsDue: sum('followUpsDue'), followUpsOverdue: sum('followUpsOverdue'), followUpsCompleted: sum('followUpsCompleted'), pipelineValue: sum('pipelineValue') }, enquiries: sum('enquiries'), total: sum('enquiries'), channels, stages, team, callActivity: groupedValues, pipeline: { new: sum('newEnquiries'), inProcess: sum('inProcess'), quoted: sum('quoted'), won: sum('won') }, followUp: { due: sum('followUpsDue'), overdue: sum('followUpsOverdue'), completed: sum('followUpsCompleted'), coverage: sum('followUpsDue') ? Math.round((sum('followUpsCompleted') / sum('followUpsDue')) * 100) : 0 }, latestVisitors, periodLabel: periodDate };
+}
+function expandDemoOfficeData(data: MockData) {
+  data.enquiries = data.enquiries.map(item => {
+    const match = String(item.id ?? '').match(/^mock-enquiry-(\d+)$/);
+    if (!match || !String(item.customerName ?? '').startsWith('Demo Customer')) return item;
+    const index = Number(match[1]);
+    const customerName = demoCustomerName(index);
+    return { ...item, customerName, phone: demoCustomerPhone(index), email: `${customerName.toLowerCase().replaceAll(' ', '.')}@zoho.in`, summary: `Opportunity for ${item.assignedSalesperson || 'the sales team'} to review and follow up.` };
+  });
+  data.enquiries = data.enquiries.map((item, index) => {
+    const assigned = assignDemoMember(item, index);
+    return { ...item, assignedMemberId: assigned.id, assignedSalesperson: assigned.name };
+  });
+  const products = ['Aero BLDC Ceiling Fan 1200mm', 'Luxe Ceiling Fan 1200mm with LED', 'LED Bulb 9W (Pack of 4)', 'Crompton HighFlo Pedestal Fan'];
+  while (data.enquiries.length < 240) {
+    const index = data.enquiries.length + 1;
+    const assigned = assignDemoMember({}, index);
+    const customerName = demoCustomerName(index);
+    data.enquiries.push({ id: `mock-enquiry-${index}`, enquiryNumber: `ENQ-2026-${String(1000 + index).padStart(4, '0')}`, customerName, phone: demoCustomerPhone(index), email: `${customerName.toLowerCase().replaceAll(' ', '.')}@zoho.in`, channel: index % 3 === 1 ? 'Incoming Call' : 'Retail Walk-in', branch: ['Bengaluru Central', 'Mysuru', 'Hyderabad'][index % 3], stage: ['new', 'in_process', 'closed'][index % 3], assignedMemberId: assigned.id, assignedSalesperson: assigned.name, product: products[index % products.length], summary: `Opportunity for ${assigned.name} to review and follow up.`, createdAt: `2026-10-${String(1 + (index % 28)).padStart(2, '0')}T09:20:00Z`, conversationId: null, recording: null });
+  }
+  return data;
+}
 function readMockData(): MockData {
   try {
     const saved = sessionStorage.getItem(mockDataKey);
-    return saved ? JSON.parse(saved) as MockData : structuredClone(seedData) as MockData;
-  } catch { return structuredClone(seedData) as MockData; }
+    return expandDemoOfficeData(saved ? JSON.parse(saved) as MockData : structuredClone(seedData) as MockData);
+  } catch { return expandDemoOfficeData(structuredClone(seedData) as MockData); }
 }
 function writeMockData(data: MockData) { sessionStorage.setItem(mockDataKey, JSON.stringify(data)); }
 function mockPage(items: any[]) { return { items, total: items.length, totalPages: Math.max(1, Math.ceil(items.length / 20)), page: 1, pageSize: 20 }; }
@@ -31,7 +183,7 @@ async function mockRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
     if (method === 'PATCH') data.profile = { ...data.profile, display_name: body.display_name ?? data.profile.display_name, phone: body.phone ?? data.profile.phone, availability_status: body.availability_status ?? data.profile.availability_status, leave_end_date: body.leave_end_date ?? data.profile.leave_end_date, preferences: body.preferences ?? data.profile.preferences };
     writeMockData(data); return data.profile as T;
   }
-  if (cleanPath === '/team') return { items: data.team } as T;
+  if (cleanPath === '/team') return { items: demoTeamRows(data.team) } as T;
   if (cleanPath === '/invites' && method === 'POST') {
     data.team = [...data.team, { user_id: `mock-member-${Date.now()}`, display_name: body.name, email: body.email, role: body.role, status: 'invited', availability_status: 'active' }];
     writeMockData(data); return { ok: true } as T;
@@ -39,26 +191,28 @@ async function mockRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   const teamDelete = cleanPath.match(/^\/team\/([^/]+)\/delete$/);
   if (teamDelete && method === 'DELETE') { data.team = data.team.filter(item => item.user_id !== decodeURIComponent(teamDelete[1])); writeMockData(data); return { ok: true } as T; }
   if (cleanPath === '/connections') return { items: data.connections } as T;
-  if (cleanPath === '/analytics') return { enquiries: data.enquiries.length, newEnquiries: data.enquiries.filter(item => item.stage === 'new').length, quoted: 0, won: 0, channels: [] } as T;
-  if (cleanPath === '/enquiries/unread-count') return { count: data.enquiries.filter(item => item.stage === 'new').length } as T;
+  const visibleEnquiries = visibleDemoEnquiries(data);
+  if (cleanPath === '/analytics') return buildAnalyticsResponse(path) as T;
+  if (cleanPath === '/enquiries/unread-count') return { count: visibleEnquiries.filter(item => item.stage === 'new').length } as T;
   if (cleanPath === '/walkins/missed-visitors') return { items: [] } as T;
   if (cleanPath === '/enquiries') {
     if (method === 'POST') {
-      const created = { ...body, id: `mock-enquiry-${Date.now()}`, enquiryNumber: `ENQ-${new Date().getFullYear()}-${String(data.enquiries.length + 1001)}`, createdAt: new Date().toISOString(), stage: body.stage ?? 'new', recording: null };
+      const member = activeDemoMember();
+      const created = { ...body, id: `mock-enquiry-${Date.now()}`, enquiryNumber: `ENQ-${new Date().getFullYear()}-${String(data.enquiries.length + 1001)}`, createdAt: new Date().toISOString(), stage: body.stage ?? 'new', assignedMemberId: member.id, assignedSalesperson: member.name, recording: null };
       data.enquiries = [created as any, ...data.enquiries]; writeMockData(data); return created as T;
     }
     const query = new URLSearchParams(path.split('?')[1] ?? '').get('query')?.toLowerCase() ?? '';
-    return mockPage(data.enquiries.filter(item => !query || `${item.customerName} ${item.phone} ${item.summary}`.toLowerCase().includes(query))) as T;
+    return mockPage(visibleEnquiries.filter(item => !query || `${item.customerName} ${item.phone} ${item.summary}`.toLowerCase().includes(query))) as T;
   }
   const enquiryMatch = cleanPath.match(/^\/enquiries\/([^/]+)(?:\/state)?$/);
   if (enquiryMatch) {
-    const item = data.enquiries.find(entry => entry.id === decodeURIComponent(enquiryMatch[1]));
+    const item = visibleEnquiries.find(entry => entry.id === decodeURIComponent(enquiryMatch[1]));
     if (!item) throw new ApiError(404, 'not_found', 'Enquiry not found.');
     if (method === 'PATCH') Object.assign(item, cleanPath.endsWith('/state') ? { stage: body.stage } : body);
     writeMockData(data); return item as T;
   }
-  if (cleanPath === '/conversations') return mockPage(data.conversations) as T;
-  if (cleanPath.startsWith('/conversations/')) return data.conversations.find(item => item.id === cleanPath.split('/')[2]) as T;
+  if (cleanPath === '/conversations') return mockPage(data.conversations.filter(item => visibleEnquiries.some(enquiry => enquiry.conversationId === item.id || enquiry.customerName === item.customer_name_snapshot))) as T;
+  if (cleanPath.startsWith('/conversations/')) return data.conversations.find(item => item.id === cleanPath.split('/')[2] && visibleEnquiries.some(enquiry => enquiry.conversationId === item.id || enquiry.customerName === item.customer_name_snapshot)) as T;
   if (cleanPath === '/workspaces') return { items: [] } as T;
   return {} as T;
 }

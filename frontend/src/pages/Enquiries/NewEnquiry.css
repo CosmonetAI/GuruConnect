@@ -199,7 +199,7 @@
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 15px 16px;
 }
 
@@ -659,6 +659,7 @@
 @media (max-width: 1150px) {
   .enquiry-workspace { grid-template-columns: minmax(0, 1fr) 255px; gap: 14px; }
   .enquiry-card { padding: 18px; }
+  .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recorder-panel { grid-template-columns: 70px minmax(0, 1fr); }
   .recorder-visual { width: 66px; height: 66px; }
   .microphone-orbit { width: 60px; height: 60px; }

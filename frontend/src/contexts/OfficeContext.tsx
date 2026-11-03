@@ -4,12 +4,12 @@ import { configured, localMode, request, supabase, message, json, type Workspace
 
 type DemoAccount = { id: string; email: string; name: string; role: Workspace['role']; branch: string; phone: string }
 const demoAccounts: DemoAccount[] = [
-  { id: 'owner-akshat', email: 'owner1@demo.in', name: 'Akshat Saxena', role: 'owner', branch: 'Bengaluru Central', phone: '9311854768' },
-  { id: 'owner-meera', email: 'owner2@demo.in', name: 'Meera Iyer', role: 'owner', branch: 'Mysuru', phone: '9880112200' },
-  ...Array.from({ length: 22 }, (_, index) => ({ id: `sales-${index + 1}`, email: `sales${String(index + 1).padStart(2, '0')}@demo.in`, name: ['Ravi Kumar', 'Sumanth Reddy', 'Priya Gupta', 'Sneha Kapoor'][index % 4], role: 'salesperson' as const, branch: ['Bengaluru Central', 'Mysuru', 'Hyderabad'][index % 3], phone: `987650${String(1000 + index).slice(-4)}` })),
-  { id: 'reception-nisha', email: 'receptionist1@demo.in', name: 'Nisha Rao', role: 'receptionist', branch: 'Bengaluru Central', phone: '9876501200' },
-  { id: 'reception-kavya', email: 'receptionist2@demo.in', name: 'Kavya Menon', role: 'receptionist', branch: 'Mysuru', phone: '9876501210' },
-  { id: 'reception-arjun', email: 'receptionist3@demo.in', name: 'Arjun Das', role: 'receptionist', branch: 'Hyderabad', phone: '9876501220' }
+  { id: 'owner-akshat', email: 'akshat.saxena@zoho.in', name: 'Akshat Saxena', role: 'owner', branch: 'Bengaluru Central', phone: '9311854768' },
+  { id: 'owner-meera', email: 'meera.iyer@zoho.in', name: 'Meera Iyer', role: 'owner', branch: 'Mysuru', phone: '9880112200' },
+  ...Array.from({ length: 22 }, (_, index) => ({ id: `sales-${index + 1}`, email: `${['ravi.kumar', 'sumanth.reddy', 'priya.gupta', 'sneha.kapoor', 'arjun.mehta', 'neha.sharma', 'karan.malhotra', 'divya.nair', 'aditya.rao', 'rohan.bhat', 'pooja.iyer', 'manish.verma', 'kavita.joshi', 'nikhil.jain', 'aditi.menon', 'varun.shah', 'meenal.patil', 'sameer.khan', 'ishita.bose', 'rahul.nair', 'tanvi.kulkarni', 'mohit.sethi'][index]}@zoho.in`, name: ['Ravi Kumar', 'Sumanth Reddy', 'Priya Gupta', 'Sneha Kapoor', 'Arjun Mehta', 'Neha Sharma', 'Karan Malhotra', 'Divya Nair', 'Aditya Rao', 'Rohan Bhat', 'Pooja Iyer', 'Manish Verma', 'Kavita Joshi', 'Nikhil Jain', 'Aditi Menon', 'Varun Shah', 'Meenal Patil', 'Sameer Khan', 'Ishita Bose', 'Rahul Nair', 'Tanvi Kulkarni', 'Mohit Sethi'][index], role: 'salesperson' as const, branch: ['Bengaluru Central', 'Mysuru', 'Hyderabad'][index % 3], phone: `987650${String(1000 + index).slice(-4)}` })),
+  { id: 'reception-nisha', email: 'nisha.rao@zoho.in', name: 'Nisha Rao', role: 'receptionist', branch: 'Bengaluru Central', phone: '9876501200' },
+  { id: 'reception-kavya', email: 'kavya.menon@zoho.in', name: 'Kavya Menon', role: 'receptionist', branch: 'Mysuru', phone: '9876501210' },
+  { id: 'reception-arjun', email: 'arjun.das@zoho.in', name: 'Arjun Das', role: 'receptionist', branch: 'Hyderabad', phone: '9876501220' }
 ]
 const accountUser = (account: DemoAccount) => ({ id: account.id, email: account.email, app_metadata: {}, user_metadata: { display_name: account.name }, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' } as User)
 const localUser = accountUser(demoAccounts[0])

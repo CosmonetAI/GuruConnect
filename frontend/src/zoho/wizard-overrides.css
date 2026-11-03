@@ -143,7 +143,7 @@
 .contact-modal input { width: 100%; box-sizing: border-box; }
 .quote-modal { max-height: 88vh; overflow-y: auto; }
 .quote-modal textarea { width: 100%; min-height: 58px; resize: vertical; border: 1px solid #d5dfeb; border-radius: 8px; padding: 11px; font: inherit; box-sizing: border-box; }
-.form-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-two { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .lookup-field { position: relative; }
 .lookup-input-row { display: flex; gap: 8px; align-items: stretch; }
 .lookup-input-row input { flex: 1; min-width: 0; }
@@ -172,6 +172,7 @@
 @media (max-width: 600px) { .form-two, .line-item-meta { grid-template-columns: 1fr; } .contact-modal { padding: 20px; } .form-section-heading { display: block; } }
 
 @media (max-width: 900px) {
+  .form-two, .contact-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .steps { grid-template-columns: 1fr 1fr; }
   .portal-panel { grid-template-columns: 1fr; }
   .portal-details { border-left: 0; border-top: 1px solid #dbe3ed; }
@@ -245,7 +246,8 @@
 .contact-subsection .form-section-heading { margin-bottom: 13px; }
 .contact-empty-row { padding: 13px 15px; border: 1px dashed #cbdbea; border-radius: 10px; color: #7890aa; background: #f8fbff; font-size: 12px; }
 .structured-row { margin-top: 12px; padding: 16px; border: 1px solid #dbe7f2; border-radius: 14px; background: #fff; box-shadow: 0 4px 14px rgba(26, 66, 104, .05); }
-.contact-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
+.contact-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px 16px; }
+@media (max-width: 900px) { .form-two, .contact-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .structured-row-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #edf2f7; }
 .structured-inline-row { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(220px, 1fr) auto; gap: 13px; align-items: end; margin-top: 12px; padding: 13px; border: 1px solid #dbe7f2; border-radius: 12px; background: #fff; }
 .structured-inline-row .contact-field { min-width: 0; }
@@ -259,7 +261,8 @@
 @media (max-width: 720px) { .contact-modal { padding: 24px 20px 20px; } .contact-form-section { margin: 0 -20px; padding: 20px; } .contact-form-grid, .structured-inline-row { grid-template-columns: 1fr; } .contact-modal .modal-actions { bottom: -20px; margin: 16px -20px -20px; padding: 14px 20px 20px; } }
 
 /* Shared Zoho record cards: one visual system for products, contacts and documents. */
-.product-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+.product-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+.contacts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .product-card {
   position: relative;
   display: flex;
@@ -281,6 +284,23 @@
 .product-card-actions { margin-top: auto; padding-top: 16px; }
 .product-card-actions button { border-radius: 9px; padding: 8px 11px; }
 .product-card:has(> .modal-backdrop) { transform: none; overflow: visible; }
+.products-heading-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.product-create-success { margin: 14px 0; padding: 12px 14px; border: 1px solid #b7e4ce; border-radius: 9px; background: #effaf4; color: #16734a; font-size: 13px; }
+.item-create-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(13, 42, 80, .38); }
+.item-create-modal { width: min(760px, 100%); max-height: min(90vh, 780px); overflow: auto; padding: 26px; border: 1px solid #dce7f2; border-radius: 16px; background: #fff; box-shadow: 0 24px 70px rgba(19, 45, 75, .25); }
+.item-create-header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #e6edf4; }
+.item-create-header h3 { margin: 5px 0 5px; color: #17385e; font-size: 24px; }
+.item-create-header p { margin: 0; color: #71839b; font-size: 13px; }
+.item-create-header small { color: #8097b2; font-size: 11px; letter-spacing: 1px; font-weight: 800; }
+.item-create-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px 13px; padding: 20px 0; }
+.item-create-grid label { display: grid; gap: 6px; color: #526a84; font-size: 12px; font-weight: 700; }
+.item-create-grid input, .item-create-grid select, .item-create-grid textarea { width: 100%; border: 1px solid #d4e0ec; border-radius: 8px; padding: 10px 11px; color: #233f5e; background: #fff; font: inherit; font-size: 13px; }
+.item-create-grid textarea { min-height: 88px; resize: vertical; }
+.item-create-wide { grid-column: 1 / -1; }
+.item-create-footer { display: flex; justify-content: flex-end; gap: 9px; padding-top: 17px; border-top: 1px solid #e6edf4; }
+.item-create-footer .secondary { border: 1px solid #cbdbea; border-radius: 8px; padding: 10px 15px; background: #fff; color: #1762a5; font-weight: 700; cursor: pointer; }
+@media (max-width: 1100px) { .product-grid, .contacts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .item-create-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .products-heading-actions { justify-content: flex-start; } .product-grid, .contacts-grid, .item-create-grid { grid-template-columns: 1fr; } .item-create-wide { grid-column: auto; } .item-create-backdrop { padding: 10px; } .item-create-modal { padding: 20px; } }
 
 /* Section guidance is intentionally visible before the fields begin. */
 .document-form .form-section-heading { align-items: flex-start; }

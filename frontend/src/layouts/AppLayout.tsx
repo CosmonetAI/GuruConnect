@@ -2,6 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import Sidebar from '../components/Sidebar/Sidebar'
 import Topbar from '../components/Topbar/Topbar'
+import DemoModePill from '../components/DemoModePill/DemoModePill'
 import { useOffice } from '../contexts/OfficeContext'
 
 export default function AppLayout() {
@@ -15,6 +16,7 @@ export default function AppLayout() {
       <div className="app-main">
         <Topbar />
         <main className="app-content" id="main-content" tabIndex={-1}>
+          {!location.pathname.startsWith('/enquiries') && <div className="app-global-demo-pill"><DemoModePill /></div>}
           <Outlet key={`${user?.id}/${workspace?.id}/${workspace?.member_id ?? user?.id}`} />
         </main>
       </div>

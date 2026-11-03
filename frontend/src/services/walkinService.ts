@@ -1,9 +1,11 @@
 import { json, localMode, request } from './officeApi'
 import mockData from './mock-data.json'
+import { call as zohoCall } from '../zoho/shared/api.js'
 import type { RegisterWalkinInput, WalkinAgent, WalkinFilters, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../types/walkin'
 
 export interface WalkinPage<T> { items: T[]; total: number; page: number; pageSize: number }
 export interface WalkinVisitPage extends WalkinPage<WalkinVisit> { summary: { waiting: number; assigned: number; discussion: number; requirements: number; converted: number } }
+export interface DemoCustomer { id: string; name: string; phone: string; email: string; company: string; branch: string; assigned: string }
 const demoAgentId = 'demo-agent-sneha'
 const demoAgents: WalkinAgent[] = [
   { id: demoAgentId, name: 'Sneha Rao', department: 'Sales', specialization: 'Product solutions', availability: 'Available', openVisits: 0 },
@@ -12,6 +14,19 @@ const demoAgents: WalkinAgent[] = [
 ]
 const closedStatuses = ['Completed', 'Cancelled', 'Converted to Enquiry']
 export function isWalkinDemoMode() { return localMode }
+export async function listDemoCustomers(): Promise<DemoCustomer[]> {
+  if (!localMode) return []
+  const result = await zohoCall('/contacts') as { contacts?: Array<Record<string, unknown>> }
+  return (result.contacts || []).map((contact) => ({
+    id: String(contact.contact_id || ''),
+    name: String(contact.contact_name || ''),
+    phone: String(contact.mobile || ''),
+    email: String(contact.email || ''),
+    company: String(contact.company || contact.company_name || 'Individual customer'),
+    branch: String(contact.branch || 'Demo workspace'),
+    assigned: String(contact.assigned || 'Sales team'),
+  })).filter((contact) => contact.id && contact.name)
+}
 function scope(workspaceId: string) {
   if (!workspaceId) throw new Error('Choose a workspace before loading walk-in visits.')
   return workspaceId

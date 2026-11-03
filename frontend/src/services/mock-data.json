@@ -7,26 +7,26 @@
     "preferences": {}
   },
   "team": [
-    { "user_id": "owner-akshat", "display_name": "Akshat Saxena", "email": "owner1@demo.in", "role": "owner", "status": "active", "availability_status": "active" },
-    { "user_id": "owner-meera", "display_name": "Meera Iyer", "email": "owner2@demo.in", "role": "owner", "status": "active", "availability_status": "active" },
-    { "user_id": "sales-ravi", "display_name": "Ravi Kumar", "email": "sales01@demo.in", "role": "salesperson", "status": "active", "availability_status": "active" },
-    { "user_id": "sales-sumanth", "display_name": "Sumanth Reddy", "email": "sales02@demo.in", "role": "salesperson", "status": "active", "availability_status": "active" },
-    { "user_id": "reception-nisha", "display_name": "Nisha Rao", "email": "receptionist1@demo.in", "role": "receptionist", "status": "active", "availability_status": "active" }
+    { "user_id": "owner-akshat", "display_name": "Akshat Saxena", "email": "akshat.saxena@zoho.in", "role": "owner", "status": "active", "availability_status": "active" },
+    { "user_id": "owner-meera", "display_name": "Meera Iyer", "email": "meera.iyer@zoho.in", "role": "owner", "status": "active", "availability_status": "active" },
+    { "user_id": "sales-ravi", "display_name": "Ravi Kumar", "email": "ravi.kumar@zoho.in", "role": "salesperson", "status": "active", "availability_status": "active" },
+    { "user_id": "sales-sumanth", "display_name": "Sumanth Reddy", "email": "sumanth.reddy@zoho.in", "role": "salesperson", "status": "active", "availability_status": "active" },
+    { "user_id": "reception-nisha", "display_name": "Nisha Rao", "email": "nisha.rao@zoho.in", "role": "receptionist", "status": "active", "availability_status": "active" }
   ],
   "enquiries": [
-    { "id": "enquiry-akshat", "enquiryNumber": "ENQ-2026-1001", "customerName": "Akshat Saxena", "phone": "9311854768", "email": "akshat@example.com", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "in_process", "assignedSalesperson": "Ravi Kumar", "product": "Aero BLDC Ceiling Fan 1200mm", "summary": "Looking for a quiet and energy efficient ceiling fan.", "createdAt": "2026-10-30T09:20:00Z", "conversationId": "conversation-akshat", "recording": { "uploadState": "saved", "transcriptionState": "complete", "englishState": "complete" } },
-    { "id": "enquiry-rahul", "enquiryNumber": "ENQ-2026-1002", "customerName": "Rahul Sharma", "phone": "9311854700", "email": "rahul@example.com", "channel": "Incoming Call", "branch": "Bengaluru Central", "stage": "new", "assignedSalesperson": "Sumanth Reddy", "product": "Ceiling fan", "summary": "Needs a quote for 10 fans.", "createdAt": "2026-10-30T08:10:00Z", "conversationId": null, "recording": null },
-    { "id": "enquiry-priya", "enquiryNumber": "ENQ-2026-1003", "customerName": "Priya Gupta", "phone": "9876543210", "email": "priya@example.com", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "new", "assignedSalesperson": "Ravi Kumar", "product": "Luxe Ceiling Fan 1200mm with LED", "summary": "Comparing different models.", "createdAt": "2026-10-29T11:30:00Z", "conversationId": null, "recording": null },
-    { "id": "enquiry-rakesh", "enquiryNumber": "ENQ-2026-1004", "customerName": "Rakesh Kumar", "phone": "9812345678", "email": "rakesh@example.com", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "closed", "assignedSalesperson": "Sumanth Reddy", "product": "Ceiling fans", "summary": "Need 5 ceiling fans for office.", "createdAt": "2026-10-28T10:00:00Z", "conversationId": null, "recording": null }
+    { "id": "enquiry-akshat", "enquiryNumber": "ENQ-2026-1001", "customerName": "Akshat Saxena", "phone": "9311854768", "email": "akshat.saxena@zoho.in", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "in_process", "assignedSalesperson": "Ravi Kumar", "product": "Aero BLDC Ceiling Fan 1200mm", "summary": "Looking for a quiet and energy efficient ceiling fan.", "createdAt": "2026-10-30T09:20:00Z", "conversationId": "conversation-akshat", "recording": { "uploadState": "saved", "transcriptionState": "complete", "englishState": "complete" } },
+    { "id": "enquiry-rahul", "enquiryNumber": "ENQ-2026-1002", "customerName": "Rahul Sharma", "phone": "9311854700", "email": "rahul.sharma@zoho.in", "channel": "Incoming Call", "branch": "Bengaluru Central", "stage": "new", "assignedSalesperson": "Sumanth Reddy", "product": "Ceiling fan", "summary": "Needs a quote for 10 fans.", "createdAt": "2026-10-30T08:10:00Z", "conversationId": null, "recording": null },
+    { "id": "enquiry-priya", "enquiryNumber": "ENQ-2026-1003", "customerName": "Priya Gupta", "phone": "9876543210", "email": "priya.gupta@zoho.in", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "new", "assignedSalesperson": "Ravi Kumar", "product": "Luxe Ceiling Fan 1200mm with LED", "summary": "Comparing different models.", "createdAt": "2026-10-29T11:30:00Z", "conversationId": null, "recording": null },
+    { "id": "enquiry-rakesh", "enquiryNumber": "ENQ-2026-1004", "customerName": "Rakesh Kumar", "phone": "9812345678", "email": "rakesh.kumar@zoho.in", "channel": "Retail Walk-in", "branch": "Bengaluru Central", "stage": "closed", "assignedSalesperson": "Sumanth Reddy", "product": "Ceiling fans", "summary": "Need 5 ceiling fans for office.", "createdAt": "2026-10-28T10:00:00Z", "conversationId": null, "recording": null }
   ],
   "conversations": [
     { "id": "conversation-akshat", "customer_name_snapshot": "Akshat Saxena", "salesperson_name_snapshot": "Ravi Kumar", "title": "Ceiling fan enquiry", "phone": "9311854768", "created_at": "2026-10-30T09:20:00Z", "capture_state": "saved", "upload_state": "saved", "transcription_state": "complete", "english_state": "complete", "speaker_state": "complete", "finalization_state": "complete", "source_language": "English", "duration_seconds": 192 }
   ],
   "walkins": [
-    { "id": "walkin-akshat", "visitNumber": "WI-20261030-AKSHAT", "customerName": "Akshat Saxena", "mobileNumber": "9311854768", "email": "akshat@example.com", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-sneha", "assignedAgentName": "Sneha Rao", "assignmentNote": "Interested in ceiling fans", "status": "In Discussion", "checkInAt": "2026-10-30T09:20:00Z", "assignedAt": "2026-10-30T09:22:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-30T09:20:00Z", "updatedAt": "2026-10-30T09:22:00Z" },
-    { "id": "walkin-rahul", "visitNumber": "WI-20261030-RAHUL", "customerName": "Rahul Sharma", "mobileNumber": "9311854700", "email": "rahul@example.com", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-rajesh", "assignedAgentName": "Rajesh Kumar", "assignmentNote": "Quote needed for fans", "status": "Assigned", "checkInAt": "2026-10-30T08:10:00Z", "assignedAt": "2026-10-30T08:14:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-30T08:10:00Z", "updatedAt": "2026-10-30T08:14:00Z" },
-    { "id": "walkin-priya", "visitNumber": "WI-20261029-PRIYA", "customerName": "Priya Gupta", "mobileNumber": "9876543210", "email": "priya@example.com", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-sneha", "assignedAgentName": "Sneha Rao", "assignmentNote": "Comparing models", "status": "Completed", "checkInAt": "2026-10-29T11:30:00Z", "assignedAt": "2026-10-29T11:35:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-29T11:30:00Z", "updatedAt": "2026-10-29T12:10:00Z" },
-    { "id": "walkin-rakesh", "visitNumber": "WI-20261028-RAKESH", "customerName": "Rakesh Kumar", "mobileNumber": "9812345678", "email": "rakesh@example.com", "purpose": "Bulk enquiry", "assignedAgentId": null, "assignedAgentName": null, "assignmentNote": "", "status": "Waiting for Assignment", "checkInAt": "2026-10-28T10:00:00Z", "assignedAt": null, "convertedEnquiryReference": null, "createdAt": "2026-10-28T10:00:00Z", "updatedAt": "2026-10-28T10:00:00Z" }
+    { "id": "walkin-akshat", "visitNumber": "WI-20261030-AKSHAT", "customerName": "Akshat Saxena", "mobileNumber": "9311854768", "email": "akshat.saxena@zoho.in", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-sneha", "assignedAgentName": "Sneha Rao", "assignmentNote": "Interested in ceiling fans", "status": "In Discussion", "checkInAt": "2026-10-30T09:20:00Z", "assignedAt": "2026-10-30T09:22:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-30T09:20:00Z", "updatedAt": "2026-10-30T09:22:00Z" },
+    { "id": "walkin-rahul", "visitNumber": "WI-20261030-RAHUL", "customerName": "Rahul Sharma", "mobileNumber": "9311854700", "email": "rahul.sharma@zoho.in", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-rajesh", "assignedAgentName": "Rajesh Kumar", "assignmentNote": "Quote needed for fans", "status": "Assigned", "checkInAt": "2026-10-30T08:10:00Z", "assignedAt": "2026-10-30T08:14:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-30T08:10:00Z", "updatedAt": "2026-10-30T08:10:00Z" },
+    { "id": "walkin-priya", "visitNumber": "WI-20261029-PRIYA", "customerName": "Priya Gupta", "mobileNumber": "9876543210", "email": "priya.gupta@zoho.in", "purpose": "Product enquiry", "assignedAgentId": "demo-agent-sneha", "assignedAgentName": "Sneha Rao", "assignmentNote": "Comparing models", "status": "Completed", "checkInAt": "2026-10-29T11:30:00Z", "assignedAt": "2026-10-29T11:35:00Z", "convertedEnquiryReference": null, "createdAt": "2026-10-29T11:30:00Z", "updatedAt": "2026-10-29T12:10:00Z" },
+    { "id": "walkin-rakesh", "visitNumber": "WI-20261028-RAKESH", "customerName": "Rakesh Kumar", "mobileNumber": "9812345678", "email": "rakesh.kumar@zoho.in", "purpose": "Bulk enquiry", "assignedAgentId": null, "assignedAgentName": null, "assignmentNote": "", "status": "Waiting for Assignment", "checkInAt": "2026-10-28T10:00:00Z", "assignedAt": null, "convertedEnquiryReference": null, "createdAt": "2026-10-28T10:00:00Z", "updatedAt": "2026-10-28T10:00:00Z" }
   ],
   "products": [
     { "item_id": "item-fan-1200", "name": "Aero BLDC Ceiling Fan 1200mm", "sku": "FAN-BLDC-1200", "rate": 4499, "status": "active", "stock_on_hand": 24, "description": "Energy efficient BLDC ceiling fan with remote control.", "unit": "pcs" },
@@ -35,10 +35,10 @@
     { "item_id": "item-pedestal", "name": "Crompton HighFlo Pedestal Fan", "sku": "FAN-HIGH-400", "rate": 3499, "status": "active", "stock_on_hand": 8, "description": "400 mm pedestal fan for high air delivery.", "unit": "pcs" }
   ],
   "contacts": [
-    { "contact_id": "contact-akshat", "contact_name": "Akshat Saxena", "company_name": "Individual customer", "contact_type": "customer", "mobile": "9311854768", "email": "akshat@example.com", "status": "active" },
-    { "contact_id": "contact-rahul", "contact_name": "Rahul Sharma", "company_name": "Rahul Interiors", "contact_type": "customer", "mobile": "9311854700", "email": "rahul@example.com", "status": "active" },
-    { "contact_id": "contact-priya", "contact_name": "Priya Gupta", "company_name": "Priya Home Studio", "contact_type": "customer", "mobile": "9876543210", "email": "priya@example.com", "status": "active" },
-    { "contact_id": "contact-abc", "contact_name": "ABC Industries", "company_name": "ABC Industries", "contact_type": "customer", "mobile": "9899912345", "email": "purchase@abc.example", "status": "active" }
+    { "contact_id": "contact-akshat", "contact_name": "Akshat Saxena", "company_name": "Individual customer", "contact_type": "customer", "mobile": "9311854768", "email": "akshat.saxena@zoho.in", "status": "active" },
+    { "contact_id": "contact-rahul", "contact_name": "Rahul Sharma", "company_name": "Rahul Interiors", "contact_type": "customer", "mobile": "9311854700", "email": "rahul.sharma@zoho.in", "status": "active" },
+    { "contact_id": "contact-priya", "contact_name": "Priya Gupta", "company_name": "Priya Home Studio", "contact_type": "customer", "mobile": "9876543210", "email": "priya.gupta@zoho.in", "status": "active" },
+    { "contact_id": "contact-abc", "contact_name": "ABC Industries", "company_name": "ABC Industries", "contact_type": "customer", "mobile": "9899912345", "email": "purchasing@abcindustry.in", "status": "active" }
   ],
   "quotes": [
     { "estimate_id": "quote-1001", "estimate_number": "QT-2026-1025", "customer_name": "Akshat Saxena", "date": "2026-10-30", "status": "sent", "total": 12448, "currency_symbol": "₹", "line_items": [] },
@@ -64,5 +64,18 @@
   "connections": [
     { "id": "mock-speech", "engine_id": "elevenlabs", "state": "disabled", "enabled": false, "generation": 1 },
     { "id": "mock-translation", "engine_id": "openai-translator", "state": "disabled", "enabled": false, "generation": 1 }
-  ]
+  ],
+  "analytics": {
+    "year": 2025,
+    "default_from": "2025-01-01",
+    "default_to": "present",
+    "channels": ["Retail Walk-in", "Incoming Call", "Referral", "Email", "WhatsApp"],
+    "granularities": ["day", "week", "month", "quarter", "half-year", "year"],
+    "seed": {
+      "base_calls": 7,
+      "seasonality": [0.78, 0.84, 0.91, 0.97, 1.08, 1.16, 1.11, 1.04, 0.99, 1.13, 1.22, 1.29],
+      "member_offsets": [2, 5, 1, 4, 3, 6, 0, 7, 2, 4, 1, 5],
+      "conversion_rates": [0.12, 0.16, 0.19, 0.23, 0.14, 0.21]
+    }
+  }
 }

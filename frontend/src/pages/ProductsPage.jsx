@@ -4,32 +4,32 @@ import { useZohoDateFilter, useGlobalPager } from '../shared/hooks';
 import { ProductCard } from '../components/Records';
 import PageLoader from '../components/PageLoader';
 
+const emptyDraft = () => ({ item_type: 'inventory', name: '', sku: '', unit: 'pcs', rate: '', purchase_rate: '', stock_on_hand: '', reorder_level: '', tax_percentage: '18', description: '' });
+
 export function ProductsPage({ setError }) {
   const [query, setQuery] = useState('');
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createdNotice, setCreatedNotice] = useState('');
+  const [draft, setDraft] = useState(emptyDraft);
   const date = useZohoDateFilter();
   const [page, setPage] = useState(1); const [hasMore, setHasMore] = useState(false);
+
   useEffect(() => { if (query.trim()) return; let cancelled = false; setBusy(true); call(withDate('/products?page=1', date)).then(result => { if (!cancelled) { setItems(result.items || []); setHasMore(Boolean(result.has_more)); setPage(1); } }).catch(e => !cancelled && setError(e.message)).finally(() => !cancelled && setBusy(false)); return () => { cancelled = true; }; }, [date]);
   const showMore = async () => { if (!hasMore || busy) return; setBusy(true); try { const result = await call(withDate(`/products?page=${page + 1}&search=${encodeURIComponent(query.trim())}`, date)); setItems(current => [...current, ...(result.items || [])]); setPage(page + 1); setHasMore(Boolean(result.has_more)); } catch (e) { setError(e.message); } finally { setBusy(false); } };
   useGlobalPager(showMore, hasMore, busy);
-  useEffect(() => {
-    if (!query.trim() || !/\s$/.test(query)) return;
-    const timer = setTimeout(async () => {
-      setBusy(true); setError('');
-      try { const result = await call(withDate(`/products?page=1&search=${encodeURIComponent(query.trim())}`, date)); setItems(result.items || []); setPage(1); setHasMore(Boolean(result.has_more)); }
-      catch (e) { setError(e.message); setItems([]); }
-      finally { setBusy(false); }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [query, date]);
-  const search = async event => {
-    event?.preventDefault();
-    if (!query.trim()) { setItems([]); return; }
-    setBusy(true); setError('');
-    try { const result = await call(withDate(`/products?page=1&search=${encodeURIComponent(query.trim())}`, date)); setItems(result.items || []); setPage(1); setHasMore(Boolean(result.has_more)); }
-    catch (e) { setError(e.message); setItems([]); }
-    finally { setBusy(false); }
-  };
-  return <section className="products-page"><div className="products-heading"><div><small>SALES CATALOGUE</small><h2>Product catalogue</h2><p>Find approved products, pricing, and availability while preparing a customer quotation or order.</p></div><span className="live-badge">● Frontend demo catalogue</span></div><form className="product-search" onSubmit={search}><input value={query.trim()} onChange={e => setQuery(e.target.value)} placeholder="Search by product, description, or SKU…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search catalogue'}</button></form>{!busy && <p className="product-count">{items.length} active {items.length === 1 ? 'product' : 'products'} available</p>} {!query.trim() && busy ? <PageLoader kind="products" label="Loading product catalogue" detail="Finding the latest approved products and pricing." /> : !query.trim() && !items.length ? <div className="product-empty">No active products are available yet.</div> : !busy && !items.length ? <div className="product-empty">{query.trim() ? `No active products matched “${query.trim()}”.` : 'No active products are available yet.'}</div> : <div className="product-grid">{items.map(item => <ProductCard item={item} key={item.item_id || item.sku || item.name} />)}</div>}</section>;
+  useEffect(() => { if (!query.trim() || !/\s$/.test(query)) return; const timer = setTimeout(async () => { setBusy(true); setError(''); try { const result = await call(withDate(`/products?page=1&search=${encodeURIComponent(query.trim())}`, date)); setItems(result.items || []); setPage(1); setHasMore(Boolean(result.has_more)); } catch (e) { setError(e.message); setItems([]); } finally { setBusy(false); } }, 350); return () => clearTimeout(timer); }, [query, date]);
+  const search = async event => { event?.preventDefault(); if (!query.trim()) { setItems([]); return; } setBusy(true); setError(''); try { const result = await call(withDate(`/products?page=1&search=${encodeURIComponent(query.trim())}`, date)); setItems(result.items || []); setPage(1); setHasMore(Boolean(result.has_more)); } catch (e) { setError(e.message); setItems([]); } finally { setBusy(false); } };
+  const updateDraft = (key, value) => setDraft(current => ({ ...current, [key]: value }));
+  const createItem = async event => { event.preventDefault(); setCreating(true); setCreatedNotice(''); setError(''); try { const result = await call('/products', { method: 'POST', body: JSON.stringify(draft) }); const item = result.item; setItems(current => [item, ...current]); setShowCreate(false); setCreatedNotice(`${item.name} was added to the catalogue and is available in customer sessions.`); setDraft(emptyDraft()); } catch (e) { setError(e.message); } finally { setCreating(false); } };
+  return <section className="products-page">
+    <div className="products-heading"><div><small>SALES CATALOGUE</small><h2>Product catalogue</h2><p>Find approved products, pricing, and availability while preparing a customer quotation or order.</p></div><div className="products-heading-actions"><span className="live-badge">Frontend demo catalogue</span><button type="button" className="primary" onClick={() => setShowCreate(true)}>+ New item</button></div></div>
+    {createdNotice && <div className="product-create-success" role="status">{createdNotice}</div>}
+    <form className="product-search" onSubmit={search}><input value={query.trim()} onChange={e => setQuery(e.target.value)} placeholder="Search by product, description, or SKU..." /><button className="primary" disabled={busy}>{busy ? 'Searching...' : 'Search catalogue'}</button></form>
+    {!busy && <p className="product-count">{items.length} active {items.length === 1 ? 'product' : 'products'} available</p>}
+    {!query.trim() && busy ? <PageLoader kind="products" label="Loading product catalogue" detail="Finding the latest approved products and pricing." /> : !query.trim() && !items.length ? <div className="product-empty">No active products are available yet.</div> : !busy && !items.length ? <div className="product-empty">{query.trim() ? `No active products matched "${query.trim()}".` : 'No active products are available yet.'}</div> : <div className="product-grid">{items.map(item => <ProductCard item={item} key={item.item_id || item.sku || item.name} />)}</div>}
+    {showCreate && <div className="item-create-backdrop" role="presentation" onClick={() => !creating && setShowCreate(false)}><form className="item-create-modal" onSubmit={createItem} onClick={event => event.stopPropagation()}><div className="item-create-header"><div><small>ITEMS</small><h3>New item</h3><p>Add an item to your Zoho Books catalogue.</p></div><button type="button" className="modal-close" onClick={() => setShowCreate(false)} aria-label="Close">x</button></div><div className="item-create-grid"><label>Item type<select value={draft.item_type} onChange={e => updateDraft('item_type', e.target.value)}><option value="inventory">Inventory item</option><option value="service">Service</option><option value="non_inventory">Non-inventory</option></select></label><label>Item name<input required value={draft.name} onChange={e => updateDraft('name', e.target.value)} placeholder="e.g. Aero BLDC Ceiling Fan" /></label><label>SKU<input value={draft.sku} onChange={e => updateDraft('sku', e.target.value)} placeholder="e.g. FAN-AERO-1200" /></label><label>Unit<select value={draft.unit} onChange={e => updateDraft('unit', e.target.value)}><option>pcs</option><option>box</option><option>set</option><option>hour</option><option>kg</option></select></label><label>Selling price<input type="number" min="0" step="0.01" value={draft.rate} onChange={e => updateDraft('rate', e.target.value)} placeholder="0.00" /></label><label>Purchase price<input type="number" min="0" step="0.01" value={draft.purchase_rate} onChange={e => updateDraft('purchase_rate', e.target.value)} placeholder="0.00" /></label><label>Opening stock<input type="number" min="0" step="1" value={draft.stock_on_hand} onChange={e => updateDraft('stock_on_hand', e.target.value)} placeholder="0" /></label><label>Reorder level<input type="number" min="0" step="1" value={draft.reorder_level} onChange={e => updateDraft('reorder_level', e.target.value)} placeholder="0" /></label><label>Tax rate<input type="number" min="0" step="0.01" value={draft.tax_percentage} onChange={e => updateDraft('tax_percentage', e.target.value)} placeholder="18" /></label><label className="item-create-wide">Description<textarea value={draft.description} onChange={e => updateDraft('description', e.target.value)} placeholder="Describe the item, specifications, or sales notes" /></label></div><div className="item-create-footer"><button type="button" className="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</button><button type="submit" className="primary" disabled={creating}>{creating ? 'Saving item...' : 'Save item'}</button></div></form></div>}
+  </section>;
 }

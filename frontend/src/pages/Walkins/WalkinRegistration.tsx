@@ -3,7 +3,7 @@ import { useNavigate, useBlocker } from 'react-router-dom'
 import { CheckCircle2, ClipboardPlus, Mic, Square } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput } from '../../types/walkin'
-import { attachWalkinRecording, isWalkinDemoMode, registerWalkin } from '../../services/walkinService'
+import { attachWalkinRecording, isWalkinDemoMode, listDemoCustomers, registerWalkin, type DemoCustomer } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
 import './Walkins.css'
 
@@ -41,13 +41,22 @@ export default function WalkinRegistration() {
   const allowLeave = useRef(false)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const voiceFillStep = useRef(0)
+  const [demoCustomers, setDemoCustomers] = useState<DemoCustomer[]>([])
+  const [customerSearch, setCustomerSearch] = useState('')
+  const showCustomerDirectory = workspace?.role === 'receptionist'
   const blocker = useBlocker(() => !allowLeave.current && (voiceBusy || saving))
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
+  useEffect(() => {
+    if (!showCustomerDirectory) { setDemoCustomers([]); return }
+    let alive = true
+    void listDemoCustomers().then((customers) => { if (alive) setDemoCustomers(customers) }).catch(() => { if (alive) setDemoCustomers([]) })
+    return () => { alive = false }
+  }, [showCustomerDirectory, workspace?.member_id])
   useEffect(() => { if (blocker.state === 'blocked') { setError('End the visitor recording before leaving this page.'); blocker.reset() } }, [blocker])
   useEffect(() => {
     if (!voiceBusy) return
     const demoFields: Array<[keyof FormValues, string]> = [
-      ['customerName', 'Akshat Saxena'], ['mobileNumber', '9311854768'], ['email', 'akshat@example.com'],
+      ['customerName', 'Akshat Saxena'], ['mobileNumber', '9311854768'], ['email', 'akshat.saxena@zoho.in'],
       ['companyName', 'Cosmonet AI'], ['projectName', 'Bengaluru Central showroom'], ['preferredContactMethod', 'Phone'],
     ]
     const timer = window.setInterval(() => {
@@ -74,6 +83,13 @@ export default function WalkinRegistration() {
     setForm((previous) => ({ ...previous, [field]: value }))
     setSaveKey(crypto.randomUUID())
     setErrors((previous) => ({ ...previous, [field]: undefined }))
+  }
+
+  const chooseDemoCustomer = (customer: DemoCustomer) => {
+    if (voiceBusy || saving) return
+    setForm((previous) => ({ ...previous, customerName: customer.name, mobileNumber: customer.phone, email: customer.email, companyName: customer.company }))
+    setErrors({})
+    setSaveKey(crypto.randomUUID())
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -155,6 +171,16 @@ export default function WalkinRegistration() {
             <Field label="Preferred contact" name="preferredContactMethod" error={errors.preferredContactMethod}><input id="preferredContactMethod" value={form.preferredContactMethod} onChange={(event) => update('preferredContactMethod', event.target.value)} placeholder="Not provided" /></Field>
           </div>
         </section>
+
+        {showCustomerDirectory && <section className="walkin-customer-directory" aria-labelledby="demo-customer-directory-title">
+          <div className="walkin-section-heading-copy"><span>02</span><div><h2 id="demo-customer-directory-title">Demo customer directory</h2><p>Every unique demo customer is available to reception. Select one to prefill the visitor form.</p></div></div>
+          <input aria-label="Search demo customers" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Search name, phone, company, or assigned salesperson" />
+          <div className="walkin-customer-directory-count">{demoCustomers.filter((customer) => `${customer.name} ${customer.phone} ${customer.company} ${customer.assigned}`.toLowerCase().includes(customerSearch.trim().toLowerCase())).length} customers available</div>
+          <div className="walkin-customer-directory-list">
+            {demoCustomers.filter((customer) => `${customer.name} ${customer.phone} ${customer.company} ${customer.assigned}`.toLowerCase().includes(customerSearch.trim().toLowerCase())).map((customer) => <button key={customer.id} type="button" className="walkin-customer-directory-item" onClick={() => chooseDemoCustomer(customer)} disabled={voiceBusy || saving}><span className="walkin-customer-directory-avatar">{customer.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{customer.name}</strong><small>{customer.phone} · {customer.company}</small><small>{customer.branch} · Assigned to {customer.assigned}</small></span><span className="walkin-customer-directory-action">Use details</span></button>)}
+            {!demoCustomers.length && <span className="walkin-customer-directory-empty">Loading demo customer directory…</span>}
+          </div>
+        </section>}
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
         <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>

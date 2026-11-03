@@ -19,7 +19,7 @@
 .document-form .form-section-heading .section-marker { flex: 0 0 auto; margin-top: 1px; color: #7890aa; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .document-form-section h4 { margin: 0 0 4px; color: #12365e; font-size: 17px; letter-spacing: -.01em; }
 .document-form-section > p { margin: 0 0 16px; color: #7890aa; font-size: 12px; line-height: 1.5; }
-.document-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.document-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .document-field { display: flex; flex-direction: column; gap: 7px; color: #365676; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
 .document-field > span { display: flex; justify-content: space-between; gap: 8px; }
 .document-field small, .document-checkbox small, .document-checkboxes small { color: #8b9bae; font-size: 10px; font-weight: 500; letter-spacing: 0; }
@@ -41,4 +41,5 @@
 .document-form .line-item-row .document-field { min-width: 0; }
 .document-form .line-item .document-form-grid { margin-top: 12px; }
 .document-form .modal-actions { position: sticky; bottom: -24px; z-index: 2; margin: 20px -34px -24px; padding: 16px 34px 24px; border-top: 1px solid #e4ebf3; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); }
+@media(max-width:1000px){ .document-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media(max-width:720px){ .document-form { padding: 24px 20px 20px; } .document-form-section { margin: 0 -20px; padding: 20px; } .document-form-grid { grid-template-columns: 1fr; } .document-form .line-items-editor { margin: 0 -20px; padding: 20px; } .document-form .modal-actions { bottom: -20px; margin: 16px -20px -20px; padding: 14px 20px 20px; } }
