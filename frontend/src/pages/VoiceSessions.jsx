@@ -217,34 +217,131 @@ function CustomerModal({ contact, onClose }) {
   );
 }
 
-function CrmLeadPanel({ contact, identity, biginContactId, onOpen }) {
-  const stage = String(contact?.enquiry_stage || "new").replaceAll("_", " ");
-  const stageLabel = stage === "new" ? "Qualification" : stage.replace(/^./, (character) => character.toUpperCase());
-  const status = stage === "closed" ? "Closed" : stage === "in process" ? "In progress" : "Registered";
-  const phone = identity.phone || contact?.phone || "Not provided";
+const CRM_LEAD_TTL_MS = 5 * 60 * 1000;
+const crmLeadCache = new Map();
+export const resetCrmLeadCache = () => crmLeadCache.clear();
+const MATCH_LABELS = { phone: "Phone", email: "Email", "phone+email": "Phone and Email", "phone or email": "Phone or Email", "full name": "Full name", surname: "Surname" };
+
+// Shares one in-flight request per customer and reuses fresh results when the drawer reopens.
+function loadCrmLead(key, query, workspaceId, force) {
+  const hit = crmLeadCache.get(key);
+  if (!force && hit && (hit.promise || Date.now() - hit.at < CRM_LEAD_TTL_MS)) return hit.promise || Promise.resolve(hit.data);
+  const promise = call(`/bigin/crm-lead?${query}`, {}, workspaceId).then(
+    (data) => { crmLeadCache.set(key, { at: Date.now(), data }); return data; },
+    (error) => { crmLeadCache.delete(key); throw error; },
+  );
+  crmLeadCache.set(key, { promise });
+  return promise;
+}
+
+function autoSelectedDeal(result) {
+  const deals = result?.deals || [];
+  if (result?.status === "matched") return deals.length === 1 ? deals[0].deal_id : "";
+  if (result?.status !== "candidates" || !deals.length) return "";
+  const [top, next] = deals;
+  const strong = top.match?.reasons?.some((reason) => reason === "email" || reason === "phone");
+  return strong && (!next || next.match.score < top.match.score) ? top.deal_id : "";
+}
+
+function formatAmount(value) {
+  return value == null || value === "" ? "Not provided" : `₹${Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+}
+
+function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionId, onOpen }) {
+  const phone = identity.phone || contact?.phone || "";
+  const email = identity.email || contact?.email || "";
+  const name = identity.name || contact?.name || "";
+  const [state, setState] = useState({ phase: "loading", result: null, error: "" });
+  const [selectedId, setSelectedId] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const forceRefresh = useRef(false);
+  const query = new URLSearchParams({ name, phone, email }).toString();
+  const key = `${workspaceId}|${query}`;
+  useEffect(() => {
+    if (!phone && !email && !name) { setState({ phase: "empty", result: null, error: "" }); return undefined; }
+    let current = true;
+    setState({ phase: "loading", result: null, error: "" });
+    setSelectedId("");
+    const force = forceRefresh.current; forceRefresh.current = false;
+    loadCrmLead(key, query, workspaceId, force).then((result) => {
+      if (!current) return;
+      const safe = result && ["matched", "contact_without_deals", "candidates"].includes(result.status) ? result : { status: "not_found", deals: [], contacts: [] };
+      setState({ phase: "done", result: safe, error: "" });
+      setSelectedId(autoSelectedDeal(safe));
+    }, (error) => { if (current) setState({ phase: "error", result: null, error: error?.message || "Unable to reach Zoho Bigin." }); });
+    return () => { current = false; };
+  }, [key, attempt]);
+  const retry = () => { forceRefresh.current = true; setAttempt((value) => value + 1); };
+  const result = state.result;
+  const deals = result?.deals || [];
+  const selected = deals.find((deal) => deal.deal_id === selectedId) || null;
+  const linkedContact = Boolean(selected && biginContactId && String(biginContactId) === String(selected.contact_id));
+  const openSelected = () => selected?.deal_id && selected?.pipeline_id && onOpen({ ...selected, sessionId });
+  const matchedBy = result?.status === "candidates" ? "Name" : MATCH_LABELS[result?.matched_by] || result?.matched_by || "";
+  const searchStatus = state.phase === "loading" ? "Searching Zoho Bigin by phone, then email, then name…"
+    : state.phase === "error" ? "Search failed"
+    : result?.status === "contact_without_deals" ? `Contact found by ${matchedBy.toLowerCase()}, no pipeline records`
+    : deals.length ? `Matched by ${matchedBy}${result?.status === "candidates" ? " (possible matches)" : ""}`
+    : state.phase === "empty" ? "No customer details to search" : "No match found";
+  const stageName = selected?.stage || "";
+  const stageTone = /closed\s*won/i.test(stageName) ? "won" : /closed\s*lost/i.test(stageName) ? "lost" : /closed/i.test(stageName) ? "closed" : "active";
+  const contactName = selected?.contact_name || name;
+  const overview = selected ? [
+    [UserRound, "Contact", contactName],
+    [ClipboardList, "Deal", selected.deal_name || "Untitled deal"],
+    [Headphones, "Phone", selected.contact_phone || phone],
+    [MessageSquare, "Email", selected.contact_email || email],
+    [BookUser, "Owner", selected.owner || contact?.assigned],
+  ] : [];
   return (
     <div className="crm-lead-panel">
       <div className="crm-lead-card">
-        <div>
+        <div className="crm-lead-summary">
           <small>ZOHO BIGIN · CRM LEAD</small>
-          <h2>{identity.name || contact?.name || "Customer"} · Customer opportunity</h2>
-          <p>{biginContactId ? "Registered" : "Not linked"} · {phone}</p>
+          <h2>{selected?.deal_name || contactName || "Customer"}</h2>
+          {selected && contactName && selected.deal_name && <p className="crm-lead-contact"><UserRound size={13} /> {contactName}</p>}
+          <div className="crm-lead-pills" role="status" aria-live="polite">
+            <span className={`crm-lead-pill${state.phase === "error" ? " error" : ""}`}>{state.phase === "loading" && <LoaderCircle size={12} className="crm-lead-spin" />}{searchStatus}</span>
+            {deals.length > 1 && <span className="crm-lead-pill">{deals.length} CRM leads</span>}
+            {selected && <span className={`crm-lead-pill ${linkedContact ? "linked" : "unlinked"}`}>{linkedContact ? "Linked to this session" : "Not linked to this session"}</span>}
+          </div>
         </div>
-        <button type="button" className="crm-lead-open" onClick={() => onOpen(stageLabel)}>
-          Open CRM lead <ChevronRight size={20} />
+        <button type="button" className="crm-lead-open" onClick={openSelected} disabled={!selected?.deal_id || !selected?.pipeline_id}>
+          Open CRM lead <ChevronRight size={18} />
         </button>
       </div>
-      <div className="crm-lead-stats">
-        <div><small>STATUS</small><strong>{status}</strong></div>
-        <div><small>PIPELINE STAGE</small><strong>{stageLabel}</strong></div>
-        <div><small>PHONE</small><strong>{phone}</strong></div>
-        <div><small>OWNER</small><strong>{contact?.assigned || "Unassigned"}</strong></div>
-      </div>
+      {state.phase === "error" && <div className="crm-lead-message error" role="alert"><span>{state.error}</span><button type="button" className="button button-secondary" onClick={retry}>Retry</button></div>}
+      {state.phase === "empty" && <div className="crm-lead-message">Add the customer’s phone, email or name to search for a CRM lead.</div>}
+      {state.phase === "done" && !deals.length && <div className="crm-lead-message">
+        <span>{result?.status === "contact_without_deals" ? "No CRM lead found. This contact has no pipeline records yet." : "No CRM lead found for this customer."}</span>
+        <button type="button" className="button button-secondary" onClick={retry}>Search again</button>
+      </div>}
+      {deals.length > 1 || (deals.length === 1 && result?.status === "candidates" && !selected) ? <div className="crm-lead-list" role="listbox" aria-label="Matching CRM leads">
+        {deals.map((deal) => <button type="button" role="option" aria-selected={deal.deal_id === selectedId} key={deal.deal_id} className={`crm-lead-option${deal.deal_id === selectedId ? " selected" : ""}`} onClick={() => setSelectedId(deal.deal_id)}>
+          <strong>{deal.deal_name || "Untitled deal"}</strong>
+          <span>{deal.contact_name || "No contact"} · {deal.pipeline_name || "Pipeline"} · {deal.stage || "No stage"}</span>
+          {deal.match?.reasons?.length > 0 && result?.status === "candidates" && <small>Matched by {deal.match.reasons.map((reason) => MATCH_LABELS[reason] || reason).join(", ")}</small>}
+        </button>)}
+      </div> : null}
+      {selected && <>
+        {stageName && <div className="crm-lead-stage" aria-label="Pipeline stage"><small>PIPELINE STAGE</small><span className={`crm-stage-badge ${stageTone}`}>{stageName}</span></div>}
+        <div className="crm-lead-stats">
+          {overview.map(([Icon, label, value]) => <div key={label}><small><Icon size={13} />{label.toUpperCase()}</small><strong title={value || undefined}>{value || "—"}</strong></div>)}
+        </div>
+
+      </>}
+      {state.phase === "done" && deals.length > 0 && <button type="button" className="button button-quiet crm-lead-refresh" onClick={retry}>Refresh from Zoho</button>}
     </div>
   );
 }
 
-function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onOpenCrm }) {
+function openCrmLeadDeal(navigate, deal) {
+  const params = new URLSearchParams({ pipeline: deal.pipeline_id, deal: deal.deal_id });
+  [["pipelineName", deal.pipeline_name], ["stage", deal.stage], ["contact", deal.contact_id], ["session", deal.sessionId]].forEach(([key, value]) => { if (value) params.set(key, value); });
+  navigate(`/pipelines?${params.toString()}`);
+}
+
+function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, sessionId, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onOpenCrm }) {
   if (!view || typeof document === "undefined") return null;
   const isHistory = view === "history";
   const isContext = view === "context";
@@ -265,7 +362,7 @@ function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywo
         </header>
         <div className="session-view-modal-body">
           {contextTags.length > 0 && <div className="session-view-modal-tags"><small>AI CONTEXT</small><BusinessTagPills tags={contextTags} compact /></div>}
-          {isContext ? <div className="session-context-summary"><strong>Customer requirements</strong><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : isHistory ? <div className="session-recordings-list">{recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => onOpenTranscript(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void onDeleteRecording(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}</div> : <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} onOpen={onOpenCrm} />}
+          {isContext ? <div className="session-context-summary"><strong>Customer requirements</strong><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : isHistory ? <div className="session-recordings-list">{recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => onOpenTranscript(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void onDeleteRecording(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}</div> : <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={sessionId} onOpen={onOpenCrm} />}
         </div>
       </section>
     </div>,
@@ -1423,7 +1520,7 @@ export default function VoiceSessions() {
           {session && <>
             {activeTab !== "conversation" && activeTab !== "documents" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : activeTab === "lead" ? "CRM lead details" : "Enquiry context"}>
               <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : activeTab === "documents" ? "Documents" : activeTab === "lead" ? "CRM lead" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} onOpen={(stage) => navigate(`/pipelines?customer=${encodeURIComponent(identity.name || selectedContact?.name || "")}&stage=${encodeURIComponent(stage)}`)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
@@ -1458,7 +1555,7 @@ export default function VoiceSessions() {
             >
               <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
             </LiveSessionWorkspace>
-            {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(stage) => navigate(`/pipelines?customer=${encodeURIComponent(identity.name || selectedContact?.name || "")}&stage=${encodeURIComponent(stage)}`)} />}
+            {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
             {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} />}
           </>}
         </section>

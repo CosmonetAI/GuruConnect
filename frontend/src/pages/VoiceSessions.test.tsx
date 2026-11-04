@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), busy: vi.fn(), localMode: false, mounts: 0, unmounts: 0, recorder: null as null | { onBusyChange: (busy: boolean) => void; onCaptureChange: (state: { capture: string; elapsedSeconds: number }) => void; onConversationChange: (id: string | null) => Promise<void>; customerName: string } }))
 vi.mock('react-router-dom', async original => ({ ...await original<typeof import('react-router-dom')>(), useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
@@ -15,7 +15,7 @@ vi.mock('./Enquiries/ConversationRecorder', async () => {
 })
 vi.mock('../components/ConversationTranscript', () => ({ default: () => <div>transcript</div> }))
 vi.mock('../components/ProgressivePlayback', () => ({ default: () => <div>player</div> }))
-import VoiceSessions, { liveProcessingStatus } from './VoiceSessions'
+import VoiceSessions, { liveProcessingStatus, resetCrmLeadCache } from './VoiceSessions'
 beforeEach(() => {
   vi.clearAllMocks(); mocks.recorder = null; mocks.mounts = 0; mocks.unmounts = 0; mocks.localMode = false
   Object.assign(URL, { createObjectURL: vi.fn().mockReturnValue('blob:document'), revokeObjectURL: vi.fn() })
@@ -383,5 +383,50 @@ describe('speech processing status independently of capture', () => {
   })
   it('clearly identifies a recording that only supports processing after stopping', () => {
     expect(liveProcessingStatus({ captureState, processingMode: 'finalized_only' })).toMatchObject({ key: 'ready', label: 'Translation starts after recording ends' })
+  })
+})
+
+
+function Where() { const location = useLocation(); return <div data-testid="where">{location.pathname}{location.search}</div> }
+const leadDeal = { deal_id: 'd1', deal_name: 'Fan order', stage: 'Needs Analysis', pipeline_id: 'P1', pipeline_name: 'Sales Pipeline', amount: 10000, closing_date: '2026-10-20', description: 'Test lead', owner: 'Owner A', contact_id: 'c1', contact_name: 'Customer A', contact_email: 'qa@example.test', contact_phone: '9876543210', match: { score: 100, reasons: ['phone'] } }
+async function openLead(lead: (path: string) => unknown) {
+  installLiveApi(path => path.startsWith('/bigin/crm-lead') ? lead(path) : undefined)
+  render(<MemoryRouter><VoiceSessions /><Where /></MemoryRouter>)
+  fireEvent.click(await screen.findByRole('button', { name: /Customer A/ }))
+  await waitFor(() => expect(mocks.recorder?.customerName).toBe('Customer A'))
+  await act(async () => {})
+  fireEvent.click(await screen.findByRole('button', { name: 'CRM lead' }))
+}
+
+describe('CRM lead drawer', () => {
+  beforeEach(() => resetCrmLeadCache())
+  it('shows the matched deal and opens the exact pipeline and deal', async () => {
+    await openLead(() => ({ status: 'matched', source: 'contacts', matched_by: 'phone', contacts: [], deals: [leadDeal] }))
+    expect((await screen.findAllByText('Matched by Phone'))[0]).toBeInTheDocument()
+    expect(screen.getAllByText('Fan order').length).toBeGreaterThan(0)
+    expect(mocks.call.mock.calls.some(([path]) => String(path).startsWith('/bigin/crm-lead?') && String(path).includes('phone=9876543210'))).toBe(true)
+    fireEvent.click(screen.getAllByRole('button', { name: /Open CRM lead/ })[0])
+    const where = screen.getByTestId('where').textContent || ''
+    expect(where).toContain('/pipelines?')
+    expect(where).toContain('pipeline=P1'); expect(where).toContain('deal=d1'); expect(where).toContain('contact=c1')
+  })
+  it('requires choosing among multiple leads before Open CRM lead is enabled', async () => {
+    await openLead(() => ({ status: 'candidates', source: 'name_fallback', matched_by: null, contacts: [], deals: [{ ...leadDeal, match: { score: 20, reasons: ['full name'] } }, { ...leadDeal, deal_id: 'd2', deal_name: 'Motor order', match: { score: 20, reasons: ['full name'] } }] }))
+    const options = await screen.findAllByRole('option')
+    expect(screen.getAllByRole('button', { name: /Open CRM lead/ })[0]).toBeDisabled()
+    fireEvent.click(options[1])
+    expect(screen.getAllByRole('button', { name: /Open CRM lead/ })[0]).toBeEnabled()
+  })
+  it('shows a no-lead message when nothing matches', async () => {
+    await openLead(() => ({ status: 'not_found', deals: [], contacts: [] }))
+    expect((await screen.findAllByText('No CRM lead found for this customer.'))[0]).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /Open CRM lead/ })[0]).toBeDisabled()
+  })
+  it('reports Zoho failures and retries', async () => {
+    let attempts = 0
+    await openLead(() => { attempts++; if (attempts === 1) throw new Error('Unable to look up the CRM lead in Zoho Bigin'); return { status: 'matched', matched_by: 'email', contacts: [], deals: [leadDeal] } })
+    expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent('Unable to look up the CRM lead')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0])
+    expect((await screen.findAllByText('Matched by Email'))[0]).toBeInTheDocument()
   })
 })

@@ -206,6 +206,14 @@ class ZohoClient:
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 50, 'page': page})
     async def get_bigin_contact(self, contact_id): return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}')
+    async def lookup_bigin_contacts(self, search_by, value):
+        # No fields filter so system fields such as $layout_id are returned.
+        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: value})
+    async def contact_pipelines(self, contact_id, layout_id=None):
+        fields = 'Deal_Name,Stage,Sub_Pipeline,Pipeline,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Description,Created_Time,Modified_Time,Last_Activity_Time,Tag'
+        params = {'fields': fields}
+        if layout_id: params['pipeline_id'] = layout_id
+        return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}/Pipelines',params=params)
     async def search_books_contacts(self, org, query, date=None, page=1, per_page=10):
         params = {'organization_id': org, 'per_page': per_page, 'page': page}
         if query: params['search_text'] = query

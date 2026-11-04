@@ -1027,6 +1027,19 @@ async def delete_pipeline_record(record_id: str):
         return result
     except Exception: raise HTTPException(502, 'Unable to delete Zoho Bigin pipeline record')
 
+@app.get('/api/bigin/crm-lead')
+async def bigin_crm_lead(name: str = '', phone: str = '', email: str = ''):
+    from .crm_lead import resolve_crm_lead
+    if not (name.strip() or phone.strip() or email.strip()):
+        raise HTTPException(400, 'Provide a phone number, email address or name')
+    try:
+        return await resolve_crm_lead(zoho, name[:200], phone[:40], email[:200])
+    except RuntimeError as error:
+        if 'not connected' in str(error).lower(): raise HTTPException(409, 'Zoho Bigin is not connected')
+        log.exception('crm lead lookup failed'); raise HTTPException(502, 'Unable to look up the CRM lead in Zoho Bigin')
+    except Exception:
+        log.exception('crm lead lookup failed'); raise HTTPException(502, 'Unable to look up the CRM lead in Zoho Bigin')
+
 @app.get('/api/bigin/deleted/{module}')
 async def deleted_bigin_records(module: str, type: str = 'recycle', page: int = 1):
     allowed_modules = {'Pipelines', 'Tasks'}
