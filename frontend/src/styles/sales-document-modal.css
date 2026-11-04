@@ -55,6 +55,8 @@
 .sdm-type-card input { position:absolute; width:1px; height:1px; opacity:0; }
 .sdm-type-card:has(input:focus-visible) { outline:2px solid #1c68ff; outline-offset:3px; }
 .sdm-type-card.is-selected { border-color:#075bfa; background:#f4f8ff; box-shadow:0 0 0 1px #075bfa; }
+.sdm-type-card.is-source-document { border-color:#18375f; box-shadow:0 0 0 1px #18375f; }
+.sdm-type-card.is-source-document.is-selected { border-color:#102c55; background:#f1f6ff; box-shadow:0 0 0 2px #102c55; }
 .sdm-radio { display:grid; place-items:center; position:absolute; right:12px; top:13px; width:14px; height:14px; border:1px solid #b7c8de; border-radius:50%; color:transparent; }
 .sdm-type-card.is-selected .sdm-radio { border-color:#0961ff; background:#0961ff; color:white; }
 .sdm-document-icon { margin-bottom:2px; color:#1465df; }

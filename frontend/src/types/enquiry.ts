@@ -28,6 +28,7 @@ export type Enquiry = {
   projectName?: string
   preferredContactMethod?: string
   productRequirements?: ProductRequirement[]
+  tags?: string[]
   followUpDate?: string
   followUpOwner?: string
   priority?: 'Normal' | 'High' | 'Urgent'

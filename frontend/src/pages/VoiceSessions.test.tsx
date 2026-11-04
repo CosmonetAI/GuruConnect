@@ -73,6 +73,38 @@ async function openFirst() {
 }
 
 describe('live session integration', () => {
+  it('shows the Documents tab before CRM lead and opens its session drawer', async () => {
+    installLiveApi()
+    await openFirst()
+    await act(async () => mocks.recorder!.onConversationChange('clip-a'))
+    const documentsTab = await screen.findByRole('button', { name: 'Documents' })
+    const crmLeadTab = screen.getByRole('button', { name: 'CRM lead' })
+    expect(documentsTab.compareDocumentPosition(crmLeadTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(documentsTab)
+    expect(await screen.findByText('No matching Zoho Books documents found for this customer.')).toBeInTheDocument()
+    expect(screen.queryByText('No products selected yet')).not.toBeInTheDocument()
+  })
+
+  it('searches Zoho Books documents by full name first, falls back to first name, and loads a matching record into the cart', async () => {
+    installLiveApi((path, options) => {
+      if (path.startsWith('/quotes?') && path.includes('search_text=Customer%20A')) return { quotes: [] }
+      if (path.startsWith('/quotes?') && path.includes('search_text=Customer')) return { quotes: [{ estimate_id: 'estimate-7', estimate_number: 'QT-000007', customer_name: 'Customer A', date: '2026-11-04', total: 100 }] }
+      if (path === '/quotes/estimate-7' && options.method === 'PUT') return { quote: { estimate: { estimate_id: 'estimate-7', estimate_number: 'QT-000007', customer_name: 'Customer A', reference_number: 'REF-2', date: '2026-11-04', total: 100 } } }
+      if (path === '/quotes/estimate-7') return { estimate: { estimate_id: 'estimate-7', estimate_number: 'QT-000007', customer_name: 'Customer A', reference_number: 'REF-1', date: '2026-11-04', total: 100, line_items: [{ item_id: 'fan-1', name: 'BLDC fan', quantity: 2, rate: 4499 }] } }
+      return undefined
+    })
+    await openFirst()
+    fireEvent.click(await screen.findByRole('button', { name: 'Documents' }))
+    expect(await screen.findByRole('button', { name: /QT-000007/ })).toBeInTheDocument()
+    expect(mocks.call.mock.calls.some(([path]) => path === '/quotes?page=1&per_page=200&search_text=Customer%20A')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /QT-000007/ }))
+    await waitFor(() => expect(document.querySelector('.live-session-workspace')).toHaveAttribute('data-layout', 'cart'))
+    expect(await screen.findByText('BLDC fan')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Documents for this customer' })).not.toBeInTheDocument()
+    expect(mocks.mounts).toBe(1)
+    expect(mocks.unmounts).toBe(0)
+  })
+
   it('labels local sample inventory and opens a download-only demo document review', async () => {
     mocks.localMode = true
     installLiveApi(path => path.endsWith('/live') ? { ...liveData(), recommendations: [{ ...fan, catalogue_source: 'local-demo' }], notices: [{ code: 'local_demo_catalogue' }] } : path.endsWith('/sales-documents/options') ? { mode: 'local-demo', email: { provider: 'smtp2go', configured: false }, document_types: ['invoice', 'quote', 'sales-order'], customer: { name: 'Customer A', phone: '9876543210', email: '' } } : undefined)
@@ -131,7 +163,7 @@ describe('live session integration', () => {
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
     expect(await screen.findByText(question)).toBeVisible()
-    expect(screen.getByRole('region', { name: 'Live translated conversation' })).not.toHaveTextContent(question)
+    expect(screen.getByRole('region', { name: 'Live conversation' })).not.toHaveTextContent(question)
     expect(screen.getByRole('region', { name: 'Agent guidance' })).toHaveTextContent('Choose a compatible motor')
     fireEvent.click(screen.getByRole('button', { name: /Customer B/ }))
     await waitFor(() => expect(mocks.recorder?.customerName).toBe('Customer B'))
@@ -143,20 +175,20 @@ describe('live session integration', () => {
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
     expect(await screen.findByText('Product analysis temporarily unavailable')).toBeVisible()
-    expect(screen.getByRole('region', { name: 'Live translated conversation' })).toHaveTextContent(liveTurn.english_text)
+    expect(screen.getByRole('region', { name: 'Live conversation' })).toHaveTextContent(liveTurn.english_text)
     expect(screen.getByText('The AI provider is unavailable. Existing requirements are preserved.', { exact: false })).toBeVisible()
   })
 
-  it('uses the same technical review guard in product details and catalogue search', async () => {
+  it('keeps product details and catalogue search simple for recommendation items', async () => {
     const uncertain = { ...motor, match_status: 'needs_confirmation', missing_specs: ['Supply phase'], matched_specs: ['1 HP'], availability_status: 'needs_review' }
     installLiveApi(path => path.endsWith('/live') ? { ...liveData(), recommendations: [uncertain] } : path.startsWith('/products?') ? { items: [motor] } : undefined)
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
-    expect(await screen.findByRole('button', { name: 'Add to cart Copper motor' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Add to cart Copper motor' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'View details' }))
     const details = screen.getByRole('dialog', { name: 'Copper motor' })
-    expect(details).toHaveTextContent('Needs confirmation')
-    expect(details.querySelector('button.primary')).toBeDisabled()
+    expect(details).not.toHaveTextContent('Needs confirmation')
+    expect(details.querySelector('button.primary')).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Close product details' }))
     fireEvent.click(screen.getByRole('button', { name: 'Search catalogue' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Search inventory' }), { target: { value: 'motor' } })
@@ -164,12 +196,9 @@ describe('live session integration', () => {
     const search = screen.getByRole('dialog', { name: 'Add another product' })
     await waitFor(() => expect(search).toHaveTextContent('Copper motor'))
     const button = search.querySelector('.lws-product-action button')!
-    expect(button).toBeDisabled()
-    fireEvent.click(search.querySelector('input[type="checkbox"]')!)
     expect(button).toBeEnabled()
     fireEvent.click(button)
     await waitFor(() => expect(document.querySelector('.live-session-workspace')).toHaveAttribute('data-layout', 'cart'))
-    await waitFor(() => expect(mocks.call.mock.calls.some(([path, options]) => path.endsWith('/context') && options.method === 'PUT' && options.body.includes('match_confirmation_acknowledged'))).toBe(true))
     const save = mocks.call.mock.calls.find(([path, options]) => path.endsWith('/context') && options.method === 'PUT')
     expect(save![1].body).toContain('"match_status":"needs_confirmation"')
     expect(mocks.mounts).toBe(1)
@@ -186,9 +215,9 @@ describe('live session integration', () => {
     expect(details.querySelector('button.primary')).toBeEnabled()
     candidate = { ...candidate, match_status: 'needs_confirmation', missing_specs: ['Voltage'] }
     await act(async () => document.dispatchEvent(new Event('visibilitychange')))
-    await waitFor(() => expect(details).toHaveTextContent('Voltage'))
-    expect(details.querySelector('button.primary')).toBeDisabled()
-    expect(details).toHaveTextContent('Needs confirmation')
+    await waitFor(() => expect(details).toBeInTheDocument())
+    expect(details.querySelector('button.primary')).toBeEnabled()
+    expect(details).not.toHaveTextContent('Needs confirmation')
   })
 
   it('ignores a delayed live response from a different customer', async () => {
@@ -266,7 +295,7 @@ describe('session sales document workflow', () => {
     await reviewCart()
     fireEvent.click(screen.getByRole('button', { name: 'Create & send' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Retry email' }))
-    expect(await screen.findByText('Document created. Submitted for delivery via SMTP2GO.')).toBeInTheDocument()
+    expect(await screen.findByText('Document created. Submitted for delivery via Zoho Books.')).toBeInTheDocument()
     expect(mocks.call.mock.calls.filter(([path, options]) => path.endsWith('/sales-documents') && options.method === 'POST')).toHaveLength(1)
     expect(mocks.call.mock.calls.filter(([path]) => path.endsWith('/sales-documents/workflow-1/email'))).toHaveLength(1)
     expect(screen.queryByText(/delivered successfully/)).not.toBeInTheDocument()
@@ -281,7 +310,7 @@ describe('session sales document workflow', () => {
     await waitFor(() => expect(deliveries).toBe(1))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry email' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Retry email' }))
-    await screen.findByText('Document created. Submitted for delivery via SMTP2GO.')
+    await screen.findByText('Document created. Submitted for delivery via Zoho Books.')
     const retries = mocks.call.mock.calls.filter(([path]) => path.endsWith('/sales-documents/workflow-1/email'))
     expect(retries).toHaveLength(2)
     expect(JSON.parse(retries[0][1].body).request_id).not.toBe(JSON.parse(retries[1][1].body).request_id)
@@ -309,7 +338,7 @@ describe('session sales document workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to cart' }))
     fireEvent.click(screen.getByRole('button', { name: 'Complete cart' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Retry email' }))
-    await screen.findByText('Document created. Submitted for delivery via SMTP2GO.')
+    await screen.findByText('Document created. Submitted for delivery via Zoho Books.')
     expect(mocks.call.mock.calls.filter(([path, options]) => path.endsWith('/sales-documents') && options.method === 'POST')).toHaveLength(1)
   })
 
@@ -328,7 +357,7 @@ describe('session sales document workflow', () => {
     const writes = mocks.call.mock.calls.filter(([path, options]) => path.endsWith('/sales-documents') && options.method === 'POST')
     expect(JSON.parse(writes[0][1].body).request_id).toBe(JSON.parse(writes[1][1].body).request_id)
     await act(async () => finish(pdfResult('accepted')))
-    await screen.findByText('Document created. Submitted for delivery via SMTP2GO.')
+    await screen.findByText('Document created. Submitted for delivery via Zoho Books.')
   })
 })
 

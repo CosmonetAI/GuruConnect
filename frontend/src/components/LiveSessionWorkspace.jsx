@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowRight, Check, ChevronDown, ChevronUp, Download, FileText, MessageSquare,
+  ArrowRight, Check, ChevronDown, ChevronUp, Download, MessageSquare,
   Minus, Package, Plus, Search, ShoppingCart, Sparkles, Trash2, X,
 } from 'lucide-react';
 import '../styles/live-session-workspace.css';
@@ -19,7 +19,6 @@ export const productPriceAvailable = (item) => {
   return (!item.price_status || item.price_status === 'known') && value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
 };
 export const productNeedsConfirmation = (item) => (Boolean(item.match_status) && item.match_status !== 'verified') || detailList(item.missing_specs).length > 0 || detailList(item.conflicts).length > 0;
-export const productReviewFingerprint = (item) => JSON.stringify([itemKey(item), item.match_status, item.matched_specs, item.missing_specs, item.conflicts]);
 export const productStockNotTracked = (item) => {
   const tracking = String(item.track_inventory ?? '').toLowerCase();
   const itemType = String(item.item_type || '').toLowerCase();
@@ -86,6 +85,7 @@ export function ProductMatchDetails({ item, showEvidence = false }) {
   const missing = specLabels(item.missing_specs);
   const conflicts = detailList(item.conflicts);
   const evidence = Array.isArray(item.match_evidence) ? item.match_evidence.filter((source) => source?.text) : [];
+  return <div className="lws-match-details">{matched.length > 0 && <p className="lws-matched-specs"><strong>Matched:</strong> {matched.join(' Â· ')}</p>}{showEvidence && evidence.length > 0 && <details className="lws-match-evidence"><summary>Catalogue evidence</summary><ul>{evidence.map((source, index) => <li key={index}><strong>{String(source.field || 'Catalogue').replaceAll('_', ' ')}:</strong> {source.text}</li>)}</ul></details>}</div>;
   return <div className="lws-match-details">
     <span className={`lws-match-badge${item.match_status !== 'verified' || needsConfirmation ? ' needs-review' : ''}`}>{needsConfirmation ? 'Needs confirmation' : item.match_status === 'verified' ? 'Verified match' : 'Match not assessed'}</span>
     {matched.length > 0 && <p className="lws-matched-specs"><strong>Matched:</strong> {matched.join(' · ')}</p>}
@@ -97,18 +97,11 @@ export function ProductMatchDetails({ item, showEvidence = false }) {
 }
 
 export function ProductCartAction({ item, onAddToCart, className = 'lws-button lws-button-primary' }) {
-  const [acknowledged, setAcknowledged] = useState(false);
-  const reviewKey = productReviewFingerprint(item);
-  useEffect(() => setAcknowledged(false), [reviewKey]);
   const priceAvailable = productPriceAvailable(item);
   const unavailable = productOutOfStock(item);
-  const needsConfirmation = productNeedsConfirmation(item);
-  const disabled = !itemKey(item) || !onAddToCart || !priceAvailable || unavailable || (needsConfirmation && !acknowledged);
+  const disabled = !itemKey(item) || !onAddToCart || !priceAvailable || unavailable;
   const label = !priceAvailable ? 'Price unavailable' : unavailable ? 'Out of stock' : 'Add to cart';
-  return <div className="lws-product-action">
-    {needsConfirmation && <label className="lws-match-acknowledgement"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} aria-label={`Review unverified match ${productName(item)}`} /><span>I understand this match needs confirmation</span></label>}
-    <button type="button" className={className} aria-label={!priceAvailable ? `Price unavailable for ${productName(item)}` : unavailable ? `Out of stock ${productName(item)}` : `Add to cart ${productName(item)}`} disabled={disabled} onClick={() => { if (!disabled) onAddToCart({ ...item, ...(needsConfirmation ? { match_confirmation_acknowledged: true } : {}) }); }}><ShoppingCart size={14} />{label}</button>
-  </div>;
+  return <div className="lws-product-action"><button type="button" className={className} aria-label={!priceAvailable ? `Price unavailable for ${productName(item)}` : unavailable ? `Out of stock ${productName(item)}` : `Add to cart ${productName(item)}`} disabled={disabled} onClick={() => { if (!disabled) onAddToCart(item); }}><ShoppingCart size={14} />{label}</button></div>;
 }
 
 function AgentGuidance({ clarificationSuggestions, requirements, currentIntent, agentGuidance }) {
@@ -131,7 +124,7 @@ function AgentGuidance({ clarificationSuggestions, requirements, currentIntent, 
   </section>;
 }
 
-function Conversation({ transcript, messages, sessionStartedAt, recordingState }) {
+function Conversation({ transcript, messages, sessionStartedAt, recordingState, onDownload }) {
   const list = useRef(null);
   const stick = useRef(true);
   const turns = transcript.length ? transcript : messages.map((message, index) => ({
@@ -143,8 +136,8 @@ function Conversation({ transcript, messages, sessionStartedAt, recordingState }
     if (stick.current && list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [turns.length, turns.at(-1)?.english_text, turns.at(-1)?.source_text]);
   const active = recordingState?.capture === 'recording';
-  return <section className="lws-conversation lws-panel" aria-label="Live translated conversation">
-    <div className="lws-panel-heading"><h3><MessageSquare size={17} />Conversation</h3><span className="lws-subtle">{active ? <><i className="lws-live-dot" />Listening</> : 'Customer conversation'}</span></div>
+  return <section className="lws-conversation lws-panel" aria-label="Live conversation">
+    <div className="lws-panel-heading"><h3><MessageSquare size={17} />Live conversation</h3><div className="lws-heading-actions"><span className="lws-subtle">{active ? <><i className="lws-live-dot" />Listening</> : 'Customer conversation'}</span><button type="button" className="lws-button lws-button-small" onClick={onDownload} disabled={!transcript.length || !onDownload}><Download size={14} /><span>Download conversation</span></button></div></div>
     <div className="lws-bubbles" ref={list} onScroll={() => { if (list.current) stick.current = list.current.scrollHeight - list.current.scrollTop - list.current.clientHeight < 70; }} aria-live="polite" aria-relevant="additions text">
       {turns.length ? turns.map((turn, index) => {
         const voice = speaker(turn);
@@ -154,16 +147,6 @@ function Conversation({ transcript, messages, sessionStartedAt, recordingState }
         </article>;
       }) : <div className="lws-empty lws-conversation-empty"><span className="lws-empty-icon"><MessageSquare size={25} strokeWidth={1.5} /></span><strong>{active ? 'Listening to your conversation' : 'Your conversation, as it happens'}</strong><p>{active ? 'Translated text will appear as each short audio segment is processed.' : 'Start recording below. The conversation and English translation will update here as you speak.'}</p></div>}
     </div>
-  </section>;
-}
-
-function Transcript({ transcript, onDownload, sessionStartedAt }) {
-  const [collapsed, setCollapsed] = useState(true);
-  return <section className={`lws-transcript lws-panel${collapsed ? ' is-collapsed' : ''}`} aria-label="Latest transcript">
-    <div className="lws-panel-heading"><h3><FileText size={18} />Latest transcript <span className="lws-subtle">· Live updates</span></h3><div className="lws-heading-actions"><button type="button" className="lws-button lws-button-small" onClick={onDownload} disabled={!transcript.length || !onDownload}><Download size={14} /><span>Download transcript</span></button><button type="button" className="lws-icon-button" aria-expanded={!collapsed} aria-label={collapsed ? 'Expand latest transcript' : 'Collapse latest transcript'} onClick={() => setCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}</button></div></div>
-    {!collapsed && <div className="lws-transcript-lines">
-      {transcript.length ? transcript.map((turn, index) => <p key={turnKey(turn, index)}><time>{turnTime(turn, sessionStartedAt)}</time><span><strong>{speaker(turn).label}:</strong> {turn.english_text || turn.source_text}</span></p>) : <p className="lws-transcript-empty">Completed speech segments and their English translation will appear here.</p>}
-    </div>}
   </section>;
 }
 
@@ -179,9 +162,8 @@ function Suggestions({ recommendations, intents, onAddToCart, onRemoveIntent, on
     <div className="lws-product-list">{recommendations.length ? recommendations.map((item, index) => {
       const price = item.rate ?? item.price;
       const priceAvailable = productPriceAvailable(item);
-      const features = (Array.isArray(item.features) ? item.features : typeof item.description === 'string' ? item.description.split(/[\n•]/).filter(Boolean) : []).slice(0, 3);
       return <article className="lws-product-card" key={itemKey(item) || `${productName(item)}-${index}`}>
-        <ProductImage item={item} /><div className="lws-product-copy"><strong>{productName(item)}</strong><small>{item.sku ? `SKU: ${item.sku}` : item.unit || 'Zoho catalogue'}</small>{compact && features.length > 0 && <ul>{features.map((feature, i) => <li key={i}>{feature}</li>)}</ul>}<ProductMatchDetails item={item} /><Stock item={item} /><b className={priceAvailable ? '' : 'lws-price-review'}>{priceAvailable ? money(price) : 'Confirm price'}</b>{onViewProduct && <button className="lws-text-button lws-product-details" type="button" onClick={() => onViewProduct(item)}>{priceAvailable ? 'View details' : 'Review price details'}</button>}<ProductCartAction item={item} onAddToCart={onAddToCart} /></div>
+        <ProductImage item={item} /><div className="lws-product-copy"><strong>{productName(item)}</strong><small>{item.sku ? `SKU: ${item.sku}` : item.unit || 'Zoho catalogue'}</small><Stock item={item} /><b className={priceAvailable ? '' : 'lws-price-review'}>{priceAvailable ? money(price) : 'Confirm price'}</b>{onViewProduct && <button className="lws-text-button lws-product-details" type="button" onClick={() => onViewProduct(item)}>{priceAvailable ? 'View details' : 'Review price details'}</button>}<ProductCartAction item={item} onAddToCart={onAddToCart} /></div>
       </article>;
     }) : <div className="lws-empty lws-products-empty"><span className="lws-empty-icon"><Sparkles size={22} strokeWidth={1.5} /></span><strong>{intents.length ? 'Finding catalogue matches' : 'Suggestions that follow the conversation'}</strong><p>{intents.length ? 'Matching the products and requirements mentioned with your connected Zoho inventory.' : 'Mention a product, specification, or budget. Relevant items from your Zoho catalogue will appear here.'}</p>{onSearchProducts && <button type="button" className="lws-text-button" onClick={onSearchProducts}><Search size={13} />Browse product catalogue</button>}</div>}</div>
   </section>;
@@ -253,7 +235,7 @@ function Notes({ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteErr
  * @property {string | Record<string, any>} [currentIntent]
  * @property {string | Record<string, any> | Array<string | Record<string, any>>} [agentGuidance]
  * @property {string} [sessionStartedAt]
- * @property {() => void} [onDownloadTranscript]
+ * @property {() => void} [onDownloadConversation]
  * @property {(intent: any, index: number) => void} [onRemoveIntent]
  * @property {() => void} [onAddIntent]
  * @property {(item: any) => void} [onViewProduct]
@@ -269,17 +251,16 @@ export default function LiveSessionWorkspace({
   notes = [], noteText = '', onNoteTextChange, onAddNote, noteBusy = false, noteError = '',
   recordingState = {}, recordingStatus, insightsStatus, catalogueNotice = '', sessionStartedAt,
   catalogueStatus = '', clarificationSuggestions = [], requirements = [], currentIntent = '', agentGuidance = [],
-  onDownloadTranscript, onRemoveIntent, onAddIntent, onViewProduct, taxTotal, currencyCode = 'INR', children,
+  onDownloadConversation, onRemoveIntent, onAddIntent, onViewProduct, taxTotal, currencyCode = 'INR', children,
 }) {
   const cartView = cart.length > 0 || cartOpen;
   const money = (value) => { try { return new Intl.NumberFormat('en-IN', { style: 'currency', currency: currencyCode || 'INR', maximumFractionDigits: 2 }).format(number(value)); } catch { return `₹${number(value).toLocaleString('en-IN')}`; } };
   const suggestions = <Suggestions {...{ recommendations, intents, onAddToCart, onRemoveIntent, onAddIntent, onViewProduct, onSearchProducts, money, catalogueNotice, catalogueStatus, insightsStatus, clarificationSuggestions, requirements, currentIntent, agentGuidance }} compact={cartView} />;
   return <div className={`live-session-workspace${cartView ? ' is-cart-view' : ''}`} data-layout={cartView ? 'cart' : 'conversation'} aria-label={`${identity.name || 'Customer'} conversation workspace`}>
     <div className="lws-work-grid">
-      <div className="lws-conversation-lane"><Conversation {...{ transcript, messages, sessionStartedAt, recordingState }} />{!cartView && <Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />}{suggestions}</div>
+      <div className="lws-conversation-lane"><Conversation {...{ transcript, messages, sessionStartedAt, recordingState, onDownload: onDownloadConversation }} />{suggestions}</div>
       <div className="lws-cart-lane" inert={!cartView ? true : undefined} aria-hidden={!cartView}>
         <Cart {...{ cart, onUpdateCart, onRemoveCart, onSearchProducts, onCompleteCart, onCartOpenChange, money, taxTotal }} />
-        {cartView && <Transcript transcript={transcript} onDownload={onDownloadTranscript} sessionStartedAt={sessionStartedAt} />}
       </div>
       <Notes {...{ notes, noteText, onNoteTextChange, onAddNote, noteBusy, noteError }} />
     </div>

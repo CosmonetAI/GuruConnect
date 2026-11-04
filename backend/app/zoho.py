@@ -315,21 +315,24 @@ class ZohoClient:
     async def accept_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/accepted',params={'organization_id':org},json={})
     async def email_estimate(self,org,estimate_id,data=None): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json=data or {})
     async def list_sales_orders(self,org): return await self.request('GET','/books/v3/salesorders',params={'organization_id':org,'per_page':200,'page':1})
-    async def search_sales_orders(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_sales_orders(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/salesorders',params=params)
-    async def search_purchase_orders(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_purchase_orders(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/purchaseorders',params=params)
-    async def search_invoices(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_invoices(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/invoices',params=params)
+    async def books_sales_order(self,org,salesorder_id): return await self.request('GET',f'/books/v3/salesorders/{salesorder_id}',params={'organization_id':org})
+    async def books_purchase_order(self,org,purchaseorder_id): return await self.request('GET',f'/books/v3/purchaseorders/{purchaseorder_id}',params={'organization_id':org})
+    async def books_invoice(self,org,invoice_id): return await self.request('GET',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org})
     async def create_sales_order(self,org,data):
         params = {'organization_id': org}
         if data.get('salesorder_number'):

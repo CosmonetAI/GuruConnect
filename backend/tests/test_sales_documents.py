@@ -59,6 +59,18 @@ class Books:
             raise RuntimeError('private-remote-message')
         return PDF
 
+    async def email_invoice(self, org, identity, payload):
+        self.email_call = ("invoice", org, identity, payload)
+        return {'code': 0, 'message': 'success'}
+
+    async def email_estimate(self, org, identity, payload):
+        self.email_call = ("quote", org, identity, payload)
+        return {'code': 0, 'message': 'success'}
+
+    async def email_sales_order(self, org, identity, payload):
+        self.email_call = ("sales-order", org, identity, payload)
+        return {'code': 0, 'message': 'success'}
+
 
 def setup(tmp_path, *, configured=True, sender=None):
     scope = {'organisation_id': str(uuid4()), 'member_id': str(uuid4()), 'session_id': str(uuid4())}
@@ -96,13 +108,13 @@ async def test_no_email_creates_real_books_document_and_downloads_native_pdf_onc
 
 
 @pytest.mark.asyncio
-async def test_missing_mail_configuration_never_creates_a_document_then_download_still_works(tmp_path):
+async def test_missing_mail_configuration_does_not_block_native_zoho_email_then_download_still_works(tmp_path):
     service, books = setup(tmp_path, configured=False)
-    with pytest.raises(HTTPException) as error:
-        await service.create(body(delivery='email', recipient='customer@example.test'))
-    assert error.value.status_code == 503
-    assert error.value.detail['document_started'] is False
-    assert books.created == []
+    result = await service.create(body(delivery='email', recipient='customer@example.test'))
+    assert result['delivery']['status'] == 'accepted'
+    assert result['delivery']['provider'] == 'zoho_books'
+    assert books.created and books.email_call[0] == 'invoice'
+    assert books.email_call[3]['to_mail_ids'] == ['customer@example.test']
     assert (await service.create(body()))['delivery']['status'] == 'not_requested'
 
 

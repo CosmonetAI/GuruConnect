@@ -102,7 +102,8 @@ def normalized_text(value: str) -> str:
 def _tokens(value: str) -> list[str]:
     value = re.sub(r'(\d)(mm|sqmm|hp|kw|rpm|hz|ph|p|v|a)\b', r'\1 \2', str(value), flags=re.I)
     words = re.findall(r'\b[^\W_]+\b', normalized_text(value), re.UNICODE)
-    return [word[:-1] if len(word) > 3 and word.endswith('s') and not word.endswith('ss') else word
+    aliases = {'bulb': 'light', 'bulbs': 'light', 'lamp': 'light', 'lamps': 'light'}
+    return [aliases.get(word, word[:-1] if len(word) > 3 and word.endswith('s') and not word.endswith('ss') else word)
             for word in words if word not in _GRAMMAR]
 
 

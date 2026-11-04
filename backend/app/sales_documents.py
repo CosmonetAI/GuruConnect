@@ -1,4 +1,4 @@
-"""Member-scoped, idempotent Books documents and SMTP2GO PDF delivery."""
+"""Member-scoped, idempotent Books documents and native Zoho Books delivery."""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from .sales_pdf import render_demo_sales_pdf
-from .document_email import EmailDeliveryError, delivery_fingerprint, email_delivery_configuration, send_document_email
+from .document_email import EmailDeliveryError, delivery_fingerprint, send_document_email
 
 
 class SalesLine(BaseModel):
@@ -177,7 +177,7 @@ class SalesDocumentService:
                 raise HTTPException(409, 'Connect the salesperson’s Zoho Books account and select an organization first.')
         return {'mode': 'local-demo' if self.demo else 'zoho', 'customer': self.customer,
                 'customer_type': 'customer', 'document_types': list(self.TYPES),
-                'email': {'provider': 'smtp2go', 'configured': False if self.demo else email_delivery_configuration(self.settings)['configured']}}
+                'email': {'provider': 'zoho_books', 'configured': not self.demo}}
 
     async def _lines(self, lines, org):
         if self.demo:
@@ -254,7 +254,7 @@ class SalesDocumentService:
         row = {**scope, 'id': identity, 'request_id': str(body.request_id), 'request_hash': hashed,
                'type': body.type, 'state': 'creating', 'demo': self.demo, 'books_org': org,
                'customer': self.customer, 'lines': lines, 'currency': status.get('currency') or 'INR',
-               'delivery': {'status': 'not_requested', 'provider': 'smtp2go'},
+               'delivery': {'status': 'not_requested', 'provider': 'zoho_books'},
                'created_at': _timestamp(), 'updated_at': _timestamp()}
         row, fresh = await asyncio.to_thread(self.repository.claim, row)
         if not fresh:
@@ -308,9 +308,6 @@ class SalesDocumentService:
             raise HTTPException(409, 'Demo documents can be downloaded as samples. Email is available for real Zoho Books documents.')
         if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', recipient):
             raise HTTPException(422, 'Enter a valid recipient email or choose Create & download.')
-        if not email_delivery_configuration(self.settings)['configured']:
-            raise HTTPException(503, {'code': 'email_not_configured', 'document_started': False,
-                'message': 'SMTP2GO is not configured yet. Choose Create & download, or add the backend mail credentials.'})
 
     def _mail_content(self, subject, message):
         if not subject.strip() or any(value in subject for value in '\r\n\0') or not message.strip() or '\0' in message:
@@ -366,20 +363,33 @@ class SalesDocumentService:
         if prior['status'] in {'accepted', 'sending', 'uncertain'}:
             raise HTTPException(409, 'The previous email was submitted or needs delivery review. It will not be sent twice.')
         pdf = await self._pdf(row)
-        delivery = {'provider': 'smtp2go', 'status': 'sending', 'request_id': str(body.request_id), 'request_hash': action_hash,
+        delivery = {'provider': 'zoho_books', 'status': 'sending', 'request_id': str(body.request_id), 'request_hash': action_hash,
                     'fingerprint': delivery_fingerprint(recipient=body.recipient, subject=body.subject, message=body.message,
                         pdf_bytes=pdf, filename=f'{row["type"]}-{row["id"][:8]}.pdf')}
         row = await asyncio.to_thread(self.repository.patch, str(identity), {'delivery': delivery}, {'delivery': prior})
         try:
-            receipt = await self.sender(recipient=body.recipient, subject=body.subject, message=body.message,
-                pdf_bytes=pdf, filename=f'{row["type"]}-{row["id"][:8]}.pdf',
-                delivery_key=f'{identity}:{body.request_id}', settings_override=self.settings)
-            delivery.update(receipt, status='accepted', message='Submitted to SMTP2GO for delivery.')
+            if self.demo or self.sender is not send_document_email:
+                receipt = await self.sender(recipient=body.recipient, subject=body.subject, message=body.message,
+                    pdf_bytes=pdf, filename=f'{row["type"]}-{row["id"][:8]}.pdf',
+                    delivery_key=f'{identity}:{body.request_id}', settings_override=self.settings)
+            else:
+                email_methods = {
+                    'invoice': self.zoho.email_invoice,
+                    'quote': self.zoho.email_estimate,
+                    'sales-order': self.zoho.email_sales_order,
+                }
+                method = email_methods[row['type']]
+                receipt = await method(row['books_org'], row['external_id'], {
+                    'to_mail_ids': [body.recipient],
+                    'subject': body.subject,
+                    'body': body.message,
+                })
+            delivery.update({'provider_response': receipt.get('message') if isinstance(receipt, dict) else None}, status='accepted', message='Submitted to Zoho Books for delivery.')
         except EmailDeliveryError as error:
             delivery.update(status='uncertain' if error.uncertain else 'failed',
-                message='Email delivery needs review before resending.' if error.uncertain else 'The document was created, but SMTP2GO did not accept the email. Download the PDF or retry email delivery.')
+                message='Email delivery needs review before resending.' if error.uncertain else 'Zoho Books did not accept the email. Download the PDF or retry email delivery.')
         except Exception:
-            delivery.update(status='uncertain', message='Email submission could not be confirmed. Check SMTP2GO before resending.')
+            delivery.update(status='uncertain', message='Email submission could not be confirmed. Check Zoho Books before resending.')
         row = await asyncio.to_thread(self.repository.patch, str(identity), {'delivery': delivery})
         return await self._response(row, pdf)
 

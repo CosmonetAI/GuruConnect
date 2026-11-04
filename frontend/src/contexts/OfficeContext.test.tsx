@@ -24,7 +24,7 @@ function setup() { return render(<OfficeProvider><Probe /></OfficeProvider>) }
 beforeEach(() => {
   vi.clearAllMocks(); mocks.configured = true; mocks.localMode = false; mocks.cloud = true; mocks.handler = null
   mocks.getSession.mockResolvedValue({ data: { session: null }, error: null })
-  mocks.request.mockResolvedValue({ items: [{ id: 'workspace-a', name: 'Private workspace A', role: 'owner' }, { id: 'workspace-b', name: 'Private workspace B', role: 'owner' }] })
+  mocks.request.mockResolvedValue({ items: [{ id: 'organisation-a', member_id: 'alice', name: 'Private workspace A', role: 'owner' }, { id: 'organisation-b', member_id: 'workspace-b', name: 'Private workspace B', role: 'salesperson' }] })
 })
 describe('workspace identity and explicit local mode', () => {
   it('provides only the fixed local account and local workspace when loopback local mode is enabled', () => {
@@ -57,14 +57,14 @@ describe('workspace identity and explicit local mode', () => {
       workspaceCalls += 1
       return workspaceCalls === 1
         ? new Promise(resolve => { resolveAlice = resolve })
-        : Promise.resolve({ items: [{ id: 'workspace-b', name: 'Private Bob workspace', role: 'owner' }] })
+        : Promise.resolve({ items: [{ id: 'organisation-b', member_id: 'bob', name: 'Private Bob workspace', role: 'owner' }] })
     })
     setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
     await waitFor(() => expect(workspaceCalls).toBe(1))
     act(() => { mocks.handler?.('SIGNED_IN', session('bob')) })
     expect(screen.getByTestId('identity')).toHaveTextContent('bob'); expect(screen.getByTestId('workspace')).toHaveTextContent('none')
     await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private Bob workspace'))
-    await act(async () => { resolveAlice({ items: [{ id: 'workspace-a', name: 'Private Alice workspace', role: 'owner' }] }) })
+    await act(async () => { resolveAlice({ items: [{ id: 'organisation-a', member_id: 'alice', name: 'Private Alice workspace', role: 'owner' }] }) })
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private Bob workspace')
   })
   it('prevents workspace switching while audio is active and clears access on sign-out', async () => {

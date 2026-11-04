@@ -122,7 +122,7 @@ body[data-document-party="unknown"] .document-actions { display: none; }
 body[data-document-party="vendor"] .document-actions button:nth-child(-n+3) { display: none; }
 body[data-document-party="customer"] .document-actions button:nth-child(4) { display: none; }
 .contact-phone-link { display: inline-flex; align-items: center; gap: 5px; width: max-content; min-height: 0; padding: 0; border: 0; background: transparent; color: #1762a5; cursor: pointer; font-size: 11px; text-align: left; }
-.session-modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(9, 35, 65, .42); }
+.session-modal-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(9, 35, 65, .42); }
 .customer-modal { width: min(760px, 100%); max-height: 86vh; overflow-y: auto; border-radius: 16px; background: #fff; box-shadow: 0 22px 60px rgba(9, 35, 65, .28); }
 .customer-modal-heading { display: flex; justify-content: space-between; gap: 20px; padding: 20px; border-bottom: 1px solid #e4edf4; }
 .customer-modal-heading small { color: #2476d9; font-size: 10px; font-weight: 800; letter-spacing: .12em; }

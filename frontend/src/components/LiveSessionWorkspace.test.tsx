@@ -7,15 +7,13 @@ const fan = { item_id: 'fan', name: 'Quiet ceiling fan', sku: 'FAN-1', rate: 100
 const motor = { item_id: 'motor', name: 'Water pump motor', sku: 'MOTOR-1', rate: 2500 };
 
 describe('live session workspace', () => {
-  it('shows speech once by default and opens the timestamped transcript on demand', () => {
+  it('shows the live conversation once and offers a conversation download', () => {
     const download = vi.fn();
-    render(<LiveSessionWorkspace transcript={[{ id: 'turn', english_text: 'I need a fan.', start_seconds: 0 }]} onDownloadTranscript={download} />);
+    render(<LiveSessionWorkspace transcript={[{ id: 'turn', english_text: 'I need a fan.', start_seconds: 0 }]} onDownloadConversation={download} />);
     expect(screen.getAllByText('I need a fan.')).toHaveLength(1);
-    const transcript = screen.getByRole('region', { name: 'Latest transcript' });
-    expect(within(transcript).queryByText('I need a fan.')).not.toBeInTheDocument();
-    fireEvent.click(within(transcript).getByRole('button', { name: 'Expand latest transcript' }));
-    expect(within(transcript).getByText('I need a fan.', { exact: false })).toBeInTheDocument();
-    fireEvent.click(within(transcript).getByRole('button', { name: 'Download transcript' }));
+    const conversation = screen.getByRole('region', { name: 'Live conversation' });
+    expect(within(conversation).getByText('Live conversation')).toBeInTheDocument();
+    fireEvent.click(within(conversation).getByRole('button', { name: 'Download conversation' }));
     expect(download).toHaveBeenCalledOnce();
   });
   it('moves to the cart as a real item is added and returns after its removal', () => {
@@ -37,7 +35,7 @@ describe('live session workspace', () => {
       { id: 'one', speaker_ref: 'speaker_0', source_text: 'Original words', english_text: 'I need a fan.', start_seconds: 5 },
       { id: 'two', speaker_ref: 'speaker_1', speaker_role: 'agent', english_text: 'Here are the available fans.', start_seconds: 12 },
     ]} />);
-    const conversation = screen.getByRole('region', { name: 'Live translated conversation' });
+    const conversation = screen.getByRole('region', { name: 'Live conversation' });
     expect(within(conversation).getByText('Speaker 1')).toBeInTheDocument();
     expect(within(conversation).getByText('Sales agent')).toBeInTheDocument();
     expect(within(conversation).queryByText('Customer')).not.toBeInTheDocument();
@@ -50,7 +48,7 @@ describe('live session workspace', () => {
       { id: 'one', speaker_ref: 'run-uuid:window-uuid:speaker_0', speaker_name: 'Akshat', english_text: 'I need a quiet fan.', start_seconds: 2 },
       { id: 'two', speaker_ref: 'run-uuid:window-uuid:speaker_1', english_text: 'There are several options.', start_seconds: 8 },
     ]} />);
-    const conversation = screen.getByRole('region', { name: 'Live translated conversation' });
+    const conversation = screen.getByRole('region', { name: 'Live conversation' });
     expect(within(conversation).getByText('Akshat')).toBeInTheDocument();
     expect(within(conversation).getByText('Speaker 2')).toBeInTheDocument();
     expect(conversation).not.toHaveTextContent('run-uuid');
@@ -60,9 +58,9 @@ describe('live session workspace', () => {
   it('keeps existing utterances mounted when a new transcript version changes database IDs', () => {
     const turn = { id: 'old-version-turn', speaker_ref: 'speaker_0', source_text: 'Original words', english_text: 'I need a fan.', start_seconds: 0, end_seconds: 3 };
     const { rerender } = render(<LiveSessionWorkspace transcript={[turn]} />);
-    const message = screen.getByRole('region', { name: 'Live translated conversation' }).querySelector('.lws-message');
+    const message = screen.getByRole('region', { name: 'Live conversation' }).querySelector('.lws-message');
     rerender(<LiveSessionWorkspace transcript={[{ ...turn, id: 'new-version-turn' }]} />);
-    expect(screen.getByRole('region', { name: 'Live translated conversation' }).querySelector('.lws-message')).toBe(message);
+    expect(screen.getByRole('region', { name: 'Live conversation' }).querySelector('.lws-message')).toBe(message);
   });
 
   it('calculates percentage and fixed discounts per line without inventing tax', () => {
@@ -123,29 +121,25 @@ describe('live session workspace', () => {
     expect(within(guidance).getByText(question)).toBeVisible();
     expect(within(guidance).getByText('Find a motor compatible with the farm pump', { exact: false })).toBeVisible();
     expect(within(guidance).getByText('For the sales agent')).toBeVisible();
-    const conversation = screen.getByRole('region', { name: 'Live translated conversation' });
+    const conversation = screen.getByRole('region', { name: 'Live conversation' });
     expect(within(conversation).queryByText(question)).not.toBeInTheDocument();
     expect(within(conversation).getAllByText('I need a pump for the farm.')).toHaveLength(1);
     expect(screen.queryByRole('textbox', { name: /customer answer/i })).not.toBeInTheDocument();
   });
 
-  it('requires review for a technical match and resets acknowledgement when missing specs change', () => {
+  it('keeps recommendation cards simple even when catalogue details are incomplete', () => {
     const add = vi.fn();
     const item = { ...motor, match_status: 'needs_confirmation', matched_specs: ['1 HP'], missing_specs: ['Electrical phase'], availability_status: 'needs_review' };
     const { rerender } = render(<LiveSessionWorkspace recommendations={[item]} onAddToCart={add} />);
-    expect(screen.getByText('Needs confirmation')).toBeVisible();
-    expect(screen.getByText('1 HP', { exact: false })).toBeVisible();
-    expect(screen.getByText('Electrical phase', { exact: false })).toBeVisible();
+    expect(screen.queryByText('Needs confirmation')).not.toBeInTheDocument();
     expect(screen.getByText('Confirm stock')).toBeVisible();
     const button = screen.getByRole('button', { name: 'Add to cart Water pump motor' });
-    expect(button).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Review unverified match Water pump motor' }));
     expect(button).toBeEnabled();
     fireEvent.click(button);
-    expect(add).toHaveBeenCalledWith(expect.objectContaining({ match_status: 'needs_confirmation', match_confirmation_acknowledged: true }));
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ match_status: 'needs_confirmation' }));
     rerender(<LiveSessionWorkspace recommendations={[{ ...item, missing_specs: ['Voltage'] }]} onAddToCart={add} />);
-    expect(screen.getByRole('checkbox', { name: 'Review unverified match Water pump motor' })).not.toBeChecked();
-    expect(button).toBeDisabled();
+    expect(screen.queryByRole('checkbox', { name: 'Review unverified match Water pump motor' })).not.toBeInTheDocument();
+    expect(button).toBeEnabled();
   });
 
   it('distinguishes verified matches, unknown stock and out of stock', () => {
@@ -154,12 +148,10 @@ describe('live session workspace', () => {
       { ...motor, availability_status: 'needs_review', available_stock: 50 },
       { ...motor, item_id: 'sold', name: 'Sold out motor', availability_status: 'out_of_stock', available_stock: 5 },
     ]} onAddToCart={vi.fn()} />);
-    expect(screen.getByText('Verified match')).toBeVisible();
-    expect(screen.getByText('sweep mm: 1200', { exact: false })).toBeVisible();
+    expect(screen.queryByText('Verified match')).not.toBeInTheDocument();
     expect(screen.getByText('8 in stock')).toBeVisible();
     expect(screen.getByText('Confirm stock')).toBeVisible();
     expect(screen.queryByText('50 in stock')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Match not assessed')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Out of stock Sold out motor' })).toBeDisabled();
   });
 
@@ -201,7 +193,7 @@ describe('live session workspace', () => {
     render(<LiveSessionWorkspace transcript={[{ english_text: 'Need two fans.' }]} catalogueStatus="semantic_unavailable" insightsStatus={{ key: 'unavailable', label: 'Product analysis temporarily unavailable' }} />);
     expect(screen.getByText('Product analysis temporarily unavailable')).toBeVisible();
     expect(screen.getByText('Product similarity search is temporarily unavailable.', { exact: false })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Live translated conversation' })).toHaveTextContent('Need two fans.');
+    expect(screen.getByRole('region', { name: 'Live conversation' })).toHaveTextContent('Need two fans.');
   });
 
   it('keeps bulk deferred lookups visible without claiming that unchecked requirements have no match', () => {

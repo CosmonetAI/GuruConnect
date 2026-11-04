@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..settings import settings
+from ..product_training import product_cheat_sheet_for_prompt
 from .live import catalogue_queries
 
 
@@ -572,6 +573,9 @@ missing_critical_fields and suggested_questions are private suggestions for the 
 targeted questions when an unresolved reference, essential specification, quantity or use case prevents a useful
 match/quotation. Do not ask the customer directly. Do not open, create, email, order, reserve or promise anything.
 Summary is a short faithful account of new information. Never treat an agent's promise as stock or price evidence.
+The product_cheat_sheet in the request is a generic, brand-neutral vocabulary learned from the shared item catalogue.
+Use it only to recognize product wording and normalize a concise product category; it is not proof that an item was
+requested, available, or associated with a particular customer. Keep the exact customer evidence requirement above.
 """
 
 
@@ -611,7 +615,7 @@ class ConversationMonitorAgent:
         payload = {
             'english_text': chunk.get('english_text') or '', 'source_text': chunk.get('source_text') or '',
             'recent_dialogue': _bounded_dialogue(chunk), 'durable_context': prompt_context(context),
-            'fallback_route_hint': route,
+            'fallback_route_hint': route, 'product_cheat_sheet': product_cheat_sheet_for_prompt(),
         }
         payload['evidence_sources'] = _evidence_sources(payload)
         payload['requirement_refs'] = {f'requirement:{index}': {

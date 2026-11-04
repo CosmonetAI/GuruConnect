@@ -121,7 +121,7 @@ async def list_workspaces(request: Request, user: User = Depends(current_user)):
             join members actor on actor.organisation_id=o.id and actor.user_id=%s and actor.status='active'
             join members m on m.organisation_id=o.id and m.status='active'
             left join profiles p on p.id=m.user_id
-            where actor.role='owner' or m.user_id=%s
+            where m.user_id=%s or (actor.role='owner' and m.role in ('salesperson', 'receptionist'))
             order by o.created_at, case when m.user_id=%s then 0 else 1 end, p.display_name
         """, (user.id, user.id, user.id))
     return {"items": rows, "next_cursor": None}

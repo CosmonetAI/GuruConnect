@@ -28,6 +28,13 @@ describe('sales document review', () => {
     expect(screen.getByText('Email delivery is not configured')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create & download PDF' })).toBeEnabled()
   })
+  it('emphasizes the loaded sales order as an updated send action', () => {
+    render(<SalesDocumentModal {...props({ documentTypes: ['invoice', 'quote', 'sales-order'], documentType: 'sales-order', sourceDocumentType: 'sales-order', email: 'customer@example.test' })} />)
+    expect(screen.getByRole('radio', { name: /Send updated sales order/ })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Send invoice/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Send quote/ })).toBeInTheDocument()
+    expect(screen.getByText('Update and send this sales order')).toBeInTheDocument()
+  })
   it('makes demo documents download only, and keeps a failed created document available for retry', () => {
     const view = render(<SalesDocumentModal {...props({ demo: true, email: 'customer@example.test' })} />)
     expect(screen.getByText('Demo catalogue')).toBeInTheDocument()

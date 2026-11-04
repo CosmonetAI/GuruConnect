@@ -23,6 +23,7 @@ from .security import Workspace, conversation, workspace
 from .walkin_routes import complete_conversion, conversion_visit, validate_conversion_recording
 from .assignment import current_ticket_day, format_enquiry_number, format_ticket_number, least_loaded_salesperson, next_daily_ticket
 from app.zoho import zoho
+from app.session_tags import derive_business_tags
 
 router = APIRouter(prefix="/api/v1/enquiries", tags=["enquiries"])
 
@@ -126,6 +127,7 @@ left join public.conversations c on c.id=e.conversation_id
   and c.organisation_id=e.organisation_id and c.owner_id=e.owner_id
 left join public.profiles assigned_profile on assigned_profile.id=e.assigned_to
 left join auth.users assigned_user on assigned_user.id=e.assigned_to
+left join public.voice_ai_contexts ai_context on ai_context.conversation_id=e.conversation_id
 """
 
 
@@ -144,6 +146,7 @@ def serialize_enquiry(row: dict) -> dict:
     payload["assignedTo"] = str(row["assigned_to"]) if row.get("assigned_to") else None
     payload["assignedSalesperson"] = row.get("assigned_salesperson_name") or payload.get("assignedExecutive", "")
     payload["assignedSalespersonEmail"] = row.get("assigned_salesperson_email", "")
+    payload["tags"] = derive_business_tags(row.get("ai_context") or {}, payload=payload)
     if row["conversation_id"] and row.get("capture_state") and not row.get("recording_deleted_at"):
         payload["recording"] = {
             "captureState": row["capture_state"], "uploadState": row["upload_state"],

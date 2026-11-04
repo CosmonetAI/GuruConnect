@@ -77,6 +77,7 @@ def batch_fingerprint(turns: list[dict]) -> str:
 def catalogue_queries(context: dict) -> list[str]:
     """Search every requested product, using attributes to rank rather than narrow out stock."""
     queries = []
+    aliases = {'bulb': 'light', 'bulbs': 'lights', 'lamp': 'light', 'lamps': 'lights'}
     for requirement in context.get('customer_requirements') or []:
         if not isinstance(requirement, dict) or requirement.get('excluded') or requirement.get('status') == 'removed':
             continue
@@ -90,6 +91,9 @@ def catalogue_queries(context: dict) -> list[str]:
             clean = re.sub(r'\s+', ' ', str(value or '')).strip()[:100]
             if clean and clean.casefold() not in {query.casefold() for query in queries}:
                 queries.append(clean)
+            alias = aliases.get(clean.casefold())
+            if alias and alias.casefold() not in {query.casefold() for query in queries}:
+                queries.append(alias)
     focal = str(context.get('focal_product') or '').strip()[:100]
     excluded_names = {str(item.get('product') or item.get('name') or '').casefold()
                       for item in context.get('customer_requirements') or [] if isinstance(item, dict) and item.get('excluded')}

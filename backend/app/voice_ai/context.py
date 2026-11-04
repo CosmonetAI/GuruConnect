@@ -36,6 +36,7 @@ class VoiceConversationContext:
     buying_signals: list[str] = field(default_factory=list)
     contact_details: dict[str, Any] = field(default_factory=dict)
     recent_recommendations: list[dict[str, Any]] = field(default_factory=list)
+    business_tags: list[str] = field(default_factory=list)
     entities: list[dict[str, Any]] = field(default_factory=list)
     source_refs: list[dict[str, Any]] = field(default_factory=list)
     recent_summaries: list[str] = field(default_factory=list)

@@ -21,6 +21,7 @@ from .voice_ai import VoiceConversationOrchestrator
 from .voice_ai.live import analysis_turns, batch_fingerprint, catalogue_queries, intent_keywords, pending_turns, search_catalogue, turn_fingerprint
 from .voice_ai.workspace import (analysis_outcome, catalogue_due, failed_analysis_data, retain_catalogue_recommendations,
                                 requirement_signature, retry_failure, row_analysis_error, workspace_fields)
+from .session_tags import derive_business_tags
 
 # At most two live analyses hold database/provider resources in this process.
 # PostgreSQL advisory locks also serialize a conversation across API instances
@@ -526,6 +527,8 @@ def _extract_voice_chunk(db, payload):
     if (not catalogue_queries(result.get('context') or {})
             or requirement_signature(result.get('context') or {}) != requirement_signature(previous_context)):
         result.setdefault('context', {})['recent_recommendations'] = []
+    result.setdefault('context', {})['business_tags'] = derive_business_tags(
+        result.get('context') or {}, recommendations=(result.get('context') or {}).get('recent_recommendations'))
     data = {**result.get('extraction', {}), '_source': {'conversation_id': conversation_id, 'transcript_chunk_id': str(chunk['id']), 'fingerprint': fingerprint},
             '_live': {'version_id': str(chunk['version_id']), 'turn_fingerprints': chunk['turn_fingerprints']},
             '_route': result.get('route', {}), '_agent_result': result.get('agent_result', {})}
@@ -607,7 +610,13 @@ async def _warm_voice_catalogue(context):
 @app.get('/api/voice-sessions/{session_id}/history')
 def voice_session_history(session_id: UUID, request: Request):
     with require_db() as db:
-        return _voice_history(db, _session(db, session_id))
+        session = _session(db, session_id)
+        result = _voice_history(db, session)
+        if session.get('conversation_id'):
+            stored = db.execute(text("select context from voice_ai_contexts where conversation_id=cast(:conversation as uuid)"),
+                                 {'conversation': str(session['conversation_id'])}).first()
+            result['session']['tags'] = derive_business_tags(stored[0] if stored else {})
+        return result
 
 
 def _voice_live_snapshot(session_id):
@@ -741,6 +750,7 @@ async def _analyse_voice_live(session_id):
                 }]}
             catalogue['requirements_signature'] = requirement_signature(context)
             retain_catalogue_recommendations(context, catalogue, previous_context)
+            context['business_tags'] = derive_business_tags(context, recommendations=context.get('recent_recommendations'))
             latest = await asyncio.to_thread(_session, db, session_id)
             if str(latest.get('conversation_id')) != conversation_id:
                 return
@@ -828,6 +838,10 @@ async def voice_session_live(session_id: UUID, request: Request):
         notices.append({'code': 'voice_analysis_failed', 'message': analysis_error['message']})
     return {**snapshot, 'insights': snapshot['insights'][-30:], **fields,
             'keywords': intent_keywords(context), 'recommendations': context.get('recent_recommendations') or [],
+            'tags': derive_business_tags(context, requirements=requirements,
+                                         recommendations=context.get('recent_recommendations'),
+                                         current_intent=fields.get('current_intent'),
+                                         document_kind=fields.get('document_kind')),
             'analysis_status': status, 'analysis_error': analysis_error if status in {'failed', 'unavailable'} else None,
             'catalogue_status': 'searching' if task else catalogue.get('status', 'waiting'),
             'notices': notices}
@@ -1303,8 +1317,8 @@ def _clean_document_contact_metadata(payload: dict):
         if key not in {'customer_source', 'customer_record', 'vendor_source', 'vendor_record'}
     }
 @app.get('/api/quotes')
-async def quotes(search: str = '', date: str = '', page: int = 1):
-    query = search.strip()
+async def quotes(search: str = '', search_text: str = '', date: str = '', page: int = 1, per_page: int = 10):
+    query = (search_text or search).strip()
     try:
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
@@ -1314,7 +1328,7 @@ async def quotes(search: str = '', date: str = '', page: int = 1):
             if cached:
                 return {'quotes': cached, 'info': {'has_more_page': True}, 'page': 1,
                         'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
-        params = {'organization_id':status['organization_id'],'per_page':10,'page':page}
+        params = {'organization_id':status['organization_id'],'per_page':min(max(per_page, 1), 200),'page':page}
         if query: params['search_text'] = query
         if date.strip(): params['date'] = date.strip()
         payload = await zoho.request('GET','/books/v3/estimates',params=params)
@@ -1355,6 +1369,26 @@ def _connected_zoho_email_payload(payload: dict | None) -> dict:
         raise HTTPException(422, 'Email message must be text')
     return cleaned
 
+async def _get_books_record(get_fn, record_id: str, key: str, error_message: str):
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org:
+        raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    try:
+        result = await get_fn(org, record_id)
+        record = result.get(key) if isinstance(result, dict) else None
+        if isinstance(record, list):
+            record = record[0] if record else None
+        if not isinstance(record, dict):
+            raise HTTPException(404, 'Zoho Books document was not found')
+        return {key: record, 'response': result}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, error_message)
+
+@app.get('/api/quotes/{estimate_id}')
+async def get_quote(estimate_id: str):
+    return await _get_books_record(zoho.books_estimate, estimate_id, 'estimate', 'Unable to load Zoho Books quote')
 
 @app.post('/api/quotes/{estimate_id}/email')
 async def email_quote(estimate_id: str, payload: dict | None = None):
@@ -1365,8 +1399,8 @@ async def email_quote(estimate_id: str, payload: dict | None = None):
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books quote')
 @app.get('/api/orders')
-async def orders(search: str = '', date: str = '', page: int = 1):
-    query = search.strip()
+async def orders(search: str = '', search_text: str = '', date: str = '', page: int = 1, per_page: int = 10):
+    query = (search_text or search).strip()
     try:
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
@@ -1376,7 +1410,7 @@ async def orders(search: str = '', date: str = '', page: int = 1):
             if cached:
                 return {'orders': cached, 'info': {'has_more_page': True}, 'page': 1,
                         'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
-        payload = await zoho.search_sales_orders(status['organization_id'], query, date.strip() or None, page)
+        payload = await zoho.search_sales_orders(status['organization_id'], query, date.strip() or None, page, min(max(per_page, 1), 200))
         info = payload.get('page_context', {})
         rows = payload.get('salesorders', payload.get('data', []))
         _cache_recent_rows('orders', rows)
@@ -1406,9 +1440,13 @@ async def email_order(salesorder_id: str, payload: dict | None = None):
         return await zoho.email_sales_order(org, salesorder_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books sales order')
+@app.get('/api/orders/{salesorder_id}')
+async def get_order(salesorder_id: str):
+    return await _get_books_record(zoho.books_sales_order, salesorder_id, 'salesorder', 'Unable to load Zoho Books sales order')
+
 @app.get('/api/purchase-orders')
-async def purchase_orders(search: str = '', date: str = '', page: int = 1):
-    query = search.strip()
+async def purchase_orders(search: str = '', search_text: str = '', date: str = '', page: int = 1, per_page: int = 10):
+    query = (search_text or search).strip()
     try:
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
@@ -1418,7 +1456,7 @@ async def purchase_orders(search: str = '', date: str = '', page: int = 1):
             if cached:
                 return {'purchase_orders': cached, 'info': {'has_more_page': True}, 'page': 1,
                         'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
-        payload = await zoho.search_purchase_orders(status['organization_id'], query, date.strip() or None, page)
+        payload = await zoho.search_purchase_orders(status['organization_id'], query, date.strip() or None, page, min(max(per_page, 1), 200))
         info = payload.get('page_context', {})
         rows = payload.get('purchaseorders', payload.get('data', []))
         _cache_recent_rows('purchase_orders', rows)
@@ -1451,9 +1489,13 @@ async def email_purchase_order(purchaseorder_id: str, payload: dict | None = Non
         return await zoho.email_purchase_order(org, purchaseorder_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books purchase order')
+@app.get('/api/purchase-orders/{purchaseorder_id}')
+async def get_purchase_order(purchaseorder_id: str):
+    return await _get_books_record(zoho.books_purchase_order, purchaseorder_id, 'purchaseorder', 'Unable to load Zoho Books purchase order')
+
 @app.get('/api/invoices')
-async def invoices(search: str = '', date: str = '', page: int = 1):
-    query = search.strip()
+async def invoices(search: str = '', search_text: str = '', date: str = '', page: int = 1, per_page: int = 10):
+    query = (search_text or search).strip()
     try:
         status = zoho.status()
         if not status.get('connected') or not status.get('organization_id'):
@@ -1463,7 +1505,7 @@ async def invoices(search: str = '', date: str = '', page: int = 1):
             if cached:
                 return {'invoices': cached, 'info': {'has_more_page': True}, 'page': 1,
                         'has_more': True, 'organization_id': status['organization_id'], 'source': 'supabase'}
-        payload = await zoho.search_invoices(status['organization_id'], query, date.strip() or None, page)
+        payload = await zoho.search_invoices(status['organization_id'], query, date.strip() or None, page, min(max(per_page, 1), 200))
         info = payload.get('page_context', {})
         rows = payload.get('invoices', payload.get('data', []))
         _cache_recent_rows('invoices', rows)
@@ -1496,6 +1538,10 @@ async def email_invoice(invoice_id: str, payload: dict | None = None):
         return await zoho.email_invoice(org, invoice_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books invoice')
+@app.get('/api/invoices/{invoice_id}')
+async def get_invoice(invoice_id: str):
+    return await _get_books_record(zoho.books_invoice, invoice_id, 'invoice', 'Unable to load Zoho Books invoice')
+
 @app.get('/api/contacts')
 async def contacts(search: str = '', date: str = '', page: int = 1):
     query = search.strip()
@@ -1789,7 +1835,7 @@ async def zoho_refresh_cron(x_zoho_refresh_secret: str|None = Header(default=Non
 def chats(request: Request):
     try:
         with require_db() as db:
-            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email from chat_sessions s join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null order by s.updated_at desc limit 50"), scope_parameters()).all(); return [row_dict(r) for r in rows]
+            rows=db.execute(text("select s.id,s.title,s.status,s.updated_at,c.name,c.phone,c.email,s.context from chat_sessions s join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null order by s.updated_at desc limit 50"), scope_parameters()).all(); return [{**row_dict(r), 'tags': derive_business_tags(row_dict(r).get('context') or {})} for r in rows]
     except Exception as e: return _db_http_error(e)
 
 @app.get('/api/session-contacts')
@@ -1805,6 +1851,9 @@ async def session_contacts(search: str = ''):
         key = f"phone:{''.join(ch for ch in phone if ch.isdigit())[-10:]}" if phone else f"email:{email}"
         if key == 'email:' and not phone: key = f"{source}:{external_id or name}"
         item = contacts.setdefault(key, {'id': key, 'name': name, 'email': email, 'phone': phone, 'sources': [], 'records': {}})
+        item['tags'] = list(dict.fromkeys([*(item.get('tags') or []), *derive_business_tags(
+            row.get('ai_context') or row.get('context') or {}, payload=row.get('payload') or {},
+            current_intent=row.get('last_intent'))]))
         if source not in item['sources']: item['sources'].append(source)
         if external_id: item['records'][source] = str(external_id)
         if session_id: item['session_id'] = str(session_id)
@@ -1813,20 +1862,24 @@ async def session_contacts(search: str = ''):
     errors = []
     try:
         with require_db() as db:
-            rows = db.execute(text("""select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id,
+            rows = db.execute(text("""select s.id as session_id,s.updated_at,c.name,c.phone,c.email,c.bigin_contact_id,c.books_contact_id,s.context,
+                vac.context as ai_context,vac.last_intent,
                 r.capture_state,r.upload_state,r.transcription_state,r.english_state,r.final_state
                 from chat_sessions s
                 join customers c on c.id=s.customer_id and c.organisation_id=s.organisation_id and c.owner_id=s.member_id
                 left join conversations r on r.id=s.conversation_id and r.organisation_id=s.organisation_id and r.owner_id=s.member_id and r.deleted_at is null
+                left join voice_ai_contexts vac on vac.conversation_id=s.conversation_id and vac.organisation_id=s.organisation_id
                 where s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid) and c.deleted_at is null
                 order by s.updated_at desc limit 50"""), scope_parameters()).all()
             for raw in rows:
                 row = row_dict(raw)
                 add(row, 'session', session_id=row['session_id'])
-            rows = db.execute(text("""select e.id as enquiry_id,e.customer_name as name,e.phone,e.payload->>'email' as email,e.stage as enquiry_stage,e.bigin_contact_id,e.books_contact_id,
+            rows = db.execute(text("""select e.id as enquiry_id,e.customer_name as name,e.phone,e.payload->>'email' as email,e.payload,e.stage as enquiry_stage,e.bigin_contact_id,e.books_contact_id,
+                vac.context as ai_context,vac.last_intent,
                 r.capture_state,r.upload_state,r.transcription_state,r.english_state,r.final_state
                 from guruconnect_enquiries e
                 left join conversations r on r.id=e.conversation_id and r.organisation_id=e.organisation_id and r.owner_id=e.owner_id and r.deleted_at is null
+                left join voice_ai_contexts vac on vac.conversation_id=e.conversation_id and vac.organisation_id=e.organisation_id
                 where e.organisation_id=cast(:org as uuid) and e.assigned_to=cast(:member as uuid)
                 order by e.created_at desc limit 50"""), scope_parameters()).all()
             for raw in rows:

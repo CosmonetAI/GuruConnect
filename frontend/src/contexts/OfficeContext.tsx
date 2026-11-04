@@ -31,8 +31,11 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     try {
       const result = await request<{ items: Workspace[] }>('/workspaces')
       if (identity.current !== userId || sequence.current !== ticket) return
-      setWorkspaces(result.items)
-      setActive(old => result.items.some(item => (item.member_id ?? item.id) === old) ? old : result.items[0] ? (result.items[0].member_id ?? result.items[0].id) : null)
+      // The API enforces this too; keep the client from displaying another
+      // owner's workspace if an older server or cached response returns one.
+      const visible = result.items.filter(item => item.role !== 'owner' || (item.member_id ?? item.id) === userId)
+      setWorkspaces(visible)
+      setActive(old => visible.some(item => (item.member_id ?? item.id) === old) ? old : visible[0] ? (visible[0].member_id ?? visible[0].id) : null)
       setError('')
     } catch (failure) {
       if (identity.current !== userId || sequence.current !== ticket) return

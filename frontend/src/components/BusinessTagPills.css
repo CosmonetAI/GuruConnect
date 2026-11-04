@@ -1,0 +1,4 @@
+.business-tag-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.business-tag-pill { display: inline-flex; align-items: center; min-height: 23px; max-width: 100%; padding: 4px 8px; border: 1px solid #d7e4f4; border-radius: 999px; background: #eef5ff; color: #35648f; font-size: 10px; font-weight: 750; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.business-tag-pills.compact { gap: 4px; margin-top: 4px; }
+.business-tag-pills.compact .business-tag-pill { min-height: 20px; padding: 3px 7px; font-size: 9px; }

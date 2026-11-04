@@ -50,7 +50,7 @@ def _categories(query: str) -> set[str]:
         categories.add('motor')
     if words & {'ac', 'conditioner', 'conditioners', 'aircon', 'cooling'}:
         categories.add('ac')
-    if words & {'light', 'lights', 'lighting', 'lamp'} and 'fan' not in categories:
+    if words & {'light', 'lights', 'lighting', 'lamp', 'bulb', 'bulbs'} and 'fan' not in categories:
         categories.add('light')
     return categories
 

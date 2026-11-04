@@ -3,6 +3,7 @@ import { ArrowLeft, CalendarDays, ClipboardList, FileAudio2, PackageSearch, User
 import { useScopedResource } from '../../hooks/useScopedResource'
 import { OfficeNotice, OfficeStatus } from '../../components/OfficeUi'
 import ConversationTranscript from '../../components/ConversationTranscript'
+import BusinessTagPills from '../../components/BusinessTagPills'
 import type { Enquiry } from '../../types/enquiry'
 import { recordingStatusFromEnquiry } from '../../recording/status'
 import './NewEnquiry.css'
@@ -41,7 +42,7 @@ export default function EnquiryDetail() {
 
   return <div className="new-enquiry-page">
     <div className="enquiry-topline"><Link className="back-link" to="/enquiries"><ArrowLeft size={16} /> Back to enquiries</Link><span className="enquiry-id-label">{enquiry.enquiryNumber || enquiry.id}</span></div>
-    <header className="enquiry-page-header"><div><div className="page-kicker"><ClipboardList size={14} /> SAVED ENQUIRY</div><h1>{enquiry.customerName}</h1><p>{enquiry.product || 'Customer details and conversation'}</p></div><div><div className="required-note">Created {dateLabel(enquiry.createdAt)}</div><Link className="button button-primary" to={startSessionUrl(enquiry)}>Continue conversation</Link></div></header>
+    <header className="enquiry-page-header"><div><div className="page-kicker"><ClipboardList size={14} /> SAVED ENQUIRY</div><h1>{enquiry.customerName}</h1><p>{enquiry.product || 'Customer details and conversation'}</p><BusinessTagPills tags={enquiry.tags} /></div><div><div className="required-note">Created {dateLabel(enquiry.createdAt)}</div><Link className="button button-primary" to={startSessionUrl(enquiry)}>Continue conversation</Link></div></header>
     {confirmation && <OfficeNotice>{confirmation}</OfficeNotice>}
     {resource.error && <OfficeNotice error>{resource.error} <button type="button" className="button button-secondary" onClick={() => void resource.reload()}>Retry</button></OfficeNotice>}
     <div className="enquiry-workspace">
