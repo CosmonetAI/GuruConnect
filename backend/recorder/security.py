@@ -189,6 +189,8 @@ async def workspace(request: Request, user: User = Depends(current_user),
         actor["role"] != "owner" or selected["role"] == "owner"
     )):
         fail("workspace_access_denied", 403)
+    if actor["role"] == "owner" and selected_id != user.id and request.method not in {"GET", "HEAD"}:
+        fail("workspace_read_only", 403, "Owner views of salesperson and receptionist workspaces are read-only")
     if selected.get("status", "active") != "active" and (actor["role"] != "owner" or request.method not in {"GET", "HEAD"}):
         fail("workspace_access_denied", 403)
     return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])

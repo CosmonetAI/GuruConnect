@@ -5,7 +5,7 @@ import OrganisationPill from '../components/OrganisationPill'
 import { useOffice } from '../contexts/OfficeContext'
 
 export default function AppLayout() {
-  const { user, workspace } = useOffice()
+  const { user, workspace, readOnly } = useOffice()
   const location = useLocation()
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [location.pathname])
   return (
@@ -14,7 +14,18 @@ export default function AppLayout() {
       <Sidebar />
       <div className="app-main">
         <div className="platform-bar"><OrganisationPill /></div>
-        <main className="app-content" id="main-content" tabIndex={-1}>
+        <main
+          className="app-content"
+          id="main-content"
+          tabIndex={-1}
+          onSubmitCapture={event => {
+            if (readOnly) {
+              event.preventDefault()
+              event.stopPropagation()
+            }
+          }}
+        >
+          {readOnly && <p className="flow-note" role="status">Read-only view: changes are disabled while you review this member workspace.</p>}
           <Outlet key={`${user?.id}/${workspace?.id}/${workspace?.member_id ?? user?.id}`} />
         </main>
       </div>

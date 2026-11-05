@@ -6,6 +6,7 @@ const load = () => import('./officeApi')
 
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks()
+  localStorage.removeItem('guruconnect-active-organisation'); localStorage.removeItem('guruconnect-active-workspace')
   vi.stubEnv('VITE_SUPABASE_URL', ''); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', ''); vi.stubEnv('VITE_SUPABASE_ANON_KEY', '')
   vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:8010'); vi.stubEnv('VITE_LOCAL_MODE', ''); vi.stubEnv('DEV', true)
   vi.stubGlobal('location', { hostname: 'localhost' })
@@ -68,6 +69,19 @@ describe('local and authenticated request boundaries', () => {
     const headers = new Headers(init?.headers)
     expect(headers.get('X-Workspace-ID')).toBe('organization-a')
     expect(headers.get('X-Workspace-Member-ID')).toBe('salesperson-a')
+  })
+  it('uses the active member scope by default and rejects owner writes to that view', async () => {
+    cloud()
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'fixture-access-token', user: { id: 'owner-a' } } } })
+    localStorage.setItem('guruconnect-active-organisation', 'organization-a')
+    localStorage.setItem('guruconnect-active-workspace', 'salesperson-a')
+    const api = await load()
+    await api.request('/analytics', 'organization-a')
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    expect(new Headers(init?.headers).get('X-Workspace-Member-ID')).toBe('salesperson-a')
+    await expect(api.request('/profile', 'organization-a', api.json('PATCH', { display_name: 'Changed' })))
+      .rejects.toMatchObject({ status: 403, code: 'workspace_read_only' })
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
   it('rejects a missing cloud session before fetching private records', async () => {
     cloud(); mocks.getSession.mockResolvedValue({ data: { session: null } }); const api = await load()

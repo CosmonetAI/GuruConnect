@@ -7,7 +7,7 @@ const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', 
 
 interface OfficeState {
   configured: boolean; localMode: boolean; session: Session | null; user: User | null; loading: boolean
-  workspacesLoading: boolean; workspaces: Workspace[]; workspace: Workspace | null; error: string
+  workspacesLoading: boolean; workspaces: Workspace[]; workspace: Workspace | null; readOnly: boolean; error: string
   setWorkspace(id: string): void; reloadWorkspaces(): Promise<void>
   captureBusy: boolean; setCaptureBusy(busy: boolean): void
 }
@@ -82,8 +82,11 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     ping(); const timer = window.setInterval(ping, 30_000)
     return () => window.clearInterval(timer)
   }, [session, localMode])
+  const user = localMode ? localUser : session?.user ?? null
+  const workspace = localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null
+  const readOnly = !localMode && !!user && !!workspace?.member_id && workspace.member_id !== user.id
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
-    workspaces: localMode ? [localWorkspace] : workspaces, workspace: localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null, error, captureBusy, setCaptureBusy,
+    workspaces: localMode ? [localWorkspace] : workspaces, workspace, readOnly, error, captureBusy, setCaptureBusy,
     reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) } }}>{children}</OfficeContext.Provider>
 }
 export function useOffice() {

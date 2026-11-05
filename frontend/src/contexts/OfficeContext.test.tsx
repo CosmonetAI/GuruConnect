@@ -15,7 +15,7 @@ import { OfficeProvider, useOffice } from './OfficeContext'
 
 function Probe() {
   const state = useOffice()
-  return <div><output data-testid="identity">{state.user?.id || 'anonymous'}</output><output data-testid="workspace">{state.workspace?.name || 'none'}</output><output data-testid="mode">{state.configured ? 'available' : 'unconfigured'}:{state.localMode ? 'local' : 'cloud'}</output><output data-testid="busy">{String(state.captureBusy)}</output><output data-testid="error">{state.error}</output>
+  return <div><output data-testid="identity">{state.user?.id || 'anonymous'}</output><output data-testid="workspace">{state.workspace?.name || 'none'}</output><output data-testid="mode">{state.configured ? 'available' : 'unconfigured'}:{state.localMode ? 'local' : 'cloud'}</output><output data-testid="busy">{String(state.captureBusy)}</output><output data-testid="read-only">{String(state.readOnly)}</output><output data-testid="error">{state.error}</output>
     <button onClick={() => state.setCaptureBusy(true)}>Capture active</button><button onClick={() => state.setCaptureBusy(false)}>Capture stopped</button><button onClick={() => state.setWorkspace('workspace-b')}>Choose B</button>
   </div>
 }
@@ -70,10 +70,12 @@ describe('workspace identity and explicit local mode', () => {
   it('prevents workspace switching while audio is active and clears access on sign-out', async () => {
     setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
     await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A'))
+    expect(screen.getByTestId('read-only')).toHaveTextContent('false')
     fireEvent.click(screen.getByRole('button', { name: 'Capture active' })); fireEvent.click(screen.getByRole('button', { name: 'Choose B' }))
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A')
     fireEvent.click(screen.getByRole('button', { name: 'Capture stopped' })); fireEvent.click(screen.getByRole('button', { name: 'Choose B' }))
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace B')
+    expect(screen.getByTestId('read-only')).toHaveTextContent('true')
     act(() => { mocks.handler?.('SIGNED_OUT', null) })
     expect(screen.getByTestId('identity')).toHaveTextContent('anonymous'); expect(screen.getByTestId('workspace')).toHaveTextContent('none'); expect(screen.getByTestId('busy')).toHaveTextContent('false')
   })

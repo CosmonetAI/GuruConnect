@@ -8,16 +8,23 @@ export async function call(path, opts = {}, workspaceId = null) {
     || localStorage.getItem('guruconnect-active-organisation')
     || localStorage.getItem('guruconnect-active-workspace');
   if (workspace) headers.set('X-Workspace-ID', workspace);
-  const member = localStorage.getItem('guruconnect-active-workspace');
+  const member = localStorage.getItem('guruconnect-active-organisation') === workspace
+    ? localStorage.getItem('guruconnect-active-workspace')
+    : null;
   if (member && !headers.has('X-Workspace-Member-ID')) headers.set('X-Workspace-Member-ID', member);
+  let userId = '';
   try {
     const { supabase } = await import('../../services/officeApi');
     const session = supabase ? (await supabase.auth.getSession()).data.session : null;
     if (session) {
+      userId = session.user.id;
       headers.set('Authorization', `Bearer ${session.access_token}`);
       headers.set('X-User-ID', session.user.id);
     }
   } catch {}
+  if (userId && member && member !== userId && !['GET', 'HEAD'].includes((requestOptions.method || 'GET').toUpperCase())) {
+    throw Object.assign(new Error('This member workspace is read-only while you are viewing it as an owner.'), { status: 403, code: 'workspace_read_only' });
+  }
   const timeout = AbortSignal.timeout(Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, timeoutMs)) : 30000);
   const signal = requestOptions.signal ? AbortSignal.any([timeout, requestOptions.signal]) : timeout;
   const response = await fetch(API + path, { ...requestOptions, headers, signal, credentials: 'omit' });

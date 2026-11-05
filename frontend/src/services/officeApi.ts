@@ -20,6 +20,7 @@ const serviceErrorMessages: Record<string, string> = {
   database_unavailable: 'Workspace services cannot reach the database. Ask your administrator to check the database connection, then try again.',
   database_not_configured: 'Workspace services are not configured yet. Ask your administrator to finish the database setup, then try again.',
   database_busy: 'Workspace services are temporarily unavailable. Wait a moment and try again. If this continues, ask your administrator to check the database connection.',
+  workspace_read_only: 'This member workspace is read-only while you are viewing it as an owner.',
   storage_unavailable: 'Recording storage is unavailable. Ask your administrator to check storage access and connectivity before retrying processing.',
   storage_write_failed: 'The processing result could not be saved to recording storage. Ask your administrator to check storage access and configuration before retrying processing.',
   request_timeout: 'The request took too long. Check your connection and try again. If you were saving a change, refresh its status before submitting it again.',
@@ -51,6 +52,16 @@ export function errorMessageForCode(code: string, fallback = 'The request failed
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string, public readonly details?: Record<string, unknown>) { super(errorMessageForCode(code, message)); this.name = 'ApiError'; }
 }
+function selectedWorkspaceMember(workspace: string | null | undefined, memberId?: string | null): string | null {
+  if (memberId) return memberId;
+  if (!workspace || localStorage.getItem('guruconnect-active-organisation') !== workspace) return null;
+  return localStorage.getItem('guruconnect-active-workspace');
+}
+function assertWorkspaceWritable(method: string, userId: string | undefined, memberId: string | null): void {
+  if (userId && memberId && memberId !== userId && !['GET', 'HEAD'].includes(method.toUpperCase())) {
+    throw new ApiError(403, 'workspace_read_only', 'This member workspace is read-only while you are viewing it as an owner.');
+  }
+}
 function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const aborted = () => { signal.removeEventListener('abort', aborted); reject(signal.reason ?? new DOMException('The request was cancelled.', 'AbortError')); };
@@ -76,13 +87,15 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       const session = supabase ? (await supabase.auth.getSession()).data.session : null;
       if (abort.signal.aborted) throw abort.signal.reason;
       if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
+      const selectedMemberId = selectedWorkspaceMember(workspace, memberId);
+      assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
       const headers = new Headers(init.headers);
       if (session) {
         headers.set('Authorization', `Bearer ${session.access_token}`);
         if (session.user?.id) headers.set('X-User-ID', session.user.id);
       }
       if (workspace) headers.set('X-Workspace-ID', workspace);
-      if (memberId) headers.set('X-Workspace-Member-ID', memberId);
+      if (selectedMemberId) headers.set('X-Workspace-Member-ID', selectedMemberId);
       if (init.body) headers.set('Content-Type', 'application/json');
       const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
       if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
@@ -116,13 +129,15 @@ export async function requestStream(path: string, workspace?: string | null, ini
     const session = sessionPromise ? (await (signal ? abortable(sessionPromise, signal) : sessionPromise)).data.session : null;
     signal?.throwIfAborted();
     if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
+    const selectedMemberId = selectedWorkspaceMember(workspace, memberId);
+    assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
     const headers = new Headers(init.headers);
     if (session) {
       headers.set('Authorization', `Bearer ${session.access_token}`);
       if (session.user?.id) headers.set('X-User-ID', session.user.id);
     }
     if (workspace) headers.set('X-Workspace-ID', workspace);
-    if (memberId) headers.set('X-Workspace-Member-ID', memberId);
+    if (selectedMemberId) headers.set('X-Workspace-Member-ID', selectedMemberId);
     const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal, credentials: 'omit' });
     if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
     if (!response.ok) {
