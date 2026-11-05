@@ -51,6 +51,12 @@ describe('extractSuggestions', () => {
   it('converts spoken digits', () => {
     expect(spokenDigits('double nine eight')).toBe('998')
   })
+  it('captures a number spoken after a receptionist phone prompt', () => {
+    expect(extractSuggestions([
+      seg('your phone number please', 'Receptionist'),
+      seg('81971718724', 'Visitor'),
+    ])).toContainEqual(expect.objectContaining({ field: 'mobileNumber', value: '81971718724' }))
+  })
 })
 
 describe('createLevelWatcher', () => {

@@ -117,7 +117,13 @@ export default function WalkinRegistration() {
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
-          <div className="walkin-section-heading"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div>
+          <div className="walkin-section-heading">
+            <span>01</span>
+            <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
+            <div className="walkin-registration-recorder">
+              <ConversationRecorder customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id) }} onBusyChange={setVoiceBusy} chunkSeconds={5} audioBucket="walkin-audio" compact registrationOnly />
+            </div>
+          </div>
           <div className="walkin-form-grid">
             <Field label="Name (customer full name)" name="customerName" required error={errors.customerName}><input disabled={!!voiceId || voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Visitor name" /></Field>
             <Field label="Phone (mobile number)" name="mobileNumber" required error={errors.mobileNumber}><input disabled={!!voiceId || voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /></Field>
@@ -133,7 +139,7 @@ export default function WalkinRegistration() {
         </section>
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
-        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><ConversationRecorder customerName={form.customerName} customerPhone={form.mobileNumber} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id) }} onBusyChange={setVoiceBusy} chunkSeconds={30} audioBucket="walkin-audio" compact registrationOnly /><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
+        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
       </form>
     </div>
   )

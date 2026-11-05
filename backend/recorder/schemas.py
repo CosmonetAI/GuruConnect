@@ -78,7 +78,7 @@ class ConversationCreate(Input):
     def customer_and_consent(self):
         if not self.consent_confirmed:
             raise ValueError("Recording acknowledgement is required")
-        if not self.customer_id and not self.is_unnamed:
+        if not self.customer_id and not self.is_unnamed and self.audio_bucket != "walkin-audio":
             if not self.customer_name:
                 raise ValueError("Enter the customer name")
             if not (self.phone and self.phone.strip()) and not (self.email and self.email.strip()):

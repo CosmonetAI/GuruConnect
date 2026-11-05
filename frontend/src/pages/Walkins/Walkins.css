@@ -388,6 +388,78 @@
   margin-bottom: 16px;
 }
 
+.walkin-registration-recorder {
+  margin-left: auto;
+  min-width: 0;
+}
+
+.walkin-registration-recorder > .connected-recorder {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.walkin-registration-recorder .session-recording-container {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.walkin-registration-recorder .recorder-panel {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.walkin-registration-recorder .recorder-visual,
+.walkin-registration-recorder .recorder-copy,
+.walkin-registration-recorder .connected-recording-metrics {
+  display: none;
+}
+
+.walkin-registration-recorder .recording-consent {
+  display: flex;
+  align-items: center;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.walkin-registration-recorder .recording-consent .checkbox-field {
+  white-space: nowrap;
+}
+
+.walkin-registration-recorder .recorder-controls {
+  margin: 0;
+  flex-wrap: nowrap;
+}
+
+.walkin-registration-recorder .voice-level-wave {
+  display: flex;
+  width: 108px;
+  min-width: 90px;
+  height: 30px;
+  margin: 0 2px;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.walkin-registration-recorder .voice-level-wave i {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 4px;
+  border-radius: 4px;
+  background: #2563eb;
+  opacity: .82;
+}
+
 .walkin-section-heading > span {
   display: grid;
   place-items: center;
@@ -972,6 +1044,15 @@
   .walkin-ai-panel > button {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .walkin-section-heading {
+    flex-wrap: wrap;
+  }
+
+  .walkin-registration-recorder {
+    flex: 1 1 100%;
+    margin-left: 41px;
   }
 
   .walkin-form-actions {

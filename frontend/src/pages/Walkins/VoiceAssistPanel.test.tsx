@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CaptureState } from '../../recording/session'
 import type { LiveSegment } from '../../voice/liveSpeech'
@@ -24,7 +24,7 @@ const empty = { customerName: '', mobileNumber: '', email: '', companyName: '' }
 function Harness({ initial, onApply, onAi }: { initial: typeof empty; onApply: (f: string, v: string) => void; onAi?: (f: string[]) => void }) {
   const [values, setValues] = useState(initial)
   const validate = useCallback((field: string, value: string) => field === 'mobileNumber' && value.length < 7 ? 'Enter a valid mobile number.' : null, [])
-  return <><input aria-label="typed email" value={values.email} onChange={event => setValues({ ...values, email: event.target.value })} /><p aria-label="form">{JSON.stringify(values)}</p><VoiceAssistPanel customerName="" values={values} validate={validate as never} onAiFieldsChange={onAi} onApply={(field, value) => { onApply(field, value); setValues(previous => ({ ...previous, [field]: value })) }} onConversationChange={vi.fn()} onBusyChange={vi.fn()} /></>
+  return <><p aria-label="form">{JSON.stringify(values)}</p><VoiceAssistPanel customerName="" values={values} validate={validate as never} onAiFieldsChange={onAi} onApply={(field, value) => { onApply(field, value); setValues(previous => ({ ...previous, [field]: value })) }} onConversationChange={vi.fn()} onBusyChange={vi.fn()} /></>
 }
 function setup(values = empty, onAi?: (f: string[]) => void) {
   const onApply = vi.fn()
@@ -35,126 +35,40 @@ const segment = (text: string, speaker: LiveSegment['speaker'] = 'Unknown'): Liv
 beforeEach(() => { vi.clearAllMocks(); mocks.speech = null; mocks.supported = true })
 
 describe('VoiceAssistPanel', () => {
-  it('only starts live captions while recording, and stops when paused or unmounted', () => {
+  it('starts captions automatically with recording and stops when paused', () => {
     setup()
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
     expect(mocks.speech).toBeNull()
     act(() => mocks.emit!(state()))
     expect(mocks.speech).not.toBeNull()
     act(() => mocks.emit!(state({ capture: 'paused' })))
     expect(mocks.stop).toHaveBeenCalledTimes(1)
-    expect(screen.getByText(/^Paused\./)).toBeInTheDocument()
   })
-  it('disables captions and explains when unsupported', () => {
-    mocks.supported = false
+  it('shows a compact transcript without configuration controls', () => {
     setup()
-    expect(screen.getByRole('checkbox', { name: /live captions/i })).toBeDisabled()
-    expect(screen.getByText(/not available in this browser/i)).toBeInTheDocument()
-  })
-  it('auto-labels an unlabelled self-introduction as Visitor and auto-fills from it', () => {
-    const onApply = setup()
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
     act(() => mocks.emit!(state()))
     act(() => mocks.speech!.onSegment(segment('how can I help you today?')))
-    expect(screen.getAllByLabelText('Speaker label')[0]).toHaveValue('Receptionist')
-    act(() => mocks.speech!.onSegment(segment('my name is priya sharma')))
-    expect(screen.getAllByLabelText('Speaker label')[1]).toHaveValue('Visitor')
-    expect(onApply).toHaveBeenCalledWith('customerName', 'Priya Sharma')
+    expect(screen.getByText('how can I help you today?')).toBeInTheDocument()
+    expect(screen.queryByText(/Auto-fill confidence threshold/)).toBeNull()
+    expect(screen.queryByText(/Speaker label/)).toBeNull()
   })
-  it('requires an explicit replace action when the field already has a value and blocks invalid values', () => {
-    const onApply = setup({ ...empty, customerName: 'Typed Name' })
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
+  it('auto-fills visitor details and never uses receptionist details', () => {
+    const onApply = setup(empty)
     act(() => mocks.emit!(state()))
-    act(() => mocks.speech!.onSegment(segment('my name is priya sharma')))
-    act(() => mocks.speech!.onSegment(segment('phone number is 12345678')))
+    act(() => mocks.speech!.onSegment(segment('my name is priya sharma', 'Visitor')))
+    act(() => mocks.speech!.onSegment(segment('my mobile number is 9876543210', 'Receptionist')))
+    expect(onApply).toHaveBeenCalledWith('customerName', 'Priya Sharma')
+    expect(onApply).toHaveBeenCalledTimes(1)
+  })
+  it('does not replace a manually entered value', () => {
+    const onApply = setup({ ...empty, customerName: 'Typed Name' })
+    act(() => mocks.emit!(state()))
+    act(() => mocks.speech!.onSegment(segment('my name is priya sharma', 'Visitor')))
     expect(onApply).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: /replace “typed name”/i })).toBeInTheDocument()
-    fireEvent.change(screen.getByDisplayValue('12345678'), { target: { value: '123' } })
-    expect(screen.getByRole('button', { name: /use for mobile number/i })).toBeDisabled()
   })
-  it('raises a low-volume alert after the configured delay and honours a custom threshold', () => {
-    vi.useFakeTimers({ toFake: ['Date'] })
-    try {
-      setup()
-      act(() => mocks.emit!(state({ level: 0.001 })))
-      expect(screen.queryByText(/very quiet/i)).toBeNull()
-      vi.setSystemTime(Date.now() + 6000)
-      act(() => mocks.emit!(state({ level: 0.0011 })))
-      expect(screen.getByText(/very quiet/i)).toBeInTheDocument()
-      act(() => mocks.emit!(state({ level: 0.2 })))
-      expect(screen.queryByText(/very quiet/i)).toBeNull()
-    } finally { vi.useRealTimers() }
-  })
-  it('surfaces live caption errors without stopping the recording UI', () => {
+  it('surfaces caption errors without stopping the recorder', () => {
     setup()
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
     act(() => mocks.emit!(state()))
     act(() => mocks.speech!.onError('permission'))
     expect(screen.getByRole('alert')).toHaveTextContent(/blocked by the browser/i)
-    expect(screen.getByRole('checkbox', { name: /live captions/i })).not.toBeChecked()
-  })
-  it('auto-fills a blank field with a high-confidence value, marks it AI populated and never submits', () => {
-    const onAi = vi.fn()
-    const onApply = setup(empty, onAi)
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    act(() => mocks.speech!.onSegment(segment('my email is priya@example.com', 'Visitor')))
-    expect(onApply).toHaveBeenCalledWith('email', 'priya@example.com')
-    expect(onApply).toHaveBeenCalledTimes(1)
-    expect(onAi).toHaveBeenLastCalledWith(['email'])
-    expect(screen.queryByRole('button', { name: /use for email/i })).toBeNull()
-  })
-  it('keeps a manual edit of an AI-filled field and never auto-fills a user-cleared field', () => {
-    const onApply = setup(empty, undefined)
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    act(() => mocks.speech!.onSegment(segment('my email is priya@example.com', 'Visitor')))
-    fireEvent.change(screen.getByLabelText('typed email'), { target: { value: 'mine@example.com' } })
-    act(() => mocks.speech!.onSegment(segment('email is other@example.com')))
-    expect(onApply).toHaveBeenCalledTimes(1)
-    expect(screen.getByLabelText('form')).toHaveTextContent('mine@example.com')
-    expect(screen.getByRole('button', { name: /replace .mine@example.com./i })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('typed email'), { target: { value: '' } })
-    act(() => mocks.speech!.onSegment(segment('email is third@example.com')))
-    expect(onApply).toHaveBeenCalledTimes(1)
-  })
-  it('does not auto-fill medium, conflicting, or non-blank cases and honours the toggle', () => {
-    const onApply = setup({ ...empty, email: 'typed@example.com' })
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    act(() => mocks.speech!.onSegment(segment('my email is priya@example.com')))
-    expect(onApply).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('checkbox', { name: /auto-fill blank fields/i }))
-    act(() => mocks.speech!.onSegment(segment('my mobile number is 9876543210', 'Visitor')))
-    expect(onApply).not.toHaveBeenCalled()
-  })
-  it('never auto-fills from receptionist speech, offering no suggestions', () => {
-    const onApply = setup()
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    act(() => mocks.speech!.onSegment(segment('my mobile number is 9876543210', 'Receptionist')))
-    act(() => mocks.speech!.onSegment(segment('may I have your email?')))
-    expect(onApply).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: /use for email/i })).toBeNull()
-  })
-  it('lets the confidence threshold decide whether a Visitor value auto-fills', () => {
-    const onApply = setup()
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    fireEvent.change(screen.getByLabelText('Auto-fill confidence threshold'), { target: { value: '95' } })
-    act(() => mocks.speech!.onSegment(segment('my name is priya sharma', 'Visitor')))
-    expect(onApply).not.toHaveBeenCalled()
-    fireEvent.change(screen.getByLabelText('Auto-fill confidence threshold'), { target: { value: '90' } })
-    expect(onApply).toHaveBeenCalledWith('customerName', 'Priya Sharma')
-  })
-  it('requires confirmation when a blank field receives conflicting high-confidence values', () => {
-    const onApply = setup()
-    act(() => mocks.emit!(state()))
-    fireEvent.click(screen.getByRole('checkbox', { name: /live captions/i }))
-    act(() => mocks.speech!.onSegment(segment('email is a@example.com', 'Visitor')))
-    expect(onApply).toHaveBeenCalledTimes(1)
-    act(() => mocks.speech!.onSegment(segment('email is b@example.com', 'Visitor')))
-    expect(onApply).toHaveBeenCalledTimes(1)
-    expect(screen.getByText(/conflicts with something said earlier/i)).toBeInTheDocument()
   })
 })

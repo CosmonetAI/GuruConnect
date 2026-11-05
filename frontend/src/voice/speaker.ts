@@ -5,7 +5,7 @@ type Speaker = LiveSegment['speaker']
 const receptionist = [
   /\bhow (?:can|may) i help\b/, /\bmay i (?:have|know|get)\b/, /\bcan i (?:have|get|take)\b/, /\bcould you (?:please|tell|share|give|spell)\b/,
   /\bcan you (?:please|tell|share|give|spell)\b/, /\bwelcome\b/, /\bwho (?:are you|would you like to|do you want to)\b/, /\bwhat(?:'s| is) your (?:name|number|email|company)\b/,
-  /\byour (?:name|number|email|company)\b.*\?/, /\bplease (?:have a seat|wait|take|share|tell|give|spell)\b/, /\bhave a seat\b/, /\bwhich (?:company|department)\b/,
+  /\byour (?:name|number|email|company)\b(?:.*\?)?$/, /\bplease (?:have a seat|wait|take|share|tell|give|spell)\b/, /\bhave a seat\b/, /\bwhich (?:company|department)\b/,
   /\bhow may i\b/, /\bthank you for (?:coming|waiting|visiting)\b/, /\blet me (?:check|call|inform|note)\b/,
 ]
 const visitor = [

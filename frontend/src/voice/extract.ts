@@ -98,11 +98,22 @@ export function extractFromSegment(segment: LiveSegment): FieldSuggestion[] {
 // Latest suggestion per field wins; callers decide whether anything is applied.
 export function extractSuggestions(segments: LiveSegment[]): FieldSuggestion[] {
   const latest = new Map<VisitorField, FieldSuggestion>()
-  for (const segment of segments) for (const suggestion of extractFromSegment(segment)) {
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]
+    const extracted = extractFromSegment(segment)
+    const previous = segments[index - 1]
+    if (!extracted.some(item => item.field === 'mobileNumber') && segment.final && segment.speaker === 'Visitor' && previous?.speaker === 'Receptionist' && /\b(?:phone|mobile|contact|whats ?app|cell|number)\b/i.test(previous.text)) {
+      const digits = spokenDigits(segment.text)
+      if (digits.replace(/\D/g, '').length >= 7 && digits.replace(/\D/g, '').length <= 15) {
+        extracted.push({ field: 'mobileNumber', value: digits, score: digits.replace(/\D/g, '').length === 10 ? 0.9 : 0.7, speaker: segment.speaker, evidence: `${previous.text} ${segment.text}`, segmentId: segment.id })
+      }
+    }
+    for (const suggestion of extracted) {
     const prior = latest.get(suggestion.field)
     // A different value heard earlier for the same field means the speaker may have corrected or contradicted themselves.
     const conflict = !!prior && (prior.conflict || prior.value.toLowerCase() !== suggestion.value.toLowerCase())
     latest.set(suggestion.field, { ...suggestion, conflict })
+    }
   }
   return [...latest.values()]
 }

@@ -154,6 +154,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     if (anotherMemberView) throw new Error('Switch to your own account view to record.')
     if (!consent) throw new Error('Confirm participant consent before recording or uploading audio.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
+    if (registrationOnly) return
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
     if (sessionOnly) {
       if (!customerPhone?.trim()) throw new Error('Enter the customer name and phone number before starting.')
@@ -165,7 +166,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     if (reuseExisting && idRef.current) return idRef.current
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim(), phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false, audio_bucket: audioBucket },
+      body: { customer_name: customerName.trim() || null, phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, is_unnamed: registrationOnly && !customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: registrationOnly, audio_bucket: audioBucket },
     }
     const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal }, workspace!.member_id)
     signal.throwIfAborted()
@@ -296,7 +297,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     <div className={grouped ? 'session-recording-container' : undefined}>
       <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
         {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
-        <div className="recorder-copy"><span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span><h3>{saved ? (registrationOnly ? 'Registration ended' : sessionOnly ? 'Session ended' : 'Audio saved in your workspace') : registrationOnly ? 'Start visitor registration' : sessionOnly ? captureActive ? capture.capture === 'paused' ? 'Conversation paused' : 'Recording conversation…' : 'Start a customer session' : 'Record or upload the conversation'}</h3><p>{saved ? 'Your conversation is saved. Processing continues in the background.' : registrationOnly ? 'Start registration to record the visitor conversation.' : sessionOnly ? captureActive ? 'Live transcription and translation update as you speak.' : 'Start the session to record and process the customer conversation.' : 'Consented audio is transcribed and translated where needed.'}</p>{(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}</div>
+        <div className="recorder-copy"><span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span><h3>{saved ? (registrationOnly ? 'Audio saved' : sessionOnly ? 'Session ended' : 'Audio saved in your workspace') : registrationOnly ? 'Record visitor audio' : sessionOnly ? captureActive ? capture.capture === 'paused' ? 'Conversation paused' : 'Recording conversation…' : 'Start a customer session' : 'Record or upload the conversation'}</h3><p>{saved ? (registrationOnly ? 'The recording is stored in your workspace.' : 'Your conversation is saved. Processing continues in the background.') : registrationOnly ? 'Record the visitor conversation and save the audio.' : sessionOnly ? captureActive ? 'Live transcription and translation update as you speak.' : 'Start the session to record and process the customer conversation.' : 'Consented audio is transcribed and translated where needed.'}</p>{(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}</div>
         <div className="recorder-controls">
           {sessionOnly && !captureActive && !operation && !saved && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start session</button>}
           {registrationOnly && !captureActive && !operation && !saved && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked || !consent} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start registration</button>}
