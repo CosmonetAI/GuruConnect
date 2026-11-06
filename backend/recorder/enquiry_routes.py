@@ -249,6 +249,12 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             if linked and (not existing_ticket or linked["id"] != existing_ticket["id"]):
                 fail("recording_already_linked", 409, "This recording is already attached to an enquiry")
         books_contact_id = existing_ticket.get("books_contact_id") if existing_ticket else None
+        follow_up_required = False
+        if body.conversationId:
+            intent_row = await one(connection, "select last_intent from public.voice_ai_contexts where conversation_id=%s", (body.conversationId,))
+            last_intent = (intent_row or {}).get("last_intent")
+            follow_up_required = last_intent in (None, "", "unknown", "general_conversation", "follow_up")
+            payload["followUpRequired"] = follow_up_required
         try:
             zoho_status = zoho.status() if not books_contact_id else {}
             books_org = zoho_status.get("organization_id")
@@ -264,10 +270,10 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             # from reception to this agent; the recording owner FK stays exact.
             await connection.execute("""update public.guruconnect_enquiries set
                 owner_id=%s,conversation_id=%s,idempotency_key=%s,payload_hash=%s,payload=%s,
-                customer_name=%s,phone=%s,channel=%s,branch=%s,assigned_to=%s,unread=true,books_contact_id=%s
+                customer_name=%s,phone=%s,channel=%s,branch=%s,assigned_to=%s,unread=true,books_contact_id=%s,follow_up_required=%s
                 where id=%s and organisation_id=%s""",
                 (context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
-                 body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id,
+                 body.customerName, body.phone, body.channel, body.branch, assigned_to, books_contact_id, follow_up_required,
                  existing_ticket["id"], context.id))
             row = {"id": existing_ticket["id"]}
         else:
@@ -278,10 +284,10 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
             tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
             row = await one(connection, """insert into public.guruconnect_enquiries
             (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,
-             customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
+             customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id,follow_up_required)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s,%s) returning id""",
                             (context.id, context.user.id, body.conversationId, idempotency_key, payload_hash, Jsonb(payload),
-                             body.customerName, body.phone, body.channel, body.branch, assigned_to, ticket_day, daily_sequence, tracking_hash, books_contact_id))
+                             body.customerName, body.phone, body.channel, body.branch, assigned_to, ticket_day, daily_sequence, tracking_hash, books_contact_id, follow_up_required))
         await audit(connection, context, "enquiry.converted_from_walkin" if existing_ticket else "enquiry.created", {"enquiry_id": str(row["id"]), "has_recording": body.conversationId is not None}, body.conversationId)
         if visit:
             await complete_conversion(connection, context, visit, row["id"])

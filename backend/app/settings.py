@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     zoho_refresh_cron_secret: str = ''
     smtp2go_api_key: SecretStr | None = None
     smtp2go_sender_email: str = ''
-    smtp2go_sender_name: str = Field(default='GuruConnect', max_length=160)
+    smtp2go_sender_name: str = Field(default='ConnectCosmos', max_length=160)
     smtp2go_timeout_seconds: float = Field(default=20, ge=2, le=60)
     cors_origins: str = 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5176,http://127.0.0.1:5176'
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')

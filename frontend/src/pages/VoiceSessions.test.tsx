@@ -324,7 +324,7 @@ describe('session sales document workflow', () => {
     await reviewCart()
     fireEvent.click(screen.getByRole('button', { name: 'Create & send' }))
     await screen.findByText('SMTP2GO is not configured')
-    expect(screen.getByRole('textbox', { name: 'Email subject' })).toBeEnabled()
+    expect(screen.queryByRole('textbox', { name: 'Email subject' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Download PDF instead of emailing' }))
     fireEvent.click(screen.getByRole('button', { name: 'Create & download PDF' }))
     await screen.findByText('Invoice INV-1 created')
@@ -351,7 +351,7 @@ describe('session sales document workflow', () => {
     await reviewCart()
     fireEvent.click(screen.getByRole('button', { name: 'Create & send' }))
     await screen.findByText('Response was lost')
-    expect(screen.getByRole('textbox', { name: 'Email subject' })).toBeDisabled()
+    expect(screen.queryByRole('textbox', { name: 'Email subject' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Check document status' }))
     await waitFor(() => expect(creates).toBe(2))
     expect(screen.getByText('Customer B').closest('button')).toBeDisabled()
@@ -425,7 +425,7 @@ describe('CRM lead drawer', () => {
   })
   it('reports Zoho failures and retries', async () => {
     let attempts = 0
-    await openLead(() => { attempts++; if (attempts === 1) throw new Error('Unable to look up the CRM lead in Zoho Bigin'); return { status: 'matched', matched_by: 'email', contacts: [], deals: [leadDeal] } })
+    await openLead(() => { attempts++; if (attempts <= 2) throw new Error('Unable to look up the CRM lead in Zoho Bigin'); return { status: 'matched', matched_by: 'email', contacts: [], deals: [leadDeal] } })
     expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent('Unable to look up the CRM lead')
     fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0])
     expect((await screen.findAllByText('Matched by Email'))[0]).toBeInTheDocument()

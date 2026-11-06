@@ -20,6 +20,7 @@ from .routes import audit
 from .security import Workspace, administrator, owned_conversation, workspace
 from .assignment import current_ticket_day, format_ticket_number, least_loaded_salesperson, next_daily_ticket
 from app.zoho import set_member_id, set_organisation_id, zoho
+from app.crm_provisioning import provision_enquiry_lead
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
 log = logging.getLogger(__name__)
@@ -166,6 +167,27 @@ async def ensure_walkin_books_contact(body: WalkinCreate, context: Workspace):
     if not isinstance(contact, dict):
         return None
     return contact.get("contact_id") or contact.get("id")
+
+
+async def provision_walkin_crm(connection, context, enquiry_id, body):
+    """Create/link the visitor in Bigin after the local registration is saved."""
+    try:
+        result = await provision_enquiry_lead(
+            zoho, name=body.customerName, phone=body.mobileNumber, email=body.email or "",
+            details={"description": body.purposeDescription or body.internalNotes or "Created from ConnectCosmos visitor registration"},
+        )
+        contact, record = result["contact"], result["record"]
+        books_contact = result.get("books_contact") or {}
+        books_contact_id = books_contact.get("contact_id") or books_contact.get("id")
+        await connection.execute("""update public.guruconnect_enquiries
+            set bigin_contact_id=%s,bigin_pipeline_id=%s,bigin_deal_id=%s,books_contact_id=coalesce(%s,books_contact_id),crm_sync_error=null
+            where id=%s and organisation_id=%s""",
+            (str(contact.get("id")), result["pipeline_id"], str(record.get("id")), books_contact_id, enquiry_id, context.id))
+        return result
+    except Exception as error:
+        log.warning("walkin_bigin_provision_failed enquiry_id=%s exception_type=%s", enquiry_id, type(error).__name__)
+        await connection.execute("update public.guruconnect_enquiries set crm_sync_error=%s where id=%s and organisation_id=%s", (type(error).__name__, enquiry_id, context.id))
+        return None
 
 
 SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name,
@@ -406,8 +428,11 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         await connection.execute("update public.guruconnect_walkin_visits set converted_enquiry_id=%s where id=%s and organisation_id=%s", (enquiry["id"], row["id"], context.id))
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])
+        crm_result = await provision_walkin_crm(connection, context, enquiry["id"], body)
     result = serialize_visit(saved)
     result["ticket"] = {"number": format_ticket_number(ticket_day, daily_sequence), "token": tracking_token, "stage": "new"}
+    if crm_result:
+        result["crm"] = {"contactId": str(crm_result["contact"].get("id")), "leadId": str(crm_result["record"].get("id"))}
     return result
 
 
@@ -434,8 +459,15 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
             order by m.missed_at desc, m.id desc
             limit 200
         """, (context.id, context.admin, context.user.id, context.user.id, context.user.id))
+        followups = await many(connection, """select e.id,e.customer_name,e.phone,e.payload,e.created_at,
+                    e.assigned_to,e.follow_up_required
+             from public.guruconnect_enquiries e
+             where e.organisation_id=%s and e.follow_up_required
+               and e.stage <> 'closed'
+               and (%s or e.assigned_to=%s or e.owner_id=%s)
+             order by e.created_at desc limit 200""", (context.id, context.admin, context.user.id, context.user.id))
     timezone_name = request.app.state.settings.app_timezone
-    return {"items": [{
+    items = [{
         "id": str(row["id"]), "visitId": str(row["visit_id"]),
         "visitNumber": (
             format_ticket_number(row["ticket_day"], row["daily_sequence"])
@@ -450,7 +482,20 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
         "assignedAgentName": row["assigned_agent_name"] or "Salesperson",
         "checkInAt": row["check_in_at"].isoformat(), "missedAt": row["missed_at"].isoformat(),
         "expiresAt": row["expires_at"].isoformat(),
-    } for row in rows]}
+        "followUp": False, "reason": "Walked in · no session started",
+    } for row in rows]
+    items.extend({
+        "id": f"followup:{row['id']}", "visitId": str(row["id"]), "visitNumber": "Follow-up enquiry",
+        "ticketNumber": None, "ticketDate": row["created_at"].date().isoformat(),
+        "ticketTime": row["created_at"].strftime("%H:%M:%S"), "customerName": row["customer_name"],
+        "mobileNumber": row["phone"], "email": (row["payload"] or {}).get("email", ""),
+        "purpose": (row["payload"] or {}).get("notes") or "No business intent detected",
+        "assignedAgentName": (row["payload"] or {}).get("assignedExecutive") or "Salesperson",
+        "checkInAt": row["created_at"].isoformat(), "missedAt": row["created_at"].isoformat(),
+        "expiresAt": (row["created_at"] + timedelta(days=14)).isoformat(), "payload": row["payload"] or {}, "followUp": True,
+        "reason": "Nothing fruitful captured",
+    } for row in followups)
+    return {"items": items}
 
 
 @router.get("/{visit_id}")

@@ -279,7 +279,7 @@ class SalesDocumentService:
                     'date': datetime.now(zone).date().isoformat(),
                     'discount_type': 'item_level', 'is_discount_before_tax': True,
                     'line_items': [{k: v for k, v in item.items() if k not in {'name', 'sku', 'discount_amount'}} for item in lines],
-                    'notes': 'Updated from GuruConnect customer session' if source_id else 'Created from GuruConnect customer session'}
+                    'notes': 'Updated from ConnectCosmos customer session' if source_id else 'Created from ConnectCosmos customer session'}
                 if not source_id:
                     payload['reference_number'] = f'GC-{identity}'
                 if source_id:

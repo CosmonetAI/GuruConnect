@@ -29,7 +29,7 @@ import ConversationRecorder from "./Enquiries/ConversationRecorder";
 import ConversationTranscript from "../components/ConversationTranscript";
 import ProgressivePlayback from "../components/ProgressivePlayback";
 import PageLoader from "../components/PageLoader";
-import LiveSessionWorkspace, { ProductCartAction, ProductMatchDetails, Stock, productOutOfStock, productPriceAvailable } from "../components/LiveSessionWorkspace";
+import LiveSessionWorkspace, { ProductCartAction, ProductMatchDetails, Stock, productOutOfStock, productPriceAvailable, productRate } from "../components/LiveSessionWorkspace";
 import BusinessTagPills from "../components/BusinessTagPills";
 import SalesDocumentModal from "../components/SalesDocumentModal";
 import { DocumentCardActions } from "../components/Records";
@@ -220,7 +220,8 @@ function CustomerModal({ contact, onClose }) {
 }
 
 const crmLeadCache = new Map();
-export const resetCrmLeadCache = () => crmLeadCache.clear();
+let crmRefreshVersion = 0;
+export const resetCrmLeadCache = () => { crmLeadCache.clear(); crmRefreshVersion = 0; };
 const MATCH_LABELS = { phone: "Phone", email: "Email", "phone+email": "Phone and Email", "phone or email": "Phone or Email", "full name": "Full name", surname: "Surname" };
 
 // Shares one in-flight request per customer and reuses fresh results when the drawer reopens.
@@ -251,30 +252,35 @@ function formatAmount(value) {
   return value == null || value === "" ? "Not provided" : `₹${Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 }
 
-function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionId, onOpen }) {
+function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionId, refreshToken = 0, onOpen }) {
   const phone = identity.phone || contact?.phone || "";
   const email = identity.email || contact?.email || "";
   const name = identity.name || contact?.name || "";
   const [state, setState] = useState({ phase: "loading", result: null, error: "" });
   const [selectedId, setSelectedId] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const forceRefresh = useRef(false);
   const query = new URLSearchParams({ name, phone, email }).toString();
   const key = `${workspaceId}|${sessionId}|${query}`;
+  const refreshSignal = Math.max(refreshToken, crmRefreshVersion);
   useEffect(() => {
     if (!phone && !email && !name) { setState({ phase: "empty", result: null, error: "" }); return undefined; }
     let current = true;
-    setState({ phase: "loading", result: null, error: "" });
+    const refreshingFromTab = refreshSignal > 0;
+    if (!refreshingFromTab) setState({ phase: "loading", result: null, error: "" });
     setSelectedId("");
-    const force = forceRefresh.current; forceRefresh.current = false;
+    const force = forceRefresh.current || refreshingFromTab; forceRefresh.current = false;
+    if (refreshingFromTab) setRefreshing(true);
     loadCrmLead(key, query, workspaceId, force).then((result) => {
       if (!current) return;
       const safe = result && ["matched", "contact_without_deals", "candidates"].includes(result.status) ? result : { status: "not_found", deals: [], contacts: [] };
       setState({ phase: "done", result: safe, error: "" });
       setSelectedId(autoSelectedDeal(safe));
-    }, (error) => { if (current) setState({ phase: "error", result: null, error: error?.message || "Unable to reach Zoho Bigin." }); });
+    }, (error) => { if (current) setState((previous) => previous.result ? { ...previous, error: error?.message || "Unable to refresh Zoho Bigin." } : { phase: "error", result: null, error: error?.message || "Unable to reach Zoho Bigin." }); })
+      .finally(() => { if (current) setRefreshing(false); });
     return () => { current = false; };
-  }, [key, attempt]);
+  }, [key, attempt, refreshSignal]);
   const retry = () => { forceRefresh.current = true; setAttempt((value) => value + 1); };
   const result = state.result;
   const deals = result?.deals || [];
@@ -282,7 +288,7 @@ function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionI
   const linkedContact = Boolean(selected && biginContactId && String(biginContactId) === String(selected.contact_id));
   const openSelected = () => selected?.deal_id && selected?.pipeline_id && onOpen({ ...selected, sessionId });
   const matchedBy = result?.status === "candidates" ? "Name" : MATCH_LABELS[result?.matched_by] || result?.matched_by || "";
-  const searchStatus = state.phase === "loading" ? "Searching Zoho Bigin by phone, then email, then name…"
+  const searchStatus = refreshing ? "Refreshing Zoho Bigin…" : state.phase === "loading" ? "Searching Zoho Bigin by phone, then email, then name…"
     : state.phase === "error" ? "Search failed"
     : result?.status === "contact_without_deals" ? `Contact found by ${matchedBy.toLowerCase()}, no pipeline records`
     : deals.length ? `Matched by ${matchedBy}${result?.status === "candidates" ? " (possible matches)" : ""}`
@@ -345,7 +351,7 @@ function openCrmLeadDeal(navigate, deal) {
   navigate(`/pipelines?${params.toString()}`);
 }
 
-function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, sessionId, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onOpenCrm }) {
+function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, sessionId, refreshToken = 0, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onOpenCrm }) {
   if (!view || typeof document === "undefined") return null;
   const isHistory = view === "history";
   const isContext = view === "context";
@@ -379,9 +385,11 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
   const document = documentResult?.document;
   const hasCart = cart.length > 0;
   const searchItems = sessionDocumentDefinitions.map((definition) => ({ definition, state: documentSearchState[definition.type] })).filter(({ state }) => state);
-  const createdDocumentCard = document ? <article className="session-document-record-card session-document-created-card" aria-label={`${document.updated_existing ? "Updated" : "Created"} ${String(document.type || "document").replaceAll("-", " ")} ${document.number || "document"}`}>
+  const createdDefinition = document ? sessionDocumentDefinitions.find((item) => item.type === document.type) : null;
+  const createdDocumentRecord = document && createdDefinition ? { ...document, __document_type: createdDefinition.type, [createdDefinition.idKey]: document.id } : null;
+  const createdDocumentCard = document ? <article className="session-document-record-card session-document-created-card" role="button" tabIndex={0} title="Open in cart" aria-label={`${document.updated_existing ? "Updated" : "Created"} ${String(document.type || "document").replaceAll("-", " ")} ${document.number || "document"}`} onClick={() => createdDocumentRecord && onOpenDocument(createdDocumentRecord)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && createdDocumentRecord) { event.preventDefault(); onOpenDocument(createdDocumentRecord); } }}>
     <span className="session-document-record-type"><SessionDocumentIcon type={document.type} />{document.updated_existing ? "Updated document" : "Created document"}</span>
-    <div className="session-document-record-title"><strong>{document.number || "Sales document"}</strong><button type="button" className="session-document-open-link" onClick={onDownload}>Download PDF</button></div>
+    <div className="session-document-record-title"><strong>{document.number || "Sales document"}</strong><button type="button" className="session-document-open-link" onClick={(event) => { event.stopPropagation(); onDownload(); }}>Download PDF</button></div>
     <span className="session-document-record-meta">{String(document.type || "document").replaceAll("-", " ")} · {document.demo ? "Sample PDF" : "PDF ready"}</span>
   </article> : null;
   useEffect(() => { setSearchInput(searchQuery ?? ""); }, [searchQuery]);
@@ -647,6 +655,8 @@ export default function VoiceSessions() {
   const [hiddenIntents, setHiddenIntents] = useState([]);
   const [activeTab, setActiveTab] = useState("conversation");
   const [sessionDocuments, setSessionDocuments] = useState([]);
+  const [documentRefreshToken, setDocumentRefreshToken] = useState(0);
+  const [crmRefreshToken, setCrmRefreshToken] = useState(0);
   const [sessionDocumentSearchState, setSessionDocumentSearchState] = useState({});
   const [sessionDocumentQuery, setSessionDocumentQuery] = useState(null);
   const [sessionDocumentsBusy, setSessionDocumentsBusy] = useState(false);
@@ -726,8 +736,9 @@ export default function VoiceSessions() {
       ? [...new Set([customerName, nameParts[0], nameParts.length > 1 ? nameParts[nameParts.length - 1] : ""].filter(Boolean))]
       : [query];
     const contactMatch = { customerName, email: identity.email, phone: identity.phone };
-    setSessionDocuments([]);
-    setSessionDocumentSearchState(Object.fromEntries(sessionDocumentDefinitions.map((definition) => [definition.type, { status: "searching", count: 0 }])));
+    const hasDocumentCache = sessionDocuments.length > 0 || Object.keys(sessionDocumentSearchState).length > 0;
+    if (!hasDocumentCache) setSessionDocuments([]);
+    setSessionDocumentSearchState(Object.fromEntries(sessionDocumentDefinitions.map((definition) => [definition.type, { status: "searching", count: 0, refresh: documentRefreshToken > 0 }])));
     setSessionDocumentsBusy(true);
     setSessionDocumentsError("");
     const loadDefinition = async (definition) => {
@@ -758,7 +769,7 @@ export default function VoiceSessions() {
       if (currentSearch()) setSessionDocumentsBusy(false);
     }); }, 260);
     return () => { cancelled = true; window.clearTimeout(searchTimer); };
-  }, [session, identity.name, selectedContact?.name, sessionDocumentQuery]);
+  }, [session, identity.name, selectedContact?.name, sessionDocumentQuery, documentRefreshToken]);
 
   // Warm Bigin once per opened session as well. CrmLeadPanel reuses the
   // in-flight/result cache when the salesperson opens the CRM Lead tab.
@@ -789,7 +800,7 @@ export default function VoiceSessions() {
       const loadedCart = lineItems.map((line) => {
         const itemId = line.item_id || line.item?.item_id || line.product_id || line.id || "";
         const quantity = Math.max(1, Number(line.quantity || 1));
-        const rate = Number(line.rate ?? line.selling_price ?? line.price ?? 0);
+        const rate = Number(line.rate ?? line.selling_price ?? line.selling_rate ?? line.sales_rate ?? line.unit_price ?? line.price ?? 0);
         const name = line.name || line.item_name || line.description || "Document item";
         return {
           ...line,
@@ -1193,7 +1204,7 @@ export default function VoiceSessions() {
     const id = item.item_id || item.id || item.sku;
     const latest = recommendations.find((candidate) => (candidate.item_id || candidate.id || candidate.sku) === id);
     if (latest) item = { ...item, ...latest };
-    const rate = Number(item.rate ?? item.price);
+    const rate = Number(productRate(item));
     if (!id || !productPriceAvailable(item) || productOutOfStock(item)) return;
     setCart((current) => {
       const found = current.find((line) => (line.item_id || line.id || line.sku) === id);
@@ -1239,7 +1250,7 @@ export default function VoiceSessions() {
       setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
       setDocumentType(sourceDocumentType && supportedTypes.includes(sourceDocumentType) ? sourceDocumentType : supportedTypes[0]); setDocumentEmail(customer.email || "");
       setDocumentDelivery(options.mode === "local-demo" || !options.email?.configured || !customer.email ? "download" : "email");
-      setDocumentSubject("Your document from GuruConnect");
+      setDocumentSubject("Your document from ConnectCosmos");
       setDocumentMessage(`Hi ${customer.name || "there"},\n\nPlease find your document for the selected items attached. Let us know if you have any questions.`);
       setDocumentModalOpen(true);
     } catch (error) { if (alive.current && currentDocumentScope.current === scope && ticket === selection.current && error.name !== "AbortError") setError(error.message); }
@@ -1290,7 +1301,7 @@ export default function VoiceSessions() {
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
     const anchor = document.createElement("a"); anchor.href = url;
-    anchor.download = String(pdf.filename || "GuruConnect_document.pdf").replace(/[\\/]/g, "_");
+    anchor.download = String(pdf.filename || "ConnectCosmos_document.pdf").replace(/[\\/]/g, "_");
     anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const closeDocumentModal = () => {
@@ -1315,7 +1326,7 @@ export default function VoiceSessions() {
     const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.notes || line.product || line.name || "" }));
     if (!lines.length || lines.some((line) => !line.item_id || !Number.isFinite(line.quantity) || line.quantity <= 0)) { setDocumentError("Select at least one catalogue product with a valid quantity."); return; }
     const updateExisting = !existing && snapshot.sourceDocumentId && snapshot.sourceDocumentType === type;
-    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient, subject: documentSubject, message: documentMessage } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, subject: documentSubject, message: documentMessage, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
+    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
     const signature = JSON.stringify(body);
     const actionName = existing ? "emailAction" : "createAction";
     if (snapshot[actionName]?.signature !== signature) snapshot[actionName] = { signature, requestId: crypto.randomUUID(), body };
@@ -1541,8 +1552,8 @@ export default function VoiceSessions() {
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
                 <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Recordings ({recorderSessions.length})</button>
-                <button type="button" className={activeTab === "documents" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "documents" ? "conversation" : "documents")}><FileText size={15} />Documents</button>
-                <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "lead" ? "conversation" : "lead")}><Columns3 size={15} />CRM lead</button>
+                <button type="button" className={activeTab === "documents" ? "selected" : ""} onClick={() => { if (activeTab !== "documents") setDocumentRefreshToken((value) => value + 1); setActiveTab(activeTab === "documents" ? "conversation" : "documents"); }}><FileText size={15} />Documents</button>
+                <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => { if (activeTab !== "lead") { crmRefreshVersion += 1; setCrmRefreshToken((value) => value + 1); } setActiveTab(activeTab === "lead" ? "conversation" : "lead"); }}><Columns3 size={15} />CRM lead</button>
               </nav>
             </>
           )}
@@ -1606,11 +1617,11 @@ export default function VoiceSessions() {
           const item = match ? { ...result, ...match } : result;
           return <article className="cart-product-result" key={item.item_id || item.id || item.sku}>
             <span className="cart-product-result-image"><ShoppingCart size={20} /></span>
-            <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(item.rate ?? item.price).toLocaleString("en-IN")}` : "Confirm price"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
+            <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(productRate(item)).toLocaleString("en-IN")}` : "Confirm price"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
             <ProductCartAction item={item} onAddToCart={addToCart} />
           </article>;
         })}{!cartSearchBusy && cartSearch && !cartSearchResults.length && !cartSearchError && <p className="notes-empty">Search your connected catalogue to see matching inventory.</p>}</div></section></div>}
-      {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(viewProduct.rate ?? viewProduct.price).toLocaleString("en-IN")}` : "Confirm price"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
+      {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(productRate(viewProduct)).toLocaleString("en-IN")}` : "Confirm price"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
       {archivedConversationId && <div className="session-modal-backdrop" onClick={() => setArchivedConversationId(null)}><section className="session-archive-modal" role="dialog" aria-modal="true" aria-label="Saved conversation transcript" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2>Saved conversation</h2><button type="button" onClick={() => setArchivedConversationId(null)} aria-label="Close saved conversation"><X size={20} /></button></div><ConversationTranscript conversationId={archivedConversationId} /></section></div>}
       <CustomerModal
         contact={customerOpen ? selectedContact : null}

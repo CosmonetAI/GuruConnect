@@ -3,7 +3,7 @@
 # Values marked sync:false are configured in Render, never committed.
 services:
   - type: web
-    name: guruconnect-frontend
+    name: connectcosmos-frontend
     runtime: static
     branch: main
     autoDeployTrigger: checksPass
@@ -45,7 +45,7 @@ services:
         name: Cache-Control
         value: public, max-age=31536000, immutable
   - type: web
-    name: guruconnect-api
+    name: connectcosmos-api
     runtime: docker
     region: singapore
     plan: 1c-2g
@@ -117,7 +117,7 @@ services:
       - key: SMTP2GO_SENDER_EMAIL
         sync: false
       - key: SMTP2GO_SENDER_NAME
-        value: GuruConnect
+        value: ConnectCosmos
       - key: VOICE_EXTRACTION_WEBHOOK_SECRET
         sync: false
       - key: APP_TIMEZONE

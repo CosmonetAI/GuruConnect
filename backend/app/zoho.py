@@ -206,6 +206,7 @@ class ZohoClient:
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 50, 'page': page})
     async def get_bigin_contact(self, contact_id): return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}')
+    async def create_bigin_contact(self, data): return await self.request('POST','/bigin/v2/Contacts',json={'data':[data]})
     async def lookup_bigin_contacts(self, search_by, value):
         # No fields filter so system fields such as $layout_id are returned.
         return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: value})
@@ -321,6 +322,7 @@ class ZohoClient:
     async def update_estimate(self,org,estimate_id,data): return await self.request('PUT',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org},json=data)
     async def delete_estimate(self,org,estimate_id): return await self.request('DELETE',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
     async def accept_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/accepted',params={'organization_id':org},json={})
+    async def send_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/sent',params={'organization_id':org},json={})
     async def email_estimate(self,org,estimate_id,data=None): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json=data or {})
     async def create_customer_payment(self,org,data): return await self.request('POST','/books/v3/customerpayments',params={'organization_id':org},json=data)
     async def list_sales_orders(self,org): return await self.request('GET','/books/v3/salesorders',params={'organization_id':org,'per_page':200,'page':1})

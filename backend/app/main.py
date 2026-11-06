@@ -965,6 +965,69 @@ async def pipeline_records(pipeline_id: str, page: int = 1):
         return {'records': records, 'page': page, 'has_more': bool(info.get('more_records')), 'source': 'zoho', 'last_sync': last_sync.isoformat() if last_sync else None}
     except Exception: raise HTTPException(502, 'Unable to load pipeline records')
 
+@app.get('/api/pipelines/new-enquiries')
+def pipeline_new_enquiries():
+    """Return internal enquiries that have not yet been moved into Bigin."""
+    with require_db() as db:
+        rows = db.execute(text("""select e.id,e.customer_name,e.phone,e.payload,e.created_at,e.stage,
+                e.assigned_to,e.bigin_contact_id,e.bigin_pipeline_id,e.bigin_deal_id,e.follow_up_required
+             from guruconnect_enquiries e
+             where e.organisation_id=cast(:org as uuid)
+               and (:admin or e.assigned_to=cast(:member as uuid) or e.owner_id=cast(:member as uuid))
+               and (e.bigin_deal_id is null or e.bigin_deal_id='')
+               and e.stage <> 'closed'
+             order by e.created_at desc limit 200"""), scope_parameters()).all()
+    result = []
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        result.append({'id': f"new-enquiry:{row.id}", 'sourceEnquiryId': str(row.id),
+                       'Deal_Name': f"{row.customer_name} - New enquiry", 'Stage': 'New enquiry',
+                       'Contact_Name': {'name': row.customer_name, 'id': row.bigin_contact_id} if row.bigin_contact_id else {'name': row.customer_name},
+                       'Description': payload.get('notes') or payload.get('customerNotes') or payload.get('purposeDescription') or '',
+                       'Phone': row.phone, 'Email': payload.get('email') or '', 'Created_Time': row.created_at.isoformat(),
+                       'follow_up_required': bool(row.follow_up_required), 'internal_enquiry': True})
+    return {'records': result, 'stage': 'New enquiry'}
+
+@app.post('/api/pipelines/from-enquiry')
+async def pipeline_from_enquiry(body: dict):
+    enquiry_id = str(body.get('enquiry_id') or '').strip()
+    pipeline_id = str(body.get('pipeline_id') or '').strip()
+    stage = str(body.get('stage') or '').strip()
+    if not enquiry_id or not pipeline_id or not stage:
+        raise HTTPException(422, 'enquiry_id, pipeline_id and stage are required')
+    with require_db() as db:
+        row = db.execute(text("""select e.* from guruconnect_enquiries e
+             where e.id=cast(:enquiry as uuid) and e.organisation_id=cast(:org as uuid)
+               and (:admin or e.assigned_to=cast(:member as uuid) or e.owner_id=cast(:member as uuid))"""),
+                         {**scope_parameters(), 'enquiry': enquiry_id}).mappings().first()
+    if not row:
+        raise HTTPException(404, 'Enquiry not found')
+    if row.get('bigin_deal_id'):
+        response = await zoho.pipeline_record(str(row['bigin_deal_id']))
+        return {'record': (response.get('data') or [None])[0] if isinstance(response, dict) else None, 'already_linked': True}
+    from .crm_provisioning import provision_enquiry_lead
+    payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
+    try:
+        provisioned = await provision_enquiry_lead(
+            zoho, name=row['customer_name'], phone=row['phone'], email=payload.get('email', ''),
+            details={'deal_name': f"{row['customer_name']} - New enquiry", 'description': payload.get('notes') or payload.get('customerNotes') or 'Moved from ConnectCosmos New enquiry'},
+            pipeline_id=pipeline_id, stage=stage)
+        contact = provisioned['contact']; record = provisioned['record']
+        books_contact = provisioned.get('books_contact') or {}
+        with require_db() as db:
+            db.execute(text("""update guruconnect_enquiries set bigin_contact_id=:contact,bigin_pipeline_id=:pipeline,
+                    bigin_deal_id=:deal,books_contact_id=coalesce(:books_contact, books_contact_id),crm_sync_error=null,follow_up_required=false
+                 where id=cast(:enquiry as uuid) and organisation_id=cast(:org as uuid)"""),
+                       {**scope_parameters(), 'enquiry': enquiry_id, 'contact': str(contact.get('id')), 'pipeline': pipeline_id, 'deal': str(record.get('id')), 'books_contact': str(books_contact.get('contact_id') or books_contact.get('id')) if books_contact else None})
+            db.commit()
+        return {'record': record, 'contact': contact, 'already_linked': False}
+    except Exception as error:
+        with require_db() as db:
+            db.execute(text("update guruconnect_enquiries set crm_sync_error=:error where id=cast(:enquiry as uuid) and organisation_id=cast(:org as uuid)"),
+                       {**scope_parameters(), 'enquiry': enquiry_id, 'error': type(error).__name__})
+            db.commit()
+        raise HTTPException(502, 'Unable to create the Bigin lead for this enquiry') from error
+
 @app.get('/api/pipelines/search')
 async def pipeline_search(word: str):
     cleaned_word = word.replace('\\', '').strip()
@@ -1140,11 +1203,44 @@ async def create_product(payload: dict):
         data['name'] = data['item_name'] = item_name; data['rate'] = float(data['rate'])
         if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
         result = await zoho.create_books_item(org, data)
-        item = result.get('item')
+        item = result.get('item') or ((result.get('data') or [None])[0] if isinstance(result.get('data'), list) else None)
         _cache_recent_rows('products', [item] if item else [])
         return {'item': item, 'response': result}
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to create Zoho Books item')
+
+@app.post('/api/products/bulk')
+async def create_products_bulk(payload: dict):
+    """Create Books items one-by-one; Books has no atomic item-import endpoint."""
+    rows = payload.get('items') if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(422, 'At least one item is required')
+    if len(rows) > 100:
+        raise HTTPException(422, 'Upload at most 100 items at a time')
+    status = zoho.status(); org = status.get('organization_id')
+    if not status.get('connected') or not org:
+        raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+    created, failed = [], []
+    for index, raw in enumerate(rows, start=2):
+        try:
+            item_name = str(raw.get('name') or raw.get('item_name') or '').strip()
+            if not item_name:
+                raise ValueError('name is required')
+            if raw.get('rate') in (None, ''):
+                raise ValueError('rate is required')
+            data = {key: value for key, value in raw.items() if value not in (None, '')}
+            data['name'] = data['item_name'] = item_name
+            data['rate'] = float(data['rate'])
+            if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
+            result = await zoho.create_books_item(org, data)
+            item = result.get('item') or ((result.get('data') or [None])[0] if isinstance(result.get('data'), list) else None)
+            if not item:
+                raise RuntimeError('Zoho returned no item')
+            created.append(item)
+            _cache_recent_rows('products', [item])
+        except Exception as error:
+            failed.append({'row': index, 'name': raw.get('name') or raw.get('item_name') or '', 'error': str(error)[:240]})
+    return {'created': created, 'failed': failed, 'created_count': len(created), 'failed_count': len(failed), 'api_calls': len(rows)}
 @app.get('/api/books/customers')
 async def books_customers(search: str = '', date: str = ''):
     query = search.strip()
@@ -1417,7 +1513,13 @@ async def accept_quote(estimate_id: str):
     try:
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
-        return await zoho.accept_estimate(org, estimate_id)
+        try:
+            return await zoho.accept_estimate(org, estimate_id)
+        except Exception:
+            # Zoho rejects acceptance while an estimate is still a draft.
+            # Transition it to Sent first, then apply the requested action.
+            await zoho.send_estimate(org, estimate_id)
+            return await zoho.accept_estimate(org, estimate_id)
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to accept Zoho Books quote')
 @app.get('/api/orders')

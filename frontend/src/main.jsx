@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import './wizard-overrides.css';
 import { call } from './shared/api';
-import { ProductsPage as ProductsPageModule } from './pages/ProductsPage';
+import { ProductsPage as ProductsPageModule } from './pages/ProductsPageWithCreate';
 import { ContactsPage as ContactsPageModule } from './pages/ContactsPage';
 import { QuotesPage as QuotesPageModule } from './pages/QuotesPage';
 import { OrdersPage as OrdersPageModule } from './pages/OrdersPage';

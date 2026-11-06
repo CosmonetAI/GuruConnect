@@ -77,7 +77,7 @@ def email_delivery_configuration(settings_override=None) -> dict:
         missing.append('SMTP2GO_API_KEY')
     if not _email(getattr(configuration, 'smtp2go_sender_email', '')):
         missing.append('SMTP2GO_SENDER_EMAIL')
-    name = str(getattr(configuration, 'smtp2go_sender_name', 'GuruConnect') or '')
+    name = str(getattr(configuration, 'smtp2go_sender_name', 'ConnectCosmos') or '')
     if '\r' in name or '\n' in name or '\0' in name or len(name) > 160:
         missing.append('SMTP2GO_SENDER_NAME')
     return {'configured': not missing, 'provider': 'smtp2go', 'missing': missing}
@@ -137,11 +137,11 @@ def _payload(configuration, *, recipient, subject, message, pdf_bytes, filename,
     if not isinstance(delivery_key, str) or not 8 <= len(delivery_key) <= 200 or any(character in delivery_key for character in '\r\n\0'):
         raise EmailDeliveryError('email_invalid_delivery_key', 422)
     sender = _email(getattr(configuration, 'smtp2go_sender_email', ''))
-    name = str(getattr(configuration, 'smtp2go_sender_name', 'GuruConnect') or '').strip()
+    name = str(getattr(configuration, 'smtp2go_sender_name', 'ConnectCosmos') or '').strip()
     trace = hashlib.sha256(delivery_key.encode()).hexdigest()
     return {'sender': formataddr((name, sender)), 'to': [recipient], 'subject': subject.strip(),
             'text_body': message, 'fastaccept': True,
-            'custom_headers': [{'header': 'X-GuruConnect-Delivery', 'value': trace}],
+            'custom_headers': [{'header': 'X-ConnectCosmos-Delivery', 'value': trace}],
             'attachments': [{'filename': filename, 'fileblob': base64.b64encode(pdf_bytes).decode('ascii'), 'mimetype': 'application/pdf'}]}
 
 

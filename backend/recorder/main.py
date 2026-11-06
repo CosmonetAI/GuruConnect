@@ -93,7 +93,7 @@ def create_app(settings=None, *, allow_local=False):
                 await asyncio.gather(gg_refresh_task, return_exceptions=True)
                 await app.state.db.close()
 
-    app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan,
+    app = FastAPI(title="ConnectCosmos API", version="1.0.0", lifespan=lifespan,
                   docs_url=None if settings.deployed else "/docs",
                   redoc_url=None if settings.deployed else "/redoc",
                   openapi_url=None if settings.deployed else "/openapi.json")
@@ -170,7 +170,7 @@ def create_app(settings=None, *, allow_local=False):
 
     for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router, walkin_router):
         app.include_router(router)
-    # One backend process serves both products. Existing GuruConnect routes
+    # One backend process serves both products. Existing ConnectCosmos routes
     # remain under /api/v1; the GG sales assistant keeps its /api routes.
     app.mount("/", bind_parent(app))
     return app

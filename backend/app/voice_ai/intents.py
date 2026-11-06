@@ -83,7 +83,12 @@ def classify_voice_intent(text: str, context: dict[str, Any]) -> Route:
 def model_route(extraction: dict[str, Any]) -> dict[str, Any]:
     """Route a validated semantic result while retaining confidence and evidence."""
     intent = extraction.get('intent')
-    route = ROUTES[intent] if intent in ROUTES else ROUTES['unknown']
+    # A completed turn with no actionable business intent is still a sales
+    # follow-up. This keeps the transcript/session durable while putting the
+    # customer into the same follow-up queue as missed visitors.
+    follow_up_required = intent in {None, '', 'unknown', 'general_conversation'}
+    route = ROUTES['follow_up'] if follow_up_required else (ROUTES[intent] if intent in ROUTES else ROUTES['follow_up'])
     return {**route.__dict__, 'confidence': extraction.get('intent_confidence', 0),
             'evidence': extraction.get('intent_evidence') or [], 'source': 'model',
-            'requires_agent_approval': route.agent == 'business_actions', 'auto_execute': False}
+            'requires_agent_approval': route.agent == 'business_actions', 'auto_execute': False,
+            'follow_up_required': follow_up_required}

@@ -14,8 +14,9 @@ const detailText = (value) => typeof value === 'string' || typeof value === 'num
 const detailList = (value) => Array.isArray(value) ? value.map(detailText).filter(Boolean) : value && typeof value === 'object' ? Object.entries(value).map(([field, entry]) => `${field.replaceAll('_', ' ')}: ${detailText(entry)}`).filter((entry) => !entry.endsWith(': ')) : [];
 const specLabels = (value) => detailList(value).map((field) => field.replaceAll('_', ' '));
 
+export const productRate = (item) => item.rate ?? item.selling_price ?? item.selling_rate ?? item.sales_rate ?? item.unit_price ?? item.price ?? item.source_facts?.rate ?? item.source_facts?.Rate;
 export const productPriceAvailable = (item) => {
-  const value = item.rate ?? item.price;
+  const value = productRate(item);
   return (!item.price_status || item.price_status === 'known') && value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
 };
 export const productNeedsConfirmation = (item) => (Boolean(item.match_status) && item.match_status !== 'verified') || detailList(item.missing_specs).length > 0 || detailList(item.conflicts).length > 0;

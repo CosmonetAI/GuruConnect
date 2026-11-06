@@ -299,7 +299,10 @@ def normalize_item(row: dict) -> dict | None:
                     if key in specs and parsed_value not in specs[key]:
                         spec_conflicts.append(key)
                     _add_spec(specs, evidence, key, parsed_value, structured_sources[raw_key], str(value), 0, len(str(value)))
-    rate = _number(_first(row, 'rate', 'Rate'))
+    # Zoho Books returns `rate` for normal items, while imported/legacy rows
+    # can retain one of these equivalent selling-price fields. Normalize them
+    # here so a delayed cache row does not render as "Price unavailable".
+    rate = _number(_first(row, 'rate', 'Rate', 'selling_price', 'selling_rate', 'sales_rate', 'unit_price', 'price', 'Selling Price', 'Selling Rate'))
     explicitly_free = _boolean(_first(row, 'is_free', 'explicitly_free', 'is_complimentary'), False)
     stale = bool(row.get('_catalogue_stale') or row.get('catalogue_stale'))
     price_status = ('known' if rate is not None and (rate > 0 or rate == 0 and explicitly_free)

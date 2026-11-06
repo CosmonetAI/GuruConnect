@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import './wizard-overrides.css';
 import { call } from './shared/api';
-import { ProductsPage as ProductsPageModule } from '../pages/ProductsPage';
+import { ProductsPage as ProductsPageModule } from '../pages/ProductsPageWithCreate';
 import { ContactsPage as ContactsPageModule } from '../pages/ContactsPage';
 import { QuotesPage as QuotesPageModule } from '../pages/QuotesPage';
 import { OrdersPage as OrdersPageModule } from '../pages/OrdersPage';
@@ -125,7 +125,7 @@ function App2() {
 }
 export default App2;
 
-// These building blocks are also used by the GuruConnect shell. The legacy
+// These building blocks are also used by the ConnectCosmos shell. The legacy
 // standalone GG app remains available, while the main application can mount
 // the same pages without rendering a second sidebar.
 export { GlobalZohoDateFilter, GlobalZohoPager, ZohoSetup };

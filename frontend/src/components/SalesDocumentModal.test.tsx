@@ -51,6 +51,7 @@ describe('sales document review', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(data.onClose).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Creating document…' })).toBeDisabled()
+    expect(screen.getByText('Zoho Books is processing the request. You can keep this window open.')).toBeInTheDocument()
     view.rerender(<SalesDocumentModal {...props({ email: 'customer@example.test', createdDocument: { number: 'INV-42', deliveryStatus: 'uncertain' }, onDownload: vi.fn() })} />)
     expect(screen.getByRole('button', { name: 'Delivery status uncertain' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled()

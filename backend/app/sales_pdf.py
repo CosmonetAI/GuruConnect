@@ -102,7 +102,7 @@ def _build_pdf(pages: list[bytes], title: str) -> bytes:
         b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
         b'<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>',
         b'<< /Title <' + ('\ufeff' + title).encode('utf-16-be').hex().encode('ascii')
-        + b'> /Creator (GuruConnect demo preview) /Subject (Sample only - not an issued business document) >>',
+        + b'> /Creator (ConnectCosmos demo preview) /Subject (Sample only - not an issued business document) >>',
     ]
     page_ids = []
     for content in pages:
@@ -222,7 +222,7 @@ def render_demo_sales_pdf(document_type: str, customer: dict | str, lines: list[
     pages = []
     for number, chunk in enumerate(chunks, 1):
         content = bytearray(b'0.06 0.18 0.35 rg 0 760 595 82 re f\n')
-        content.extend(_draw_text('GuruConnect', x=42, y=801, font='F2', size=22, color='1 1 1'))
+        content.extend(_draw_text('ConnectCosmos', x=42, y=801, font='F2', size=22, color='1 1 1'))
         content.extend(_draw_text(f'{name.upper()} - SAMPLE PREVIEW', x=42, y=777, font='F2', size=11, color='0.72 0.84 1'))
         for index, (value, font, size) in enumerate(chunk):
             content.extend(_draw_text(value, x=42, y=730 - index * 16, font=font, size=size))
@@ -230,4 +230,4 @@ def render_demo_sales_pdf(document_type: str, customer: dict | str, lines: list[
         content.extend(_draw_text('SAMPLE ONLY - no document has been issued', x=42, y=40, size=9))
         content.extend(_draw_text(f'Page {number} of {len(chunks)}', x=463, y=40, size=9))
         pages.append(bytes(content))
-    return _build_pdf(pages, f'GuruConnect {name} sample preview')
+    return _build_pdf(pages, f'ConnectCosmos {name} sample preview')

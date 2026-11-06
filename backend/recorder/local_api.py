@@ -120,7 +120,7 @@ def create_local_app(settings) -> FastAPI:
                 await app.state.local_voice_analysis.stop()
             await app.state.processing.stop()
 
-    app = FastAPI(title="GuruConnect local development API", lifespan=lifespan)
+    app = FastAPI(title="ConnectCosmos local development API", lifespan=lifespan)
     app.state.settings = settings
     app.state.local_store = LocalStore(settings.local_data_dir)
     store = app.state.local_store
