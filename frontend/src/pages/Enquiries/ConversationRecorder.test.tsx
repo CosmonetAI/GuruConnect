@@ -65,6 +65,17 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('authenticated conversation audio', () => {
+  it('creates a processing run for walk-in registration recordings', async () => {
+    render(<ConversationRecorder customerName="Walk-in visitor" customerPhone="9876543210" customerEmail="visitor@example.com" audioBucket="walkin-audio" registrationOnly onConversationChange={vi.fn()} />)
+    consent()
+    fireEvent.click(screen.getByRole('button', { name: 'Start registration' }))
+    await screen.findByRole('button', { name: 'End registration' })
+    expect(JSON.parse(mocks.request.mock.calls.find(([path]) => path === '/conversations')![2].body)).toMatchObject({
+      audio_bucket: 'walkin-audio',
+      audio_only: false,
+    })
+  })
+
   it('starts a customer session without an email address so a PDF can be downloaded later', async () => {
     render(<ConversationRecorder sessionOnly customerName="Customer without email" customerPhone="9876543210" onConversationChange={vi.fn()} />)
     consent()

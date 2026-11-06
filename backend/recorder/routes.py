@@ -401,6 +401,10 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
         fail("walkin_recording_role_required", 403, "Only receptionists can create walk-in recordings")
     if body.audio_bucket == "session-audio" and context.role == "receptionist":
         fail("session_recording_role_required", 403, "Receptionists must use walk-in recording")
+    # Walk-in recordings must enter the durable processing pipeline. Older
+    # clients sent registration recordings as audio_only, which created no run
+    # and consequently could never publish active_version_id.
+    audio_only = body.audio_only and body.audio_bucket != "walkin-audio"
     if idempotency_key is not None and not re.fullmatch(r"[A-Za-z0-9_.:-]{8,128}", idempotency_key):
         fail("invalid_idempotency_key", 400, "Use a stable save key of 8–128 letters, digits, dots, underscores, colons or hyphens")
     request_hash = hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -425,7 +429,7 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
         await ensure_managed_providers(connection, context.id, request.app.state.settings)
         settings = await one(connection, "select * from workspace_engine_settings where organisation_id=%s", (context.id,))
         engine_id = body.engine_id or settings["default_engine_id"]
-        if not engine_id and not body.audio_only:
+        if not engine_id and not audio_only:
             fail("no_active_engine", 409, "Select a connected engine or deliberately record audio for later processing")
         if body.engine_id and not context.admin and (not settings["salesperson_engine_selection"] or body.engine_id not in settings["allowed_engine_ids"]):
             fail("engine_selection_not_allowed", 403)
@@ -445,13 +449,13 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
                 customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, body.customer_name or "Name not provided", email, phone, email, normalized_phone, body.is_unnamed or not body.customer_name))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))
         row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed,audio_bucket) values(%s,%s,%s,%s,%s,%s,%s,%s,true,%s) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint, body.audio_bucket))
-        run = None if body.audio_only else await create_run(connection, context, row, engine_id, "production", "initial")
+        run = None if audio_only else await create_run(connection, context, row, engine_id, "production", "initial")
         if run is None:
             await connection.execute("update conversations set transcription_state='blocked' where id=%s", (row["id"],))
             row["transcription_state"] = "blocked"
         if idempotency_key is not None:
             await connection.execute("insert into recorder_private.conversation_requests(organisation_id,owner_id,idempotency_key,request_hash,conversation_id) values(%s,%s,%s,%s,%s)", (context.id, context.user.id, idempotency_key, request_hash, row["id"]))
-        await audit(connection, context, "conversation.created", {"engine_id": engine_id, "audio_only": body.audio_only}, row["id"])
+        await audit(connection, context, "conversation.created", {"engine_id": engine_id, "audio_only": audio_only}, row["id"])
         return {**row, "runs": [run] if run else []}
 
 

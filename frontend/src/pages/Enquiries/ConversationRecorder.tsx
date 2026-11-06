@@ -166,7 +166,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
     if (reuseExisting && idRef.current) return idRef.current
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim() || null, phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, is_unnamed: registrationOnly && !customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: registrationOnly, audio_bucket: audioBucket },
+      body: { customer_name: customerName.trim() || null, phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, is_unnamed: registrationOnly && !customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: registrationOnly && audioBucket !== 'walkin-audio', audio_bucket: audioBucket },
     }
     const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal }, workspace!.member_id)
     signal.throwIfAborted()
