@@ -1271,7 +1271,11 @@ export default function VoiceSessions() {
     anchor.download = String(pdf.filename || "GuruConnect_document.pdf").replace(/[\\/]/g, "_");
     anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const closeDocumentModal = () => { if (!documentInFlight.current) setDocumentModalOpen(false); };
+  const closeDocumentModal = () => {
+    if (documentInFlight.current) return;
+    if (documentPendingCreation) setDocumentProgress({ state: "loading", label: `${documentTypeLabel(documentType)} creation is still in progress…` });
+    setDocumentModalOpen(false);
+  };
   const returnToDefaultSession = () => { setCart([]); setCartOpen(false); setActiveTab("conversation"); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); };
   const documentScopeCurrent = (snapshot) => alive.current && documentSnapshot.current === snapshot && currentDocumentScope.current === snapshot.scope && sessionRef.current === snapshot.session;
   const createDocument = async (type) => {
@@ -1328,8 +1332,10 @@ export default function VoiceSessions() {
         } else if (!existing && !snapshot.result) {
           snapshot.pendingCreation = false; documentDrafts.current.delete(snapshot.scope); setDocumentPendingCreation(false);
         }
+        if (error.details?.document_started === true) setDocumentProgress({ state: "loading", label: `${documentTypeLabel(type)} creation is still in progress…` });
         setDocumentError(message);
         setDocumentProgress({ state: "error", label: `Couldn’t create ${documentTypeLabel(type).toLocaleLowerCase()}` });
+        if (error.details?.document_started === true) setDocumentProgress({ state: "loading", label: `${documentTypeLabel(type)} creation is still in progress…` });
       }
     }
     finally { documentInFlight.current = false; if (documentScopeCurrent(snapshot)) setDocumentBusy(""); }

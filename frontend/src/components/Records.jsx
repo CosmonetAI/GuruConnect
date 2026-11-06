@@ -142,7 +142,7 @@ export function DocumentCardActions({ record, type, onRecordUpdate }) {
     void action('paid', { account_id: accountId, ...(partialPayment ? { amount: Number(paymentAmount), amount_applied: Number(paymentAmount) } : {}) });
   };
   return <>
-  <div className="document-card-actions" onClick={event => event.stopPropagation()}>
+  <div className={`document-card-actions document-card-actions-${kind}`} onClick={event => event.stopPropagation()}>
     {kind === 'quote' && <button type="button" className="secondary" onClick={() => void action('accept')} disabled={Boolean(busy)}>{busy === 'accept' ? 'Marking accepted...' : 'Mark accepted'}</button>}
     {kind === 'invoice' && <><button type="button" className="secondary" onClick={() => void openPaid(false)} disabled={Boolean(busy)}>{busy === 'paid' ? 'Marking paid...' : 'Mark paid'}</button><button type="button" className="secondary" onClick={() => void openPaid(true)} disabled={Boolean(busy)}>Partial payment</button></>}
     {message && <span className={/unable|error/i.test(message) ? 'mail-error' : 'mail-success'} role="status">{message}</span>}
