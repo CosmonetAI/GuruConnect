@@ -219,7 +219,6 @@ function CustomerModal({ contact, onClose }) {
   );
 }
 
-const CRM_LEAD_TTL_MS = 5 * 60 * 1000;
 const crmLeadCache = new Map();
 export const resetCrmLeadCache = () => crmLeadCache.clear();
 const MATCH_LABELS = { phone: "Phone", email: "Email", "phone+email": "Phone and Email", "phone or email": "Phone or Email", "full name": "Full name", surname: "Surname" };
@@ -227,10 +226,13 @@ const MATCH_LABELS = { phone: "Phone", email: "Email", "phone+email": "Phone and
 // Shares one in-flight request per customer and reuses fresh results when the drawer reopens.
 function loadCrmLead(key, query, workspaceId, force) {
   const hit = crmLeadCache.get(key);
-  if (!force && hit && (hit.promise || Date.now() - hit.at < CRM_LEAD_TTL_MS)) return hit.promise || Promise.resolve(hit.data);
+  if (!force && hit && (hit.promise || hit.error || Object.prototype.hasOwnProperty.call(hit, "data"))) {
+    if (hit.error) return Promise.reject(hit.error);
+    return hit.promise || Promise.resolve(hit.data);
+  }
   const promise = call(`/bigin/crm-lead?${query}`, {}, workspaceId).then(
     (data) => { crmLeadCache.set(key, { at: Date.now(), data }); return data; },
-    (error) => { crmLeadCache.delete(key); throw error; },
+    (error) => { crmLeadCache.set(key, { at: Date.now(), error }); throw error; },
   );
   crmLeadCache.set(key, { promise });
   return promise;
@@ -258,7 +260,7 @@ function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionI
   const [attempt, setAttempt] = useState(0);
   const forceRefresh = useRef(false);
   const query = new URLSearchParams({ name, phone, email }).toString();
-  const key = `${workspaceId}|${query}`;
+  const key = `${workspaceId}|${sessionId}|${query}`;
   useEffect(() => {
     if (!phone && !email && !name) { setState({ phase: "empty", result: null, error: "" }); return undefined; }
     let current = true;
@@ -628,6 +630,7 @@ export default function VoiceSessions() {
   const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
   const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
   const documentDrafts = useRef(new Map());
+  const crmWarmScope = useRef("");
   currentDocumentScope.current = `${user?.id}:${workspace?.id}:${workspace?.member_id || user?.id}:${session}`;
   const [recorderGeneration, setRecorderGeneration] = useState(0);
   const [captureBusy, setRecorderBusy] = useState(false);
@@ -692,8 +695,10 @@ export default function VoiceSessions() {
     try { return await call(path, { ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || user?.id } }, workspace?.id); }
     finally { controllers.current.delete(controller); }
   };
+  // Warm the customer document cache when the session opens. The Documents tab
+  // only reads this state; changing tabs must not restart the four Zoho searches.
   useEffect(() => {
-    if (activeTab !== "documents" || !session) return undefined;
+    if (!session) return undefined;
     const customerName = String(identity.name || selectedContact?.name || "").trim();
     const ticket = selection.current;
     let cancelled = false;
@@ -753,7 +758,24 @@ export default function VoiceSessions() {
       if (currentSearch()) setSessionDocumentsBusy(false);
     }); }, 260);
     return () => { cancelled = true; window.clearTimeout(searchTimer); };
-  }, [activeTab, session, identity.name, selectedContact?.name, sessionDocumentQuery]);
+  }, [session, identity.name, selectedContact?.name, sessionDocumentQuery]);
+
+  // Warm Bigin once per opened session as well. CrmLeadPanel reuses the
+  // in-flight/result cache when the salesperson opens the CRM Lead tab.
+  useEffect(() => {
+    if (!session) return undefined;
+    const phone = identity.phone || selectedContact?.phone || "";
+    const email = identity.email || selectedContact?.email || "";
+    const name = identity.name || selectedContact?.name || "";
+    if (!phone && !email && !name) return undefined;
+    const warmScope = `${workspace?.id}|${session}|${name}|${phone}|${email}`;
+    if (crmWarmScope.current === warmScope) return undefined;
+    crmWarmScope.current = warmScope;
+    const query = new URLSearchParams({ name, phone, email }).toString();
+    const key = `${workspace?.id}|${session}|${query}`;
+    void loadCrmLead(key, query, workspace?.id, true).catch(() => {});
+    return undefined;
+  }, [session, workspace?.id, identity.name, identity.phone, identity.email, selectedContact?.name, selectedContact?.phone, selectedContact?.email]);
   const openSessionDocument = async (record) => {
     const definition = sessionDocumentDefinitions.find((item) => item.type === record.__document_type);
     const id = definition && record[definition.idKey];
