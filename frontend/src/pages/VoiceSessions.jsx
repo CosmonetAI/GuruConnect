@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams, useBlocker, useNavigate } from "react-router-dom";
 import {
@@ -75,6 +75,7 @@ const sessionDocumentDefinitions = [
 const normalizeDocumentText = (value) => String(value || "").trim().toLocaleLowerCase();
 const documentName = (record) => record?.customer_name || record?.vendor_name || record?.contact_name || record?.company_name || "";
 const documentTitle = (record, definition) => definition?.numberKeys.map((key) => record?.[key]).find(Boolean) || record?.[definition?.idKey] || definition?.label || "Document";
+const documentTypeLabel = (type) => String(type || "document").replaceAll("-", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 const documentExternalUrl = (record) => {
   const value = record?.invoice_url || record?.estimate_url || record?.salesorder_url || record?.purchaseorder_url || record?.document_url;
   const text = String(value || "").trim();
@@ -375,6 +376,11 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
   const document = documentResult?.document;
   const hasCart = cart.length > 0;
   const searchItems = sessionDocumentDefinitions.map((definition) => ({ definition, state: documentSearchState[definition.type] })).filter(({ state }) => state);
+  const createdDocumentCard = document ? <article className="session-document-record-card session-document-created-card" aria-label={`${document.updated_existing ? "Updated" : "Created"} ${String(document.type || "document").replaceAll("-", " ")} ${document.number || "document"}`}>
+    <span className="session-document-record-type"><SessionDocumentIcon type={document.type} />{document.updated_existing ? "Updated document" : "Created document"}</span>
+    <div className="session-document-record-title"><strong>{document.number || "Sales document"}</strong><button type="button" className="session-document-open-link" onClick={onDownload}>Download PDF</button></div>
+    <span className="session-document-record-meta">{String(document.type || "document").replaceAll("-", " ")} · {document.demo ? "Sample PDF" : "PDF ready"}</span>
+  </article> : null;
   useEffect(() => { setSearchInput(searchQuery ?? ""); }, [searchQuery]);
   const submitSearch = () => onSearchQueryChange(searchInput.trim());
   return (
@@ -392,30 +398,25 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
         </div>
       </div>
       {documentsError && <p className="session-documents-error">{documentsError}</p>}
-      {documents.length > 0 && <div className="session-documents-results" aria-label="Matching Zoho Books documents">
+      {(documents.length > 0 || document) && <div className="session-documents-results" aria-label="Matching Zoho Books documents">
         {documents.map((record) => {
           const definition = sessionDocumentDefinitions.find((item) => item.type === record.__document_type) || sessionDocumentDefinitions[0];
           const id = record[definition.idKey];
           const externalUrl = documentExternalUrl(record);
-          return <article className="session-document-record-card" key={`${definition.type}:${id}`} role="button" tabIndex={0} onClick={() => onOpenDocument(record)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenDocument(record); } }}>
-            <span className="session-document-record-type"><SessionDocumentIcon type={definition.type} />{definition.label}</span>
-            <div className="session-document-record-title"><strong>{documentTitle(record, definition)}</strong>{externalUrl && <a href={externalUrl} download target="_blank" rel="noreferrer" className="session-document-open-link" onClick={(event) => event.stopPropagation()} title="Download from Zoho Books"><Download size={13} />Download</a>}</div>
-            <span className="session-document-record-meta">{documentName(record) || "Contact not provided"}</span>
-            <span className="session-document-record-meta">{record.date || record.created_time || "Date not provided"}{record.status ? ` · ${String(record.status).replaceAll("_", " ")}` : ""}{record.total != null ? ` · ${record.currency_symbol || "₹"}${Number(record.total).toLocaleString("en-IN")}` : ""}</span>
-          </article>;
+          return <Fragment key={`${definition.type}:${id}`}>
+            <article className="session-document-record-card" role="button" tabIndex={0} aria-label={`Open ${documentTitle(record, definition)} in cart`} title="Open in cart" onClick={() => onOpenDocument(record)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenDocument(record); } }}>
+              <span className="session-document-record-type"><SessionDocumentIcon type={definition.type} />{definition.label}</span>
+              <div className="session-document-record-title"><strong>{documentTitle(record, definition)}</strong>{externalUrl && <a href={externalUrl} download target="_blank" rel="noreferrer" className="session-document-open-link" onClick={(event) => event.stopPropagation()} title="Download from Zoho Books"><Download size={13} />Download</a>}</div>
+              <span className="session-document-record-meta">{documentName(record) || "Contact not provided"}</span>
+              <span className="session-document-record-meta">{record.date || record.created_time || "Date not provided"}{record.status ? ` · ${String(record.status).replaceAll("_", " ")}` : ""}{record.total != null ? ` · ${record.currency_symbol || "₹"}${Number(record.total).toLocaleString("en-IN")}` : ""}</span>
+            </article>
+            {record === documents[0] && createdDocumentCard}
+          </Fragment>;
         })}
+        {!documents.length && createdDocumentCard}
       </div>}
       {searchItems.length > 0 && searchItems.every(({ state }) => state.status !== "searching") && !documentsError && documents.length === 0 && <p className="session-documents-empty-search">No matching Zoho Books documents found for this customer.</p>}
-      {document ? (
-        <div className="session-document-card">
-          <div>
-            <small>CREATED DOCUMENT</small>
-            <strong>{document.number || "Sales document"}</strong>
-            <span>{String(document.type || "document").replaceAll("-", " ")} · {document.demo ? "Sample PDF" : "PDF ready"}</span>
-          </div>
-          <button type="button" className="button button-quiet" onClick={onDownload}>Download PDF</button>
-        </div>
-      ) : hasCart ? <div className="session-document-card session-document-empty">
+      {!document && hasCart ? <div className="session-document-card session-document-empty">
         <div>
           <strong>Ready to create a document</strong>
           <span>{cart.length} product{cart.length === 1 ? "" : "s"} selected in the cart.</span>
@@ -621,7 +622,7 @@ export default function VoiceSessions() {
     [documentEmail, setDocumentEmail] = useState(""),
     [documentSubject, setDocumentSubject] = useState(""),
     [documentMessage, setDocumentMessage] = useState("");
-  const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentFeedback, setDocumentFeedback] = useState(""), [documentDelivery, setDocumentDelivery] = useState("email"), [documentResult, setDocumentResult] = useState(null);
+  const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentProgress, setDocumentProgress] = useState(null), [documentDelivery, setDocumentDelivery] = useState("email"), [documentResult, setDocumentResult] = useState(null);
   const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
   const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
   const documentDrafts = useRef(new Map());
@@ -646,7 +647,7 @@ export default function VoiceSessions() {
   const [sessionDocumentsBusy, setSessionDocumentsBusy] = useState(false);
   const [sessionDocumentsError, setSessionDocumentsError] = useState("");
   const [sessionDocumentDetailsBusy, setSessionDocumentDetailsBusy] = useState(false);
-  const [sourceDocumentType, setSourceDocumentType] = useState(null);
+  const [sourceDocumentType, setSourceDocumentType] = useState(null), [sourceDocumentId, setSourceDocumentId] = useState(null), [sourceDocumentNumber, setSourceDocumentNumber] = useState(null);
   const [archivedConversationId, setArchivedConversationId] = useState(null);
   const [viewProduct, setViewProduct] = useState(null);
   useEffect(() => {
@@ -781,7 +782,7 @@ export default function VoiceSessions() {
       if (alive.current) {
         setCart(loadedCart);
         setCartOpen(true);
-        setSourceDocumentType(definition.type);
+        setSourceDocumentType(definition.type); setSourceDocumentId(id); setSourceDocumentNumber(documentTitle(record, definition));
         setActiveTab("conversation");
         setSessionDocumentsError(loadedCart.length ? "" : "This document has no catalogue line items to load into the cart.");
       }
@@ -814,7 +815,7 @@ export default function VoiceSessions() {
     setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
   };
   const clearLiveWorkspace = () => {
-    documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentFeedback(""); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
+    documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentProgress(null); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
     setContextHydrated(null); setCartSaveError("");
     setNoteBusy(false);
     setTranscriptPreview([]); setInsights([]); setRecommendations([]); setProducts([]);
@@ -822,7 +823,7 @@ export default function VoiceSessions() {
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
     setCart([]); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
-    setActiveTab("conversation"); setSessionDocuments([]); setSessionDocumentSearchState({}); setSessionDocumentQuery(null); setSessionDocumentsError(""); setSessionDocumentDetailsBusy(false); setSourceDocumentType(null); setArchivedConversationId(null);
+    setActiveTab("conversation"); setSessionDocuments([]); setSessionDocumentSearchState({}); setSessionDocumentQuery(null); setSessionDocumentsError(""); setSessionDocumentDetailsBusy(false); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); setArchivedConversationId(null);
     setCartProductSearchOpen(false); setViewProduct(null); setCartSearchError("");
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
   };
@@ -1202,14 +1203,14 @@ export default function VoiceSessions() {
       return;
     }
     const lines = cart.map((line) => ({ ...line }));
-    documentInFlight.current = true; setDocumentBusy("options"); setError(""); setDocumentFeedback("");
+    documentInFlight.current = true; setDocumentBusy("options"); setError(""); setDocumentProgress(null);
     try {
       const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
       if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
       const supportedTypes = (options.document_types || []).filter((type) => ["invoice", "quote", "sales-order"].includes(type));
       if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
       const customer = { ...identity, ...(options.customer || {}) };
-      const snapshot = { scope, session: selectedSession, cart: lines, options: { ...options, customer, document_types: supportedTypes }, result: null };
+      const snapshot = { scope, session: selectedSession, cart: lines, options: { ...options, customer, document_types: supportedTypes }, sourceDocumentType, sourceDocumentId, sourceDocumentNumber, result: null };
       documentSnapshot.current = snapshot;
       setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
       setDocumentType(sourceDocumentType && supportedTypes.includes(sourceDocumentType) ? sourceDocumentType : supportedTypes[0]); setDocumentEmail(customer.email || "");
@@ -1269,6 +1270,7 @@ export default function VoiceSessions() {
     anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const closeDocumentModal = () => { if (!documentInFlight.current) setDocumentModalOpen(false); };
+  const returnToDefaultSession = () => { setCart([]); setCartOpen(false); setActiveTab("conversation"); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); };
   const documentScopeCurrent = (snapshot) => alive.current && documentSnapshot.current === snapshot && currentDocumentScope.current === snapshot.scope && sessionRef.current === snapshot.session;
   const createDocument = async (type) => {
     const snapshot = documentSnapshot.current;
@@ -1278,18 +1280,19 @@ export default function VoiceSessions() {
     if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email, or choose Download PDF instead of emailing."); return; }
     const existing = snapshot.result;
     if (existing && downloadOnly) {
-      try { downloadDocumentPdf(existing); setDocumentFeedback("Document PDF downloaded."); setDocumentModalOpen(false); } catch (error) { setDocumentError(error.message); }
+      try { downloadDocumentPdf(existing); setDocumentModalOpen(false); returnToDefaultSession(); setDocumentProgress({ state: "success", label: `${documentTypeLabel(existing.document?.type || documentType)}${existing.document?.number ? ` ${existing.document.number}` : ""} created` }); } catch (error) { setDocumentError(error.message); }
       return;
     }
     if (existing?.delivery?.status === "uncertain") { setDocumentError("Email submission is uncertain. Check its status before retrying; your document PDF is available to download."); return; }
     const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.notes || line.product || line.name || "" }));
     if (!lines.length || lines.some((line) => !line.item_id || !Number.isFinite(line.quantity) || line.quantity <= 0)) { setDocumentError("Select at least one catalogue product with a valid quantity."); return; }
-    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient, subject: documentSubject, message: documentMessage } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, subject: documentSubject, message: documentMessage, line_items: lines };
+    const updateExisting = !existing && snapshot.sourceDocumentId && snapshot.sourceDocumentType === type;
+    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient, subject: documentSubject, message: documentMessage } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, subject: documentSubject, message: documentMessage, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
     const signature = JSON.stringify(body);
     const actionName = existing ? "emailAction" : "createAction";
     if (snapshot[actionName]?.signature !== signature) snapshot[actionName] = { signature, requestId: crypto.randomUUID(), body };
     const requestId = snapshot[actionName].requestId;
-    documentInFlight.current = true; setDocumentBusy(type); setDocumentError(""); setDocumentFeedback("");
+    documentInFlight.current = true; setDocumentBusy(type); setDocumentError(""); setDocumentProgress({ state: "loading", label: `Creating ${documentTypeLabel(type).toLocaleLowerCase()}…` });
     try {
       const path = `/voice-sessions/${snapshot.session}/sales-documents${existing ? `/${encodeURIComponent(existing.document.id)}/email` : ""}`;
       const response = await sessionCall(path, { method: "POST", timeoutMs: 90000, headers: { "Idempotency-Key": requestId }, body: JSON.stringify({ ...body, request_id: requestId }) });
@@ -1298,15 +1301,19 @@ export default function VoiceSessions() {
       if (!result?.document?.id || !result.pdf) throw new Error("The document response is incomplete. Retry this action using the same session.");
       snapshot.result = result; snapshot.pendingCreation = false; documentDrafts.current.delete(snapshot.scope); setDocumentPendingCreation(false); setDocumentResult(result);
       const deliveryStatus = result.delivery?.status;
+      const createdType = documentTypeLabel(result.document?.type || body.type || type);
+      const createdNumber = result.document?.number ? ` ${result.document.number}` : "";
+      const documentAction = result.document?.updated_existing ? "updated" : "created";
       // A confirmed rejection can be retried as a new delivery. A lost response
       // keeps its action key so checking it cannot submit the email twice.
       if (existing && deliveryStatus === "failed") snapshot.emailAction = null;
       if (downloadOnly) {
-        downloadDocumentPdf(result); setDocumentModalOpen(false);
-        setDocumentFeedback(`${result.document.demo ? "Sample document" : "Document"} created and downloaded as PDF.`);
+        downloadDocumentPdf(result); setDocumentModalOpen(false); returnToDefaultSession();
+        setDocumentProgress({ state: "success", label: `${result.document.demo ? `Sample ${createdType.toLocaleLowerCase()}` : createdType}${createdNumber} ${documentAction}` });
       } else if (deliveryStatus === "accepted") {
-        setDocumentModalOpen(false); setDocumentFeedback("Document created. Submitted for delivery via Zoho Books.");
+        setDocumentModalOpen(false); returnToDefaultSession(); setDocumentProgress({ state: "success", label: `${createdType}${createdNumber} ${documentAction}` });
       } else {
+        setDocumentProgress({ state: "error", label: `${createdType}${createdNumber} created; delivery needs attention` });
         snapshot.error = result.delivery?.message || (deliveryStatus === "uncertain" ? "Email submission is uncertain. Check its status before retrying. You can download the created PDF." : "The document was created, but email submission failed. Retry email or download the PDF.");
         snapshot.emailFields = { recipient, subject: documentSubject, message: documentMessage };
         documentDrafts.current.set(snapshot.scope, snapshot); setDocumentError(snapshot.error);
@@ -1320,6 +1327,7 @@ export default function VoiceSessions() {
           snapshot.pendingCreation = false; documentDrafts.current.delete(snapshot.scope); setDocumentPendingCreation(false);
         }
         setDocumentError(message);
+        setDocumentProgress({ state: "error", label: `Couldn’t create ${documentTypeLabel(type).toLocaleLowerCase()}` });
       }
     }
     finally { documentInFlight.current = false; if (documentScopeCurrent(snapshot)) setDocumentBusy(""); }
@@ -1398,7 +1406,6 @@ export default function VoiceSessions() {
           {error}
         </div>
       )}
-      {documentFeedback && <p className="session-document-feedback" role="status">{documentFeedback}</p>}
       <div className={`chat-layout voice-sessions-layout${cart.length && cartOpen ? " is-cart-focused" : ""}`}>
         <section className="chat-list" inert={cart.length && cartOpen ? true : undefined} aria-hidden={cart.length && cartOpen ? true : undefined}>
           <div className="list-head">
@@ -1489,6 +1496,10 @@ export default function VoiceSessions() {
                   <span className={`live-header-pill status-${transcriptionUiStatus.key}`} title={transcriptionUiStatus.detail}>
                     <i />{transcriptionUiStatus.label}
                   </span>
+                  {documentProgress && <span className={`live-header-pill status-document-${documentProgress.state}`} role="status" aria-live="polite">
+                    {documentProgress.state === "loading" ? <LoaderCircle size={13} className="session-document-spinner" aria-hidden="true" /> : documentProgress.state === "success" ? <CheckCircle2 size={13} aria-hidden="true" /> : <i />}
+                    {documentProgress.label}
+                  </span>}
                   {demoCatalogue && <span className="live-header-pill status-ready" title={demoCatalogueNotice}>Demo catalogue</span>}
                   {transcriptionUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
                 </div>
@@ -1520,7 +1531,7 @@ export default function VoiceSessions() {
           {session && <>
             {activeTab !== "conversation" && activeTab !== "documents" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : activeTab === "lead" ? "CRM lead details" : "Enquiry context"}>
               <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : activeTab === "documents" ? "Documents" : activeTab === "lead" ? "CRM lead" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
@@ -1556,7 +1567,7 @@ export default function VoiceSessions() {
               <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
             </LiveSessionWorkspace>
             {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
-            {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} />}
+            {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} />}
           </>}
         </section>
       </div>
@@ -1588,9 +1599,9 @@ export default function VoiceSessions() {
         setDelivery={setDocumentDelivery}
         demo={documentOptions?.mode === "local-demo"}
         error={documentError}
-        createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status } : null}
+        createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status, updated: documentResult.document?.updated_existing === true } : null}
         pendingCreation={documentPendingCreation}
-        onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentFeedback("Document PDF downloaded."); } catch (error) { setDocumentError(error.message); } }}
+        onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }}
         documentType={documentType}
         setDocumentType={setDocumentType}
         sourceDocumentType={sourceDocumentType}

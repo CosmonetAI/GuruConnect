@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
-import { ArrowLeft, Check, Download, FileCheck2, FileText, Mail, Package, Phone, Receipt, Send, ShoppingBag, UserRound, X } from 'lucide-react'
+import { ArrowLeft, Check, Download, FileCheck2, FileText, LoaderCircle, Mail, Package, Phone, Receipt, Send, ShoppingBag, UserRound, X } from 'lucide-react'
 import '../styles/sales-document-modal.css'
 
 export type SalesDocumentType = 'invoice' | 'quote' | 'sales-order' | 'purchase-order'
@@ -12,7 +12,7 @@ export type SalesDocumentModalProps = {
   email: string; setEmail: (email: string) => void; subject: string; setSubject: (subject: string) => void
   message: string; setMessage: (message: string) => void; busy: boolean; demo?: boolean; error?: string
   documentTypes?: SalesDocumentType[]; emailConfigured?: boolean; delivery?: 'email' | 'download'; setDelivery?: (delivery: 'email' | 'download') => void
-  createdDocument?: { number?: string; deliveryStatus?: string } | null
+  createdDocument?: { number?: string; deliveryStatus?: string; updated?: boolean } | null
   pendingCreation?: boolean
   onClose: () => void; onBack: () => void; onSubmit: (type: SalesDocumentType) => void; onDownload?: () => void
 }
@@ -77,10 +77,10 @@ export default function SalesDocumentModal({ open, contact, customerType, cart, 
           })}</div></fieldset>
           <fieldset className="sdm-email-fieldset" disabled={busy || pendingCreation}><legend><span><Mail size={17} />Email details</span><small>{demo ? 'Downloads only in demo' : emailConfigured ? 'Sent securely via Zoho Books' : 'Email delivery is not configured'}</small></legend><label className="sdm-recipient">To ({vendor ? 'vendor' : 'customer'} email)<span><UserRound size={15} /><input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="Enter recipient email" disabled={demo || !emailConfigured} /></span></label>{!email.trim() && <p className="sdm-email-hint"><Download size={13} />No email address? You can create and download the PDF.</p>}{!demo && !emailConfigured && <p className="sdm-email-hint">Email delivery is unavailable. Your document can still be downloaded as a PDF.</p>}<div className="sdm-email-grid"><label>Email subject<input value={subject} onChange={event => setSubject(event.target.value)} disabled={demo || !emailConfigured} maxLength={200} /></label><label>Email message<textarea value={message} onChange={event => setMessage(event.target.value)} disabled={demo || !emailConfigured} rows={3} maxLength={10000} /></label></div>{!demo && emailConfigured && setDelivery && <label className="sdm-download-choice"><input type="checkbox" checked={delivery === 'download'} onChange={event => setDelivery(event.target.checked ? 'download' : 'email')} />Download PDF instead of emailing</label>}</fieldset>
           {pendingCreation && <p className="sdm-existing-document" role="status">The previous request could not be confirmed. Check it using the same action before changing document details; this avoids creating a duplicate.</p>}
-          {createdDocument && <p className="sdm-existing-document" role="status">Document {createdDocument.number || ''} has been created. {deliveryUncertain ? 'Email submission is uncertain; check its status before retrying.' : 'Retry email delivery or download this PDF without creating another document.'}</p>}
+          {createdDocument && <p className="sdm-existing-document" role="status">Document {createdDocument.number || ''} has been {createdDocument.updated ? 'updated' : 'created'}. {deliveryUncertain ? 'Email submission is uncertain; check its status before retrying.' : 'Retry email delivery or download this PDF without creating another document.'}</p>}
           {error && <p className="sdm-error" role="alert">{error}</p>}
         </div>
-        <footer className="sdm-footer"><button type="button" className="sdm-back" onClick={onBack} disabled={busy}><ArrowLeft size={15} />Back to cart</button><div>{createdDocument && onDownload && <button type="button" className="sdm-back" disabled={busy} onClick={onDownload}><Download size={15} />Download PDF</button>}<button type="submit" className="sdm-submit" disabled={busy || !cart.length || (deliveryUncertain && !downloadOnly)}>{busy ? createdDocument ? 'Submitting email…' : 'Creating document…' : <>{downloadOnly ? <Download size={16} /> : <Send size={16} />}{pendingCreation ? 'Check document status' : createdDocument ? downloadOnly ? 'Download PDF' : deliveryUncertain ? 'Delivery status uncertain' : 'Retry email' : downloadOnly ? 'Create & download PDF' : 'Create & send'}</>}</button></div></footer>
+        <footer className="sdm-footer"><button type="button" className="sdm-back" onClick={onBack} disabled={busy}><ArrowLeft size={15} />Back to cart</button><div>{createdDocument && onDownload && <button type="button" className="sdm-back" disabled={busy} onClick={onDownload}><Download size={15} />Download PDF</button>}<button type="submit" className="sdm-submit" disabled={busy || !cart.length || (deliveryUncertain && !downloadOnly)}>{busy ? <><LoaderCircle size={15} className="sdm-submit-spinner" aria-hidden="true" />{createdDocument ? 'Submitting email…' : 'Creating document…'}</> : <>{downloadOnly ? <Download size={16} /> : <Send size={16} />}{pendingCreation ? 'Check document status' : createdDocument ? downloadOnly ? 'Download PDF' : deliveryUncertain ? 'Delivery status uncertain' : 'Retry email' : downloadOnly ? 'Create & download PDF' : 'Create & send'}</>}</button></div></footer>
       </form>
     </section>
   </div>

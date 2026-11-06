@@ -42,6 +42,8 @@ class SalesDocumentInput(DocumentEmailInput):
     type: Literal['invoice', 'quote', 'sales-order']
     delivery: Literal['email', 'download'] = 'download'
     line_items: list[SalesLine] = Field(min_length=1, max_length=50)
+    source_document_id: str | None = Field(default=None, min_length=1, max_length=100)
+    source_document_number: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 def signature(value):
@@ -162,9 +164,9 @@ class DocumentRepository:
 
 
 class SalesDocumentService:
-    TYPES = {'invoice': ('create_invoice', 'invoice', 'invoice_id', 'invoice_number'),
-             'quote': ('create_estimate', 'estimate', 'estimate_id', 'estimate_number'),
-             'sales-order': ('create_sales_order', 'salesorder', 'salesorder_id', 'salesorder_number')}
+    TYPES = {'invoice': ('create_invoice', 'update_invoice', 'invoice', 'invoice_id', 'invoice_number'),
+             'quote': ('create_estimate', 'update_estimate', 'estimate', 'estimate_id', 'estimate_number'),
+             'sales-order': ('create_sales_order', 'update_sales_order', 'salesorder', 'salesorder_id', 'salesorder_number')}
 
     def __init__(self, repository, customer, *, zoho=None, settings=None, demo=False, sender=None):
         self.repository, self.customer, self.zoho = repository, customer, zoho
@@ -270,14 +272,23 @@ class SalesDocumentService:
                 customer_id = contact.get('contact_id') or contact.get('id')
                 if not customer_id:
                     raise RuntimeError('books_contact_missing')
-                method, key, id_key, number_key = self.TYPES[body.type]
+                create_method, update_method, key, id_key, number_key = self.TYPES[body.type]
                 zone = ZoneInfo(getattr(self.settings, 'app_timezone', None) or 'Asia/Kolkata')
-                result = await getattr(self.zoho, method)(org, {'customer_id': customer_id,
-                    'date': datetime.now(zone).date().isoformat(), 'reference_number': f'GC-{identity}',
+                source_id = body.source_document_id
+                payload = {'customer_id': customer_id,
+                    'date': datetime.now(zone).date().isoformat(),
                     'discount_type': 'item_level', 'is_discount_before_tax': True,
                     'line_items': [{k: v for k, v in item.items() if k not in {'name', 'sku', 'discount_amount'}} for item in lines],
-                    'notes': 'Created from GuruConnect customer session'})
+                    'notes': 'Updated from GuruConnect customer session' if source_id else 'Created from GuruConnect customer session'}
+                if not source_id:
+                    payload['reference_number'] = f'GC-{identity}'
+                if source_id:
+                    result = await getattr(self.zoho, update_method)(org, source_id, payload)
+                else:
+                    result = await getattr(self.zoho, create_method)(org, payload)
                 created = result.get(key) or {}
+                if source_id and not created.get(id_key):
+                    created[id_key] = source_id
                 if not created.get(id_key):
                     raise RuntimeError('books_document_identity_missing')
                 expected_total = sum(Decimal(str(line['rate'])) * Decimal(str(line['quantity'])) - Decimal(str(line['discount_amount'])) for line in lines)
@@ -288,7 +299,8 @@ class SalesDocumentService:
                 if returned_lines and all(item.get('item_total') is not None for item in returned_lines):
                     actual_total = sum(Decimal(str(item['item_total'])) for item in returned_lines)
                     pricing_review = abs(actual_total - expected_total) > Decimal('0.01') * len(lines)
-                document = {'external_id': str(created[id_key]), 'number': created.get(number_key) or str(created[id_key]),
+                document = {'external_id': str(created[id_key]), 'number': created.get(number_key) or body.source_document_number or str(created[id_key]),
+                            'updated_existing': bool(source_id),
                             'pricing_review': pricing_review,
                             'total': created.get('total'), 'tax_total': created.get('tax_total'), 'currency_code': created.get('currency_code')}
             row = await asyncio.to_thread(self.repository.patch, identity, {**document, 'state': 'created'}, {'state': 'creating'})
@@ -343,7 +355,7 @@ class SalesDocumentService:
         except Exception:
             raise HTTPException(502, {'code': 'document_pdf_unavailable', 'document_started': True, 'document_id': row['id'],
                 'message': 'The document was created, but its PDF is temporarily unavailable. Retry the same action; it will reuse the existing document.'}) from None
-        return {'document': {key: row.get(key) for key in ('id', 'external_id', 'number', 'type', 'demo', 'total', 'tax_total', 'currency_code')},
+        return {'document': {key: row.get(key) for key in ('id', 'external_id', 'number', 'type', 'demo', 'updated_existing', 'total', 'tax_total', 'currency_code')},
                 'delivery': row['delivery'], 'pdf': {'filename': filename, 'mime_type': 'application/pdf', 'base64': base64.b64encode(pdf).decode()}}
 
     async def email(self, identity, body: DocumentEmailInput):

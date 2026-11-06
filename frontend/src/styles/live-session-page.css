@@ -29,6 +29,11 @@
 .voice-sessions-page .live-header-pill.status-failed i { background: #cf4d4d; }
 .voice-sessions-page .live-header-pill.status-ready { background: #eff5ff; color: #47688d; }
 .voice-sessions-page .live-header-pill.status-ready i { background: #86a7ce; }
+.voice-sessions-page .live-header-pill.status-document-loading { border: 1px solid #bfd5ff; background: #f3f7ff; color: #2862c7; }
+.voice-sessions-page .live-header-pill.status-document-success { border: 1px solid #bce5d0; background: #f0fbf5; color: #16804e; }
+.voice-sessions-page .live-header-pill.status-document-error { border: 1px solid #f0c9c9; background: #fff7f7; color: #b23e3e; }
+.voice-sessions-page .session-document-spinner { animation: session-document-spin .8s linear infinite; }
+@keyframes session-document-spin { to { transform: rotate(360deg); } }
 .voice-sessions-page .session-stage-control { margin-left: 0; }
 .voice-sessions-page .session-stage-control span { color: #085ee6; font-size: 11px; }
 .voice-sessions-page .session-stage-control select { max-width: 160px; color: #183b61; font-size: 11px; }
@@ -113,6 +118,8 @@
 .session-documents-results { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; gap: 10px; }
 .session-document-record-card { display: grid; gap: 5px; width: 100%; min-height: 118px; box-sizing: border-box; align-content: start; padding: 13px; border: 1px solid #d9e6f3; border-radius: 9px; background: #fff; color: #173557; text-align: left; cursor: pointer; transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
 .session-document-record-card:hover { border-color: #8ab5f4; box-shadow: 0 5px 14px rgba(24, 74, 119, .08); transform: translateY(-1px); }
+.session-document-created-card { border-color: #b9e7d0; background: #f7fdf9; animation: session-document-card-enter 260ms ease-out both; }
+@keyframes session-document-card-enter { from { opacity: 0; transform: translateY(-7px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .session-document-record-card strong { font-size: 13px; }
 .session-document-record-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .session-document-open-link { display: inline-flex; align-items: center; gap: 3px; color: #1764ee; font-size: 10px; font-weight: 700; text-decoration: none; }

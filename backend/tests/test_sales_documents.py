@@ -21,7 +21,7 @@ PDF = b'%PDF-1.4\nfixture\n%%EOF\n'
 class Books:
     def __init__(self):
         self.created, self.pdf_calls, self.fail_create, self.fail_pdf = [], [], False, False
-        self.fetched, self.contact_calls = [], 0
+        self.fetched, self.contact_calls, self.updated = [], 0, None
         self.item = {'item_id': '123', 'name': 'Fan', 'sku': 'FAN', 'rate': 1000, 'tax_id': '456',
                      'status': 'active', 'can_be_sold': True, 'item_type': 'inventory',
                      'product_type': 'goods', 'track_inventory': True, 'stock_on_hand': 12}
@@ -45,13 +45,25 @@ class Books:
             raise TimeoutError('unsafe-provider-text')
         return {'invoice': {'invoice_id': '345', 'invoice_number': 'INV/3', 'total': 1800, 'tax_total': 0, 'currency_code': 'INR'}}
 
+    async def update_invoice(self, org, identity, payload):
+        self.updated = ('invoice', identity, payload)
+        return {'invoice': {'invoice_id': identity, 'invoice_number': 'INV/3', 'total': 1800, 'tax_total': 0, 'currency_code': 'INR'}}
+
     async def create_estimate(self, org, payload):
         self.created.append(payload)
         return {'estimate': {'estimate_id': '346', 'estimate_number': 'EST-3'}}
 
+    async def update_estimate(self, org, identity, payload):
+        self.updated = ('quote', identity, payload)
+        return {'estimate': {'estimate_id': identity, 'estimate_number': 'EST-3'}}
+
     async def create_sales_order(self, org, payload):
         self.created.append(payload)
         return {'salesorder': {'salesorder_id': '347', 'salesorder_number': 'SO-3'}}
+
+    async def update_sales_order(self, org, identity, payload):
+        self.updated = ('sales-order', identity, payload)
+        return {'salesorder': {'salesorder_id': identity, 'salesorder_number': 'SO-3'}}
 
     async def download_sales_document(self, org, kind, identity):
         self.pdf_calls.append((org, kind, identity))
@@ -105,6 +117,28 @@ async def test_no_email_creates_real_books_document_and_downloads_native_pdf_onc
     assert books.created[0]['line_items'][0]['tax_id'] == '456'
     assert books.created[0]['reference_number'].startswith('GC-')
     assert 'discount_amount' not in books.created[0]['line_items'][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('kind', 'identity', 'number'), [
+    ('invoice', '345', 'INV/3'),
+    ('quote', '346', 'EST-3'),
+    ('sales-order', '347', 'SO-3'),
+])
+async def test_source_document_updates_existing_books_document_without_creating_duplicate(tmp_path, kind, identity, number):
+    service, books = setup(tmp_path)
+    request = body(type=kind, source_document_id=identity, source_document_number=number)
+    result = await service.create(request)
+    replay = await service.create(request)
+
+    assert result['document']['external_id'] == identity
+    assert result['document']['number'] == number
+    assert result['document']['updated_existing'] is True
+    assert replay['document']['id'] == result['document']['id']
+    assert books.updated[0] == kind
+    assert books.updated[1] == identity
+    assert len(books.created) == 0
+    assert 'reference_number' not in books.updated[2]
 
 
 @pytest.mark.asyncio
