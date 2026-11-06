@@ -18,7 +18,13 @@ def _rows(payload: Any) -> list[dict]:
 
 def _first(payload: Any) -> dict | None:
     rows = _rows(payload)
-    return rows[0] if rows else (payload if isinstance(payload, dict) and payload.get("id") else None)
+    if rows:
+        row = rows[0]
+        # Bigin write responses return {data: [{details: {id: ...}}]} while
+        # read responses return {data: [{id: ...}]}. Normalize both forms.
+        details = row.get("details") if isinstance(row.get("details"), dict) else {}
+        return {**details, **row} if details else row
+    return payload if isinstance(payload, dict) and payload.get("id") else None
 
 
 async def ensure_bigin_contact(zoho, *, name: str, phone: str = "", email: str = "", details: dict | None = None) -> dict:

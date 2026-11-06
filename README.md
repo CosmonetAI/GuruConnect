@@ -81,7 +81,7 @@ The hosted application uses:
 
 For a hosted environment, configure the Supabase project, backend environment, provider keys, encryption key, and exact frontend/API origins. Apply the files in `supabase/migrations/` in order before inviting users.
 
-Zoho credentials are stored and refreshed by the backend. They must never be placed in frontend `VITE_` variables or committed to the repository.
+Zoho credentials are stored and refreshed by the backend. They must never be placed in frontend `VITE_` variables or committed to the repository. The Zoho Books item create/update/delete APIs use the `ZohoBooks.settings.CREATE`, `ZohoBooks.settings.UPDATE`, and `ZohoBooks.settings.DELETE` scopes; reconnect after adding these scopes to an existing OAuth grant.
 
 ## Verification
 

@@ -988,6 +988,14 @@ def pipeline_new_enquiries():
                        'follow_up_required': bool(row.follow_up_required), 'internal_enquiry': True})
     return {'records': result, 'stage': 'New enquiry'}
 
+def _bigin_record(result):
+    rows = result.get('data') if isinstance(result, dict) else None
+    row = rows[0] if isinstance(rows, list) and rows else (result.get('record') if isinstance(result, dict) else None)
+    if not isinstance(row, dict):
+        return row
+    details = row.get('details') if isinstance(row.get('details'), dict) else {}
+    return {**details, **row} if details else row
+
 @app.post('/api/pipelines/from-enquiry')
 async def pipeline_from_enquiry(body: dict):
     enquiry_id = str(body.get('enquiry_id') or '').strip()
@@ -1053,7 +1061,7 @@ async def pipeline_record(record_id: str):
 async def create_pipeline_record(body: dict):
     try:
         result = await zoho.create_pipeline(body)
-        record = (result.get('data') or [None])[0]
+        record = _bigin_record(result)
         _cache_recent_rows('pipelines', [record] if record else [])
         return {'record': record, 'response': result}
     except Exception: raise HTTPException(502, 'Unable to create Zoho Bigin pipeline record')
@@ -1062,7 +1070,7 @@ async def create_pipeline_record(body: dict):
 async def update_pipeline_record(record_id: str, body: dict):
     try:
         result = await zoho.update_pipeline(record_id, body)
-        record = (result.get('data') or [None])[0]
+        record = _bigin_record(result)
         _cache_recent_rows('pipelines', [record] if record else [])
         if 'Stage' in body:
             try:
@@ -1199,8 +1207,8 @@ async def create_product(payload: dict):
         item_name = str(payload.get('name') or payload.get('item_name') or '').strip()
         if not item_name: raise HTTPException(422, 'Product name is required')
         if payload.get('rate') in (None, ''): raise HTTPException(422, 'Selling rate is required')
-        data = {key: value for key, value in payload.items() if value not in (None, '')}
-        data['name'] = data['item_name'] = item_name; data['rate'] = float(data['rate'])
+        data = {key: value for key, value in payload.items() if value not in (None, '') and key != 'item_name'}
+        data['name'] = item_name; data['rate'] = float(data['rate']); data.setdefault('product_type', 'goods')
         if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
         result = await zoho.create_books_item(org, data)
         item = result.get('item') or ((result.get('data') or [None])[0] if isinstance(result.get('data'), list) else None)
@@ -1228,9 +1236,10 @@ async def create_products_bulk(payload: dict):
                 raise ValueError('name is required')
             if raw.get('rate') in (None, ''):
                 raise ValueError('rate is required')
-            data = {key: value for key, value in raw.items() if value not in (None, '')}
-            data['name'] = data['item_name'] = item_name
+            data = {key: value for key, value in raw.items() if value not in (None, '') and key != 'item_name'}
+            data['name'] = item_name
             data['rate'] = float(data['rate'])
+            data.setdefault('product_type', 'goods')
             if 'purchase_rate' in data: data['purchase_rate'] = float(data['purchase_rate'])
             result = await zoho.create_books_item(org, data)
             item = result.get('item') or ((result.get('data') or [None])[0] if isinstance(result.get('data'), list) else None)
@@ -1862,7 +1871,7 @@ async def update_product(item_id: str, payload: dict):
     result = await _update_books_record(zoho.update_books_item, item_id, payload)
     item = result.get('item') if isinstance(result, dict) else None
     _cache_recent_rows('products', [item] if item else [])
-    return {'item': result}
+    return {'item': item, 'response': result}
 @app.delete('/api/products/{item_id}')
 async def delete_product(item_id: str): return await _delete_books_record(zoho.delete_books_item, item_id, 'products')
 
@@ -1871,7 +1880,7 @@ async def update_quote(estimate_id: str, payload: dict):
     result = await _update_books_record(zoho.update_estimate, estimate_id, payload)
     quote = result.get('estimate') if isinstance(result, dict) else None
     _cache_recent_rows('quotes', [quote] if quote else [])
-    return {'quote': result}
+    return {'quote': quote, 'response': result}
 @app.delete('/api/quotes/{estimate_id}')
 async def delete_quote(estimate_id: str): return await _delete_books_record(zoho.delete_estimate, estimate_id, 'quotes')
 
@@ -1880,7 +1889,7 @@ async def update_order(salesorder_id: str, payload: dict):
     result = await _update_books_record(zoho.update_sales_order, salesorder_id, payload)
     order = result.get('salesorder') if isinstance(result, dict) else None
     _cache_recent_rows('orders', [order] if order else [])
-    return {'order': result}
+    return {'order': order, 'response': result}
 @app.delete('/api/orders/{salesorder_id}')
 async def delete_order(salesorder_id: str): return await _delete_books_record(zoho.delete_sales_order, salesorder_id, 'orders')
 
@@ -1889,7 +1898,7 @@ async def update_purchase_order(purchaseorder_id: str, payload: dict):
     result = await _update_books_record(zoho.update_purchase_order, purchaseorder_id, payload)
     purchase_order = result.get('purchaseorder') if isinstance(result, dict) else None
     _cache_recent_rows('purchase_orders', [purchase_order] if purchase_order else [])
-    return {'purchase_order': result}
+    return {'purchase_order': purchase_order, 'response': result}
 @app.delete('/api/purchase-orders/{purchaseorder_id}')
 async def delete_purchase_order(purchaseorder_id: str): return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id, 'purchase_orders')
 
@@ -1898,7 +1907,7 @@ async def update_invoice(invoice_id: str, payload: dict):
     result = await _update_books_record(zoho.update_invoice, invoice_id, payload)
     invoice = result.get('invoice') if isinstance(result, dict) else None
     _cache_recent_rows('invoices', [invoice] if invoice else [])
-    return {'invoice': result}
+    return {'invoice': invoice, 'response': result}
 @app.delete('/api/invoices/{invoice_id}')
 async def delete_invoice(invoice_id: str): return await _delete_books_record(zoho.delete_invoice, invoice_id, 'invoices')
 

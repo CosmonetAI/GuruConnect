@@ -265,16 +265,16 @@ class ZohoClient:
         return await self.request('GET','/bigin/v2/Pipelines',params={'pipeline_id': pipeline_id, 'fields': fields, 'per_page': 200, 'page': page, 'sort_by': 'Modified_Time', 'sort_order': 'desc'})
     async def search_pipeline_records(self, query): return await self.request('GET','/bigin/v2/Pipelines/search',params={'word': query})
     async def pipeline_record(self, record_id): return await self.request('GET',f'/bigin/v2/Pipelines/{record_id}')
-    async def list_accounts(self): return await self.request('GET','/bigin/v2/Accounts',params={'per_page':200,'page':1})
-    async def list_bigin_products(self): return await self.request('GET','/bigin/v2/Products',params={'per_page':200,'page':1})
-    async def list_tasks(self): return await self.request('GET','/bigin/v2/Tasks',params={'per_page':200,'page':1})
+    async def list_accounts(self): return await self.request('GET','/bigin/v2/Accounts',params={'fields':'Account_Name,Phone,Email,Website,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_bigin_products(self): return await self.request('GET','/bigin/v2/Products',params={'fields':'Product_Name,Product_Code,Unit_Price,Description,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_tasks(self): return await self.request('GET','/bigin/v2/Tasks',params={'fields':'Subject,Due_Date,Status,Priority,Who_Id,What_Id,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
     async def create_note(self,data): return await self.request('POST','/bigin/v2/Notes',json={'data':[data]})
-    async def list_notes(self): return await self.request('GET','/bigin/v2/Notes',params={'per_page':200,'page':1})
+    async def list_notes(self): return await self.request('GET','/bigin/v2/Notes',params={'fields':'Note_Title,Note_Content,Parent_Id,Created_Time,Modified_Time','per_page':200,'page':1})
     async def update_note(self,note_id,data): return await self.request('PUT',f'/bigin/v2/Notes/{note_id}',json={'data':[data]})
     async def create_task(self,data): return await self.request('POST','/bigin/v2/Tasks',json={'data':[data]})
     async def update_task(self,task_id,data): return await self.request('PUT',f'/bigin/v2/Tasks/{task_id}',json={'data':[data]})
-    async def list_events(self): return await self.request('GET','/bigin/v2/Events',params={'per_page':200,'page':1})
-    async def list_calls(self): return await self.request('GET','/bigin/v2/Calls',params={'per_page':200,'page':1})
+    async def list_events(self): return await self.request('GET','/bigin/v2/Events',params={'fields':'Event_Title,Start_DateTime,End_DateTime,Owner,Who_Id,What_Id,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_calls(self): return await self.request('GET','/bigin/v2/Calls',params={'fields':'Subject,Call_Start_Time,Call_Duration,Call_Type,Who_Id,What_Id,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
     async def books_items(self,org,filters=None):
         params={'organization_id':org,'status':'active','per_page':200,'page':1}
         for key in ('name_contains','description_contains','search_text','rate_less_equals'):
