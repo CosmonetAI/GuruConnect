@@ -32,6 +32,7 @@ import PageLoader from "../components/PageLoader";
 import LiveSessionWorkspace, { ProductCartAction, ProductMatchDetails, Stock, productOutOfStock, productPriceAvailable } from "../components/LiveSessionWorkspace";
 import BusinessTagPills from "../components/BusinessTagPills";
 import SalesDocumentModal from "../components/SalesDocumentModal";
+import { DocumentCardActions } from "../components/Records";
 import { request as recorderRequest } from "../services/officeApi";
 import { useOffice } from "../contexts/OfficeContext";
 import { supabase } from "../services/officeApi";
@@ -409,6 +410,7 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
               <div className="session-document-record-title"><strong>{documentTitle(record, definition)}</strong>{externalUrl && <a href={externalUrl} download target="_blank" rel="noreferrer" className="session-document-open-link" onClick={(event) => event.stopPropagation()} title="Download from Zoho Books"><Download size={13} />Download</a>}</div>
               <span className="session-document-record-meta">{documentName(record) || "Contact not provided"}</span>
               <span className="session-document-record-meta">{record.date || record.created_time || "Date not provided"}{record.status ? ` · ${String(record.status).replaceAll("_", " ")}` : ""}{record.total != null ? ` · ${record.currency_symbol || "₹"}${Number(record.total).toLocaleString("en-IN")}` : ""}</span>
+              <DocumentCardActions record={record} type={definition.type} />
             </article>
             {record === documents[0] && createdDocumentCard}
           </Fragment>;

@@ -322,6 +322,7 @@ class ZohoClient:
     async def delete_estimate(self,org,estimate_id): return await self.request('DELETE',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
     async def accept_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/accepted',params={'organization_id':org},json={})
     async def email_estimate(self,org,estimate_id,data=None): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json=data or {})
+    async def create_customer_payment(self,org,data): return await self.request('POST','/books/v3/customerpayments',params={'organization_id':org},json=data)
     async def list_sales_orders(self,org): return await self.request('GET','/books/v3/salesorders',params={'organization_id':org,'per_page':200,'page':1})
     async def search_sales_orders(self,org,query='',date=None, page=1, per_page=10):
         params={'organization_id':org,'per_page':per_page,'page':page}

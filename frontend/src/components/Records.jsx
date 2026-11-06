@@ -90,6 +90,75 @@ export function ContactCard({ contact }) {
   return <article className="product-card">{saveMessage && <div className="success">{saveMessage}</div>}<div className="product-card-top"><span className="active-label">{sourceLabel}</span><span className="product-sku">{id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Customer record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button><button type="button" className="secondary" onClick={remove}>Delete</button></div>{showDetails && <DetailModalPortal eyebrow={sourceLabel.toUpperCase()} title={name} fields={detailFields} editableKeys={editableKeys} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
 }
 
+const documentKind = type => type === 'Quote' || type === 'quote' ? 'quote' : type === 'Invoice' || type === 'invoice' ? 'invoice' : '';
+const documentId = record => record?.estimate_id || record?.invoice_id || record?.external_id || record?.id;
+
+export function DocumentCardActions({ record, type, onRecordUpdate }) {
+  const kind = documentKind(type || record?.__document_type);
+  const id = documentId(record);
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [accountId, setAccountId] = useState('');
+  const [accountError, setAccountError] = useState('');
+  const [partialPayment, setPartialPayment] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  if (!kind || !id) return null;
+  const refresh = async () => {
+    const result = await call(`/${kind === 'quote' ? 'quotes' : 'invoices'}/${id}`);
+    const fresh = result[kind === 'quote' ? 'quote' : 'invoice'] || {};
+    onRecordUpdate?.(fresh);
+    return fresh;
+  };
+  const action = async (actionName, options = {}) => {
+    if (busy) return;
+    setBusy(actionName); setMessage('');
+    try {
+      if (actionName === 'accept') await call(`/quotes/${id}/accept`, { method: 'POST', body: JSON.stringify({}) });
+      if (actionName === 'paid') await call(`/invoices/${id}/paid`, { method: 'POST', body: JSON.stringify(options) });
+      const fresh = await refresh();
+      setMessage(actionName === 'accept' ? 'Quote accepted' : actionName === 'paid' ? 'Invoice marked paid' : `Status: ${String(fresh.status || fresh.payment_status || 'verified').replaceAll('_', ' ')}`);
+      if (actionName === 'paid') setAccountPickerOpen(false);
+    } catch (error) { setMessage(error.message || 'Unable to update this document'); }
+    finally { setBusy(''); }
+  };
+  const openPaid = async (partial = false) => {
+    setPartialPayment(partial); setPaymentAmount('');
+    setAccountError(''); setAccountPickerOpen(true); setBusy('accounts');
+    try {
+      const result = await call('/documents/options');
+      const allAccounts = result.accounts || [];
+      const selectable = allAccounts.filter(account => /bank|cash/i.test(`${account.account_type || ''} ${account.account_type_name || ''} ${account.type || ''} ${account.account_name || ''} ${account.name || ''}`));
+      const available = selectable.length ? selectable : allAccounts;
+      setAccounts(available);
+      setAccountId(current => current || available[0]?.account_id || available[0]?.id || '');
+    } catch (error) { setAccountError(error.message || 'Unable to load Zoho Books accounts'); }
+    finally { setBusy(''); }
+  };
+  const confirmPaid = () => {
+    if (!accountId) { setAccountError('Select the cash or bank account that received the payment.'); return; }
+    if (partialPayment && (!Number.isFinite(Number(paymentAmount)) || Number(paymentAmount) <= 0)) { setAccountError('Enter the amount received.'); return; }
+    void action('paid', { account_id: accountId, ...(partialPayment ? { amount: Number(paymentAmount), amount_applied: Number(paymentAmount) } : {}) });
+  };
+  return <>
+  <div className="document-card-actions" onClick={event => event.stopPropagation()}>
+    {kind === 'quote' && <button type="button" className="secondary" onClick={() => void action('accept')} disabled={Boolean(busy)}>{busy === 'accept' ? 'Marking accepted...' : 'Mark accepted'}</button>}
+    {kind === 'invoice' && <><button type="button" className="secondary" onClick={() => void openPaid(false)} disabled={Boolean(busy)}>{busy === 'paid' ? 'Marking paid...' : 'Mark paid'}</button><button type="button" className="secondary" onClick={() => void openPaid(true)} disabled={Boolean(busy)}>Partial payment</button></>}
+    {message && <span className={/unable|error/i.test(message) ? 'mail-error' : 'mail-success'} role="status">{message}</span>}
+  </div>
+  {accountPickerOpen && createPortal(<div className="modal-backdrop" onClick={() => { if (!busy) setAccountPickerOpen(false); }}><form className="product-details-modal" onSubmit={event => { event.preventDefault(); confirmPaid(); }} onClick={event => event.stopPropagation()}>
+    <div className="modal-heading"><div><small>ZOHO BOOKS PAYMENT</small><h3>{partialPayment ? 'Record partial payment' : 'Mark invoice paid'}</h3></div><button type="button" onClick={() => setAccountPickerOpen(false)} aria-label="Close account selector">×</button></div>
+    <p>Select the cash or bank account that received this invoice payment. {partialPayment ? 'Enter the amount received; Zoho Books will apply it to this invoice.' : 'Zoho Books will apply the invoice’s full outstanding balance.'}</p>
+    {accountError && <p className="mail-error" role="alert">{accountError}</p>}
+    {partialPayment && <label>Amount received<input required min="0.01" step="0.01" type="number" value={paymentAmount} onChange={event => { setPaymentAmount(event.target.value); setAccountError(''); }} placeholder="Enter amount" /></label>}
+    <label>Received in<select required value={accountId} onChange={event => { setAccountId(event.target.value); setAccountError(''); }} disabled={busy === 'accounts'}><option value="">{busy === 'accounts' ? 'Loading accounts...' : 'Select an account'}</option>{accounts.map(account => <option key={account.account_id || account.id} value={account.account_id || account.id}>{account.account_name || account.name || account.account_type || account.type || account.account_id || account.id}</option>)}</select></label>
+    {!accounts.length && busy !== 'accounts' && !accountError && <p className="mail-error">No Zoho Books accounts were found.</p>}
+    <div className="detail-modal-action"><button type="button" className="secondary" onClick={() => setAccountPickerOpen(false)}>Cancel</button><button type="submit" className="primary" disabled={busy === 'accounts' || !accountId || (partialPayment && !paymentAmount)}>{busy === 'paid' ? 'Recording...' : partialPayment ? 'Record partial payment' : 'Mark invoice paid'}</button></div>
+  </form></div>, document.body)}
+  </>;
+}
+
 export function RecordCard({ record, type }) {
   const [current, setCurrent] = useState(record); const [mailing, setMailing] = useState(false); const [mailStatus, setMailStatus] = useState(''); const [showDetails, setShowDetails] = useState(false);
   useEffect(() => setCurrent(record), [record]);
@@ -101,7 +170,7 @@ export function RecordCard({ record, type }) {
   const send = async () => { if (!id || mailing) return; setMailing(true); setMailStatus(''); try { const recipient = current.email || current.contact_email || current.vendor_email; const emailPayload = recipient ? { to_mail_ids: [recipient], subject: `${title} from GuruConnect`, body: `Please find the ${type.toLowerCase()} attached. Reference: ${current.reference_number || title}.` } : {}; await call(emailPath, { method: 'POST', body: JSON.stringify(emailPayload) }); setMailStatus('Email sent'); } catch (e) { setMailStatus(e.message || 'Unable to send email'); } finally { setMailing(false); } };
   const save = async values => { const result = await call(updatePath, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.quote || result.order || result.purchase_order || result.invoice || {}) })); };
   const editable = ['reference_number', 'date', 'due_date', 'expiry_date', 'delivery_date', 'expected_delivery_date', 'notes', 'terms', 'discount', 'shipping_charge', 'adjustment', 'adjustment_description', 'line_items'];
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Commercial record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button>{id && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send'}</button>}{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModalPortal eyebrow={type.toUpperCase()} title={title} fields={fields} editableKeys={editable} onSave={save} onClose={() => setShowDetails(false)} action={id && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
+  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Commercial record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button>{id && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send'}</button>}<DocumentCardActions record={current} type={type} onRecordUpdate={fresh => setCurrent(old => ({ ...old, ...fresh }))} />{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModalPortal eyebrow={type.toUpperCase()} title={title} fields={fields} editableKeys={editable} onSave={save} onClose={() => setShowDetails(false)} action={id && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
 }
 
 export function LookupField({ value, onChange, onSearch, options, selected, placeholder, renderOption, required = false }) {

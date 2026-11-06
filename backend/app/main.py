@@ -6,6 +6,7 @@ import hmac
 import secrets
 import re
 import logging
+from datetime import date
 from uuid import UUID
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -1411,6 +1412,14 @@ async def email_quote(estimate_id: str, payload: dict | None = None):
         return await zoho.email_estimate(org, estimate_id, _connected_zoho_email_payload(payload))
     except HTTPException: raise
     except Exception: raise HTTPException(502, 'Unable to email Zoho Books quote')
+@app.post('/api/quotes/{estimate_id}/accept')
+async def accept_quote(estimate_id: str):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        return await zoho.accept_estimate(org, estimate_id)
+    except HTTPException: raise
+    except Exception: raise HTTPException(502, 'Unable to accept Zoho Books quote')
 @app.get('/api/orders')
 async def orders(search: str = '', search_text: str = '', date: str = '', page: int = 1, per_page: int = 10):
     query = (search_text or search).strip()
@@ -1554,6 +1563,61 @@ async def email_invoice(invoice_id: str, payload: dict | None = None):
 @app.get('/api/invoices/{invoice_id}')
 async def get_invoice(invoice_id: str):
     return await _get_books_record(zoho.books_invoice, invoice_id, 'invoice', 'Unable to load Zoho Books invoice')
+
+@app.post('/api/invoices/{invoice_id}/payments')
+async def create_invoice_payment(invoice_id: str, payload: dict):
+    try:
+        status = zoho.status(); org = status.get('organization_id')
+        if not status.get('connected') or not org:
+            raise HTTPException(409, 'Connect Zoho and select a Books organization first')
+        invoice = None
+        customer_id = str(payload.get('customer_id') or '').strip()
+        amount_value = payload.get('amount')
+        if not customer_id or amount_value in (None, ''):
+            invoice_response = await zoho.books_invoice(org, invoice_id)
+            invoice = invoice_response.get('invoice') if isinstance(invoice_response, dict) else None
+            customer_id = str((invoice or {}).get('customer_id') or (invoice or {}).get('contact_id') or '').strip()
+        if not customer_id:
+            raise HTTPException(422, 'Invoice customer is required')
+        account_id = str(payload.get('account_id') or '').strip()
+        if not account_id:
+            accounts_response = await zoho.list_books_chart_of_accounts(org)
+            accounts = accounts_response.get('chartofaccounts', accounts_response.get('accounts', accounts_response.get('data', []))) if isinstance(accounts_response, dict) else []
+            eligible = [account for account in accounts if str(account.get('account_type') or account.get('account_type_name') or account.get('type') or '').lower() in {'bank', 'cash'}]
+            account_id = str((eligible or accounts or [{}])[0].get('account_id') or (eligible or accounts or [{}])[0].get('id') or '').strip()
+        if not account_id:
+            raise HTTPException(422, 'A bank or cash account is required')
+        payment_mode = str(payload.get('payment_mode') or 'cash').strip().lower()
+        if not payment_mode:
+            raise HTTPException(422, 'Payment mode is required')
+        try:
+            amount = float(amount_value if amount_value not in (None, '') else (invoice or {}).get('balance', (invoice or {}).get('balance_due', (invoice or {}).get('total', 0))))
+            amount_applied = float(payload.get('amount_applied', amount))
+        except (TypeError, ValueError):
+            raise HTTPException(422, 'Payment amount must be a valid number')
+        if amount <= 0 or amount_applied <= 0:
+            raise HTTPException(422, 'Payment amount must be greater than zero')
+        if amount_applied > amount:
+            raise HTTPException(422, 'Applied amount cannot exceed the amount received')
+        payment_date = str(payload.get('date') or date.today().isoformat()).strip()
+        payment = {
+            'customer_id': customer_id,
+            'payment_mode': payment_mode,
+            'amount': amount,
+            'date': payment_date,
+            'account_id': account_id,
+            'invoices': [{'invoice_id': invoice_id, 'amount_applied': amount_applied}],
+        }
+        result = await zoho.create_customer_payment(org, payment)
+        return {'payment': result, 'invoice_id': invoice_id, 'amount_applied': amount_applied}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, 'Unable to record Zoho Books customer payment')
+
+@app.post('/api/invoices/{invoice_id}/paid')
+async def mark_invoice_paid(invoice_id: str, payload: dict | None = None):
+    return await create_invoice_payment(invoice_id, payload or {})
 
 @app.get('/api/contacts')
 async def contacts(search: str = '', date: str = '', page: int = 1):
