@@ -47,7 +47,7 @@ const defaultValues: NewEnquiryForm = {
   channel: 'Incoming Call',
   branch: '',
   assignedExecutive: '',
-  customerType: 'Retail',
+  customerType: 'Retail customer',
   company: '',
   projectName: '',
   preferredContactMethod: '',
@@ -152,9 +152,14 @@ function SectionHeader({
   )
 }
 
-type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; customerType?: 'Retail' | 'Dealer'; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; customerType?: 'Retail customer' | 'Vendor' | 'Project' | 'Retail' | 'Dealer'; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+function normalizeCustomerType(value: string | undefined): NewEnquiryForm['customerType'] {
+  if (value === 'Vendor' || value === 'Dealer' || value === 'vendor') return 'Vendor'
+  if (value === 'Project') return 'Project'
+  return 'Retail customer'
+}
 function convertedValues(source: WalkinConversion): NewEnquiryForm {
-  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, customerType: source.customerType || 'Retail', company: source.company,
+  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, customerType: normalizeCustomerType(source.customerType), company: source.company,
     customerNotes: `${source.purpose} · Visit ${source.visitNumber}\n${source.notes}`.trim(), requirementsSummary: source.requirements, followUpDate: source.followUpDate,
     productRequirements: [{ ...defaultValues.productRequirements[0], product: source.productOrService, quantity: /^\d+$/.test(source.quantity) && Number(source.quantity) > 0 ? Number(source.quantity) : 0, budget: source.budget, timeline: source.timeline, notes: source.requirements }],
   }
@@ -169,7 +174,7 @@ function existingValues(source: Enquiry): NewEnquiryForm {
     channel: ['Incoming Call', 'Outgoing Call', 'Retail Walk-in', 'Dealership', 'Project', 'Supported WhatsApp', 'Email', 'Other'].includes(source.channel) ? source.channel as NewEnquiryForm['channel'] : 'Other',
     branch: source.branch,
     assignedExecutive: source.assignedExecutive,
-    customerType: source.customerType || 'Retail',
+    customerType: normalizeCustomerType(source.customerType),
     company: source.company || '',
     projectName: source.projectName || '',
     preferredContactMethod: source.preferredContactMethod || '',
@@ -448,8 +453,8 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
               </Field>
               <Field label="Customer type" htmlFor="customerType">
                 <select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as NewEnquiryForm['customerType'])}>
-                  <option value="Retail">Retail</option>
-                  <option value="Dealer">Dealer</option>
+                  <option value="Retail customer">Retail customer</option>
+                  <option value="Vendor">Vendor</option>
                   <option value="Project">Project</option>
                 </select>
               </Field>
@@ -459,7 +464,7 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
                   <option>Phone</option><option>Email</option><option>WhatsApp</option>
                 </select>
               </Field>
-              {(form.customerType === 'Dealer' || form.customerType === 'Project') && (
+              {(form.customerType === 'Vendor' || form.customerType === 'Project') && (
                 <Field label="Company / dealership name" htmlFor="company">
                   <input id="company" maxLength={200} autoComplete="organization" placeholder="Business or dealership name" value={form.company} onChange={(event) => update('company', event.target.value)} />
                 </Field>

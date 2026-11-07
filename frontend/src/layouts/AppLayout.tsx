@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { Menu } from 'lucide-react'
 import { Eye } from 'lucide-react'
 import Sidebar from '../components/Sidebar/Sidebar'
 import OrganisationPill from '../components/OrganisationPill'
@@ -9,11 +10,22 @@ import { useOffice } from '../contexts/OfficeContext'
 export default function AppLayout() {
   const { user, workspace, readOnly } = useOffice()
   const location = useLocation()
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [location.pathname])
+  useEffect(() => { setMobileSidebarOpen(false) }, [location.pathname])
+  useEffect(() => {
+    if (!mobileSidebarOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileSidebarOpen(false) }
+    document.addEventListener('keydown', closeOnEscape)
+    document.body.style.overflow = 'hidden'
+    return () => { document.removeEventListener('keydown', closeOnEscape); document.body.style.overflow = '' }
+  }, [mobileSidebarOpen])
   return (
     <div className={`app-root${readOnly ? ' read-only-mode' : ''}`}>
       <a className="skip-navigation" href="#main-content">Skip to content</a>
-      <Sidebar />
+      {!mobileSidebarOpen && <button type="button" className="mobile-sidebar-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="main-navigation" onClick={() => setMobileSidebarOpen(true)}><Menu size={20} /></button>}
+      {mobileSidebarOpen && <button type="button" className="mobile-sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileSidebarOpen(false)} />}
+      <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
       <div className="app-main">
         <div className="platform-bar">{readOnly && <span className="read-only-pill"><span className="availability-pill-dot" />Read-only</span>}<AvailabilityPill />{workspace?.role !== 'receptionist' && <OrganisationPill />}</div>
         <main

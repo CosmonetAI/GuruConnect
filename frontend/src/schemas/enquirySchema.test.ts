@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { NewEnquirySchema, productHasDetails } from './enquirySchema'
 
 const blank = { product: '', sku: '', quantity: 1, unit: 'nos', customerSegment: '', budget: '', paymentPreference: '', timeline: '', stockCheck: false, notes: '' }
-const form = { customerName: 'Synthetic Customer', phone: '9876543210', email: '', channel: 'Incoming Call', branch: 'Branch', assignedExecutive: 'Salesperson', customerType: 'Retail', company: '', projectName: '', preferredContactMethod: '', customerNotes: '', productRequirements: [blank], salespersonNotes: '', requirementsSummary: '', followUpDate: '', followUpOwner: '', priority: 'Normal' }
+const form = { customerName: 'Synthetic Customer', phone: '9876543210', email: '', channel: 'Incoming Call', branch: 'Branch', assignedExecutive: 'Salesperson', customerType: 'Retail customer', company: '', projectName: '', preferredContactMethod: '', customerNotes: '', productRequirements: [blank], salespersonNotes: '', requirementsSummary: '', followUpDate: '', followUpOwner: '', priority: 'Normal' }
 describe('enquiry limits and incomplete product rows', () => {
   it('keeps SKU-only rows while distinguishing a untouched optional row', () => {
     expect(productHasDetails(blank)).toBe(false)

@@ -39,7 +39,7 @@ async def least_loaded_salesperson(connection, organisation_id, ticket_day):
               where m.organisation_id=%s and m.user_id=p.id and m.status='active'
           )
     """, (organisation_id,))
-    return await one(connection, """
+    selected = await one(connection, """
         select m.user_id, coalesce(p.display_name, '') as display_name,
                coalesce(u.email, '') as email
         from members m
@@ -79,3 +79,30 @@ async def least_loaded_salesperson(connection, organisation_id, ticket_day):
         order by count(e.id) asc, random()
         limit 1
     """, (ticket_day, organisation_id))
+    if selected:
+        return selected
+    # Do not leave a valid enquiry unassigned just because nobody is currently
+    # online. Fall back to the least-loaded salesperson who is not on leave,
+    # or whose leave ends by tomorrow; this edge case must not route work to an
+    # owner when a salesperson is available for assignment.
+    return await one(connection, """
+        select m.user_id, coalesce(p.display_name, '') as display_name,
+               coalesce(u.email, '') as email
+        from members m
+        join auth.users u on u.id=m.user_id
+        left join profiles p on p.id=m.user_id
+        left join guruconnect_enquiries e
+          on e.organisation_id=m.organisation_id
+         and e.assigned_to=m.user_id
+         and e.ticket_day=%s
+         and e.stage in ('new','in_process')
+        where m.organisation_id=%s and m.role='salesperson' and m.status='active'
+          and coalesce(p.final_status, p.availability_status, 'active') in ('active','on_leave')
+          and (
+              coalesce(p.final_status, p.availability_status, 'active')='active'
+              or coalesce(p.final_status_until, p.leave_end_date) <= %s + interval '1 day'
+          )
+        group by m.user_id,m.role,p.display_name,u.email
+        order by case when m.role='salesperson' then 0 else 1 end, count(e.id) asc, random()
+        limit 1
+    """, (ticket_day, organisation_id, ticket_day))

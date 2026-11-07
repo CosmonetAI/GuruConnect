@@ -68,7 +68,7 @@ class EnquiryCreate(BaseModel):
     unit: Annotated[str, Field(min_length=1, max_length=32)] = "nos"
     notes: Annotated[str, Field(max_length=10000)] = ""
     sourceEventId: Annotated[str, Field(max_length=160)] = ""
-    customerType: Literal["Retail", "Dealer", "Project"] = "Retail"
+    customerType: Literal["Retail customer", "Vendor", "Project", "Retail", "Dealer"] = "Retail customer"
     company: Text200 = ""
     projectName: Text200 = ""
     preferredContactMethod: Text80 = ""
@@ -151,7 +151,7 @@ def serialize_enquiry(row: dict) -> dict:
     payload["stage"] = row.get("stage", "new")
     payload["unread"] = bool(row.get("unread", False))
     payload["assignedTo"] = str(row["assigned_to"]) if row.get("assigned_to") else None
-    payload["assignedSalesperson"] = row.get("assigned_salesperson_name") or payload.get("assignedExecutive", "")
+    payload["assignedSalesperson"] = row.get("assigned_salesperson_name") or row.get("assigned_salesperson_email") or payload.get("assignedExecutive", "")
     payload["assignedSalespersonEmail"] = row.get("assigned_salesperson_email", "")
     payload["forwardedBy"] = payload.get("forwardedBy") or row.get("forwarded_by_name") or "Team"
     payload["tags"] = derive_business_tags(row.get("ai_context") or {}, payload=payload)
@@ -165,6 +165,34 @@ def serialize_enquiry(row: dict) -> dict:
     else:
         payload["recording"] = None
     return payload
+
+
+async def assign_missing_enquiries(connection, organisation_id, timezone_name):
+    """Persist an assignee for legacy enquiries created without one."""
+    missing = await many(connection, """
+        select id, ticket_day, payload
+        from public.guruconnect_enquiries
+        where organisation_id=%s and assigned_to is null
+        order by created_at asc, id asc
+        for update skip locked
+    """, (organisation_id,))
+    for item in missing:
+        ticket_day = item["ticket_day"] or current_ticket_day(timezone_name)
+        assignee = await least_loaded_salesperson(connection, organisation_id, ticket_day)
+        if not assignee:
+            continue
+        name = assignee["display_name"] or assignee["email"]
+        payload = dict(item.get("payload") or {})
+        payload.update({
+            "assignedExecutive": name,
+            "assignedSalespersonEmail": assignee["email"],
+            "followUpOwner": name,
+        })
+        await connection.execute("""
+            update public.guruconnect_enquiries
+            set assigned_to=%s,payload=%s
+            where id=%s and organisation_id=%s and assigned_to is null
+        """, (assignee["user_id"], Jsonb(payload), item["id"], organisation_id))
 
 
 @router.get("")
@@ -187,6 +215,7 @@ async def list_enquiries(request: Request, context: Workspace = Depends(workspac
       and (%s='' or e.channel=%s) and (%s='' or e.branch=%s)"""
     params = (context.id, scoped_all, scope_user, scope_user, search, search, search, search, channel, channel, branch, branch)
     async with request.app.state.db.connection() as connection:
+        await assign_missing_enquiries(connection, context.id, request.app.state.settings.app_timezone)
         # One SQL statement gives count and rows the same snapshot, including an
         # empty page, without extending the transaction across another roundtrip.
         rows = await many(connection, "with matches as materialized (" + SELECT_ENQUIRY + where + "), "
@@ -318,7 +347,7 @@ async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_
         "unit": "nos",
         "notes": row["payload"].get("internalNotes", ""),
         "sourceWalkinId": str(row["id"]),
-        "customerType": "Retail",
+        "customerType": "Retail customer",
         "company": row["payload"].get("companyName", ""),
         "projectName": row["payload"].get("projectName", ""),
         "preferredContactMethod": row["payload"].get("preferredContactMethod", ""),

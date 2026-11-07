@@ -609,7 +609,7 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             "channel": "Retail walk-in", "branch": body.department or "Walk-in",
             "assignedExecutive": salesperson["display_name"] if salesperson else "Unassigned",
             "product": body.productOrService, "quantity": 1, "unit": "nos", "notes": body.internalNotes or body.purposeDescription,
-            "sourceEventId": f"walkin:{row['id']}", "sourceWalkinId": str(row["id"]), "customerType": "Dealer" if body.customerType == "vendor" else "Retail",
+            "sourceEventId": f"walkin:{row['id']}", "sourceWalkinId": str(row["id"]), "customerType": "Vendor" if body.customerType == "vendor" else "Retail customer",
             "company": body.companyName, "projectName": body.projectName,
             "priority": "Normal"
         }

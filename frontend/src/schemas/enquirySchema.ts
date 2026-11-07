@@ -26,7 +26,7 @@ const ValuesSchema = z.object({
   email: text(320).refine(value => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address'),
   channel: z.enum(['Incoming Call', 'Outgoing Call', 'Retail Walk-in', 'Dealership', 'Project', 'Supported WhatsApp', 'Email', 'Other']),
   branch: text(160).min(1, 'Enter a branch'), assignedExecutive: text(160).min(1, 'Assign an executive'),
-  customerType: z.enum(['Retail', 'Dealer', 'Project']), company: text(200), projectName: text(200),
+  customerType: z.enum(['Retail customer', 'Vendor', 'Project', 'Retail', 'Dealer']), company: text(200), projectName: text(200),
   preferredContactMethod: text(80), customerNotes: text(4000),
   productRequirements: z.array(ProductRequirementSchema).max(25, 'Add at most 25 product requirements'),
   salespersonNotes: text(4000), requirementsSummary: text(4000),

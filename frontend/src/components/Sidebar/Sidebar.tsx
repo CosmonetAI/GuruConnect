@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink } from 'react-router-dom'
-import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText, Columns3, Check, ChevronDown, Search, BookUser } from 'lucide-react'
+import { UsersRound, AudioLines, LayoutDashboard, ClipboardList, PlugZap, Settings, BarChart3, MessageSquare, PackageSearch, ContactRound, FileText, ShoppingCart, ClipboardCheck, ReceiptText, Columns3, Check, ChevronDown, Search, BookUser, X } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { useScopedResource } from '../../hooks/useScopedResource'
 import { supabase } from '../../services/officeApi'
 export const navigationItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { to: '/enquiries', label: 'Enquiries', icon: ClipboardList }, { to: '/walkins', label: 'Walk-in visits', icon: UsersRound }, { to: '/ai-chats', label: 'Sessions', icon: MessageSquare }, { to: '/products', label: 'Product catalogue', icon: PackageSearch }, { to: '/contacts', label: 'Customer directory', icon: ContactRound }, { to: '/recordings', label: 'Conversation history', icon: AudioLines }, { to: '/quotes', label: 'Quotes', icon: FileText }, { to: '/sales-orders', label: 'Sales orders', icon: ShoppingCart }, { to: '/purchase-orders', label: 'Purchase orders', icon: ClipboardCheck }, { to: '/invoices', label: 'Invoices', icon: ReceiptText }, { to: '/pipelines', label: 'Pipelines', icon: Columns3 }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/zoho', label: 'Connections', icon: PlugZap }, { to: '/settings', label: 'Team & account', icon: Settings },
 ]
-export default function Sidebar() {
+type SidebarProps = { mobileOpen?: boolean; onMobileClose?: () => void }
+
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const { workspace, workspaces, setWorkspace, captureBusy, user, readOnly } = useOffice()
   const profile = useScopedResource<{ display_name?: string; avatar_path?: string }>('/profile')
   const unread = useScopedResource<{ count: number }>('/enquiries/unread-count')
@@ -40,23 +43,43 @@ export default function Sidebar() {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [workspaceQuery, setWorkspaceQuery] = useState('')
   const workspaceMenuRef = useRef<HTMLDivElement>(null)
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null)
+  const workspacePopupRef = useRef<HTMLDivElement>(null)
+  const [workspaceMenuPosition, setWorkspaceMenuPosition] = useState({ top: 0, left: 12 })
   const [booksOpen, setBooksOpen] = useState(true)
   useEffect(() => {
     if (!workspaceMenuOpen) return
+    const updatePosition = () => {
+      const trigger = workspaceTriggerRef.current
+      if (!trigger) return
+      const rect = trigger.getBoundingClientRect()
+      const width = Math.min(270, window.innerWidth - 24)
+      const preferredLeft = rect.left + (window.innerWidth <= 768 ? -20 : -48)
+      setWorkspaceMenuPosition({
+        top: Math.min(rect.bottom + 13, Math.max(12, window.innerHeight - 420)),
+        left: Math.min(Math.max(12, preferredLeft), Math.max(12, window.innerWidth - width - 12)),
+      })
+    }
+    updatePosition()
     const closeOnOutsideClick = (event: MouseEvent) => {
-      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(event.target as Node)) setWorkspaceMenuOpen(false)
+      const target = event.target as Node
+      if (!workspaceMenuRef.current?.contains(target) && !workspacePopupRef.current?.contains(target)) setWorkspaceMenuOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setWorkspaceMenuOpen(false) }
     document.addEventListener('mousedown', closeOnOutsideClick)
     document.addEventListener('keydown', closeOnEscape)
-    return () => { document.removeEventListener('mousedown', closeOnOutsideClick); document.removeEventListener('keydown', closeOnEscape) }
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => { document.removeEventListener('mousedown', closeOnOutsideClick); document.removeEventListener('keydown', closeOnEscape); window.removeEventListener('resize', updatePosition); window.removeEventListener('scroll', updatePosition, true) }
   }, [workspaceMenuOpen])
   useEffect(() => { if (!canSwitchWorkspace) setWorkspaceMenuOpen(false) }, [canSwitchWorkspace])
   const activeWorkspaceId = workspace?.member_id ?? workspace?.id ?? ''
   const filteredWorkspaces = workspaces.filter(item => `${item.display_name || displayName} ${item.name} ${item.role} ${item.role === 'owner' ? 'full access' : 'read only'}`.toLowerCase().includes(workspaceQuery.trim().toLowerCase()))
   const workspaceInitial = (item: typeof workspaces[number]) => (item.display_name || item.name || displayName).slice(0, 2).toUpperCase()
-  return <aside className="sidebar"><div className="sidebar-brand"><div className="brand-mark"><AudioLines size={23} /></div><div><div className="brand-title">ConnectCosmos</div><small>Conversation history & enquiries</small></div></div>
-    <div className="sidebar-workspace" ref={workspaceMenuRef}><div className="workspace-person"><div className="workspace-avatar">{avatarUrl ? <img src={avatarUrl} alt="" onError={handleAvatarError} /> : <span>{displayName.slice(0, 1).toUpperCase()}</span>}</div><div className="workspace-person-copy">{canSwitchWorkspace ? <div className="workspace-switcher"><button type="button" className="workspace-trigger" aria-expanded={workspaceMenuOpen} aria-haspopup="listbox" onClick={() => { setWorkspaceMenuOpen(open => !open); setWorkspaceQuery('') }} disabled={captureBusy}><span>Switch workspace</span><ChevronDown size={15} /></button>{workspaceMenuOpen && <div className="workspace-menu" role="dialog" aria-label="Switch workspace"><div className="workspace-search"><Search size={16} /><input autoFocus value={workspaceQuery} onChange={event => setWorkspaceQuery(event.target.value)} placeholder="Search workspace..." aria-label="Search workspace" /></div><span className="workspace-menu-heading">MY WORKSPACES</span><div className="workspace-options" role="listbox" aria-label="Workspaces">{filteredWorkspaces.map(item => { const id = item.member_id ?? item.id; const selected = id === activeWorkspaceId; return <button type="button" role="option" aria-selected={selected} className={`workspace-option${selected ? ' selected' : ''}`} key={id} onClick={() => { setWorkspace(id); setWorkspaceMenuOpen(false) }}><span className={`workspace-option-avatar${selected ? ' active' : ''}`}>{workspaceInitial(item)}</span><span className="workspace-option-copy"><strong>{item.display_name || item.name || displayName}</strong><small>{item.role === 'owner' ? 'Full access' : `${item.role || 'Member'} · Read-only workspace`}</small></span>{selected && <Check size={18} />}</button> })}{!filteredWorkspaces.length && <span className="workspace-empty">No workspaces found</span>}</div></div>}</div> : <strong>{workspace?.name}</strong>}</div></div><div className="workspace-member"><span>{workspace?.display_name || displayName}</span><span className="workspace-role-badge">{workspace?.role}{readOnly ? ' · Read-only' : ''}</span></div><small className="workspace-email">{email}</small></div>
-    <nav className="sidebar-nav" aria-label="Main navigation">{primaryBeforeBooks.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}{to === '/enquiries' && !!unread.data?.count && <span className="nav-count" aria-label={`${unread.data.count} unread enquiries`}>{unread.data.count > 99 ? '99+' : unread.data.count}</span>}</NavLink>)}{!!booksItems.length && <div className="nav-group"><button type="button" className="nav-group-trigger" aria-expanded={booksOpen} onClick={() => setBooksOpen(open => !open)}><span><BookUser size={18} />Zoho Books</span><ChevronDown size={17} className={booksOpen ? '' : 'collapsed'} /></button>{booksOpen && <div className="nav-group-items">{booksItems.map(item => { const Icon = item.icon; const label = item.to === '/contacts' ? 'Contacts' : item.to === '/products' ? 'Items' : item.label; return <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink> })}</div>}</div>}{primaryAfterBooks.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink>)}</nav>
+  const closeMobile = () => onMobileClose?.()
+  const workspaceMenu = workspaceMenuOpen && createPortal(<div ref={workspacePopupRef} className="workspace-menu" role="dialog" aria-label="Switch workspace" style={{ top: workspaceMenuPosition.top, left: workspaceMenuPosition.left }}><div className="workspace-search"><Search size={16} /><input autoFocus value={workspaceQuery} onChange={event => setWorkspaceQuery(event.target.value)} placeholder="Search workspace..." aria-label="Search workspace" /></div><span className="workspace-menu-heading">MY WORKSPACES</span><div className="workspace-options" role="listbox" aria-label="Workspaces">{filteredWorkspaces.map(item => { const id = item.member_id ?? item.id; const selected = id === activeWorkspaceId; return <button type="button" role="option" aria-selected={selected} className={`workspace-option${selected ? ' selected' : ''}`} key={id} onClick={() => { setWorkspace(id); setWorkspaceMenuOpen(false) }}><span className={`workspace-option-avatar${selected ? ' active' : ''}`}>{workspaceInitial(item)}</span><span className="workspace-option-copy"><strong>{item.display_name || item.name || displayName}</strong><small><span>{item.role === 'owner' ? 'Full access' : item.role || 'Member'}</span>{item.role !== 'owner' && <span className="workspace-read-only-pill">Read-only</span>}</small></span>{selected && <Check size={18} />}</button> })}{!filteredWorkspaces.length && <span className="workspace-empty">No workspaces found</span>}</div></div>, document.body)
+  return <aside id="main-navigation" className={`sidebar${mobileOpen ? ' mobile-open' : ''}`}><div className="sidebar-brand"><div className="brand-mark"><AudioLines size={23} /></div><div><div className="brand-title">ConnectCosmos</div><small>Conversation history & enquiries</small></div><button type="button" className="mobile-sidebar-close" aria-label="Close navigation" onClick={closeMobile}><X size={20} /></button></div>
+    <div className="sidebar-workspace" ref={workspaceMenuRef}><div className="workspace-person"><div className="workspace-avatar">{avatarUrl ? <img src={avatarUrl} alt="" onError={handleAvatarError} /> : <span>{displayName.slice(0, 1).toUpperCase()}</span>}</div><div className="workspace-person-copy">{canSwitchWorkspace ? <div className="workspace-switcher"><button ref={workspaceTriggerRef} type="button" className="workspace-trigger" aria-expanded={workspaceMenuOpen} aria-haspopup="listbox" onClick={() => { setWorkspaceMenuOpen(open => !open); setWorkspaceQuery('') }} disabled={captureBusy}><span>Switch workspace</span><ChevronDown size={15} /></button>{workspaceMenu}</div> : <strong>{workspace?.name}</strong>}</div></div><div className="workspace-member"><span>{workspace?.display_name || displayName}</span><span className="workspace-role-badge">{workspace?.role}</span>{readOnly && <span className="workspace-read-only-pill">Read-only</span>}</div><small className="workspace-email">{email}</small></div>
+    <nav className="sidebar-nav" aria-label="Main navigation">{primaryBeforeBooks.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={closeMobile} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}{to === '/enquiries' && !!unread.data?.count && <span className="nav-count" aria-label={`${unread.data.count} unread enquiries`}>{unread.data.count > 99 ? '99+' : unread.data.count}</span>}</NavLink>)}{!!booksItems.length && <div className="nav-group"><button type="button" className="nav-group-trigger" aria-expanded={booksOpen} onClick={() => setBooksOpen(open => !open)}><span><BookUser size={18} />Zoho Books</span><ChevronDown size={17} className={booksOpen ? '' : 'collapsed'} /></button>{booksOpen && <div className="nav-group-items">{booksItems.map(item => { const Icon = item.icon; const label = item.to === '/contacts' ? 'Contacts' : item.to === '/products' ? 'Items' : item.label; return <NavLink key={item.to} to={item.to} onClick={closeMobile} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink> })}</div>}</div>}{primaryAfterBooks.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={closeMobile} className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}><Icon size={18} />{label}</NavLink>)}</nav>
     <div className="sidebar-footer">Conversation capture · Sales follow-up</div></aside>
 }

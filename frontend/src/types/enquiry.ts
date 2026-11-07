@@ -24,7 +24,7 @@ export type Enquiry = {
   notes?: string
   sourceEventId?: string
   sourceWalkinId?: string
-  customerType?: 'Retail' | 'Dealer' | 'Project'
+  customerType?: 'Retail customer' | 'Vendor' | 'Project' | 'Retail' | 'Dealer'
   company?: string
   projectName?: string
   preferredContactMethod?: string
