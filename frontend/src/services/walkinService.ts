@@ -5,10 +5,12 @@ export interface WalkinPage<T> { items: T[]; total: number; page: number; pageSi
 export interface WalkinVisitPage extends WalkinPage<WalkinVisit> { summary: { waiting: number; assigned: number; discussion: number; requirements: number; converted: number } }
 const demoAgentId = 'demo-agent-sneha'
 const demoAgents: WalkinAgent[] = [
+  { id: 'demo-owner', name: 'Akshat Saxena', department: 'Sales', specialization: 'Workspace owner', availability: 'Available', openVisits: 0 },
   { id: demoAgentId, name: 'Sneha Rao', department: 'Sales', specialization: 'Product solutions', availability: 'Available', openVisits: 0 },
   { id: 'demo-agent-rajesh', name: 'Rajesh Kumar', department: 'Projects', specialization: 'Project sales', availability: 'Available', openVisits: 0 },
   { id: 'demo-agent-ananya', name: 'Ananya Shah', department: 'Support', specialization: 'Service and support', availability: 'Busy', openVisits: 0 },
 ]
+const salesDemoAgents = demoAgents.filter(agent => ['Sales', 'Projects'].includes(agent.department))
 const closedStatuses = ['Completed', 'Cancelled', 'Converted to Enquiry']
 export function isWalkinDemoMode() { return localMode }
 function scope(workspaceId: string) {
@@ -70,7 +72,7 @@ export async function listWalkinAgents(workspaceId: string): Promise<WalkinAgent
   if (!localMode) return (await request<{ items: WalkinAgent[] }>('/walkins/agents', workspaceId)).items
   const visits = readLocal<WalkinVisit[]>(workspaceId, 'visits', [])
   const availability = readLocal<Record<string, WalkinAgent['availability']>>(workspaceId, 'availability', {})
-  return demoAgents.map(agent => ({ ...agent, availability: availability[agent.id] ?? agent.availability, openVisits: visits.filter(visit => visit.assignedAgentId === agent.id && !closedStatuses.includes(visit.status)).length }))
+  return salesDemoAgents.map(agent => ({ ...agent, role: agent.id === 'demo-owner' ? 'owner' as const : 'salesperson' as const, presenceStatus: 'active' as const, openTickets: 0, availability: availability[agent.id] ?? agent.availability, openVisits: visits.filter(visit => visit.assignedAgentId === agent.id && !closedStatuses.includes(visit.status)).length }))
 }
 export async function getCurrentWalkinAgentId(workspaceId: string): Promise<string> {
   scope(workspaceId)
@@ -107,11 +109,11 @@ export async function registerWalkin(workspaceId: string, input: RegisterWalkinI
   const availability = readLocal<Record<string, WalkinAgent['availability']>>(workspaceId, 'availability', {})
   const today = now.slice(0, 10)
   const dailyEnquiries = (agentId: string) => visits.filter(visit => visit.assignedAgentId === agentId && visit.checkInAt.slice(0, 10) === today).length
-  const availableAgents = demoAgents.filter(agent => (availability[agent.id] ?? agent.availability) === 'Available')
+  const availableAgents = salesDemoAgents.filter(agent => (availability[agent.id] ?? agent.availability) === 'Available')
   const assignedAgent = availableAgents.sort((left, right) => dailyEnquiries(left.id) - dailyEnquiries(right.id))[0]
   const dailySequence = visits.filter(visit => visit.checkInAt.slice(0, 10) === today).length + 1
   const datePart = `${today.slice(8, 10)}${today.slice(5, 7)}${today.slice(0, 4)}`
-  const visit: WalkinVisit = { ...input, id, visitNumber: `WI-${datePart}-${String(dailySequence).padStart(6, '0')}`, registeredBy: 'Local reception', assignedAgentId: assignedAgent?.id ?? null, assignedAgentName: assignedAgent?.name ?? null, assignmentNote: '', status: assignedAgent ? 'Assigned' : 'Waiting for Assignment', checkInAt: now, assignedAt: assignedAgent ? now : null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
+  const visit: WalkinVisit = { ...input, customerType: input.customerType ?? 'customer', id, visitNumber: `WI-${datePart}-${String(dailySequence).padStart(6, '0')}`, registeredBy: 'Local reception', assignedAgentId: assignedAgent?.id ?? null, assignedAgentName: assignedAgent?.name ?? null, assignmentNote: '', status: assignedAgent ? 'Assigned' : 'Waiting for Assignment', checkInAt: now, assignedAt: assignedAgent ? now : null, convertedEnquiryReference: null, createdAt: now, updatedAt: now }
   visits.push(visit)
   saveLocal(workspaceId, 'visits', visits)
   keys[idempotencyKey] = { id, payload: JSON.stringify(input) }

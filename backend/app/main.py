@@ -82,7 +82,10 @@ async def zoho_workspace_scope(request: Request, call_next):
         context = await workspace(parent_request, user, org, member)
         # Voice history/notes do not call Zoho. Every other sales route may
         # invoke the sales agent or integration and requires a sales role.
-        if context.role == 'receptionist' and not request.url.path.startswith('/api/voice-sessions'):
+        if context.role == 'receptionist' and not (
+            request.url.path.startswith('/api/voice-sessions') or
+            request.url.path.startswith('/api/zoho/')
+        ):
             raise HTTPException(403, 'Sales access required')
         token = sales_workspace.set(context)
         set_organisation_id(str(context.id))
@@ -973,9 +976,8 @@ def pipeline_new_enquiries():
                 e.assigned_to,e.bigin_contact_id,e.bigin_pipeline_id,e.bigin_deal_id,e.follow_up_required
              from guruconnect_enquiries e
              where e.organisation_id=cast(:org as uuid)
-               and (:admin or e.assigned_to=cast(:member as uuid) or e.owner_id=cast(:member as uuid))
-               and (e.bigin_deal_id is null or e.bigin_deal_id='')
-               and e.stage <> 'closed'
+               and (:admin or e.assigned_to=cast(:member as uuid) or (e.owner_id=cast(:member as uuid) and e.assigned_to is null))
+               and e.stage = 'new'
              order by e.created_at desc limit 200"""), scope_parameters()).all()
     result = []
     for row in rows:
@@ -1011,8 +1013,16 @@ async def pipeline_from_enquiry(body: dict):
     if not row:
         raise HTTPException(404, 'Enquiry not found')
     if row.get('bigin_deal_id'):
-        response = await zoho.pipeline_record(str(row['bigin_deal_id']))
-        return {'record': (response.get('data') or [None])[0] if isinstance(response, dict) else None, 'already_linked': True}
+        try:
+            await zoho.update_pipeline(str(row['bigin_deal_id']), {'Stage': stage})
+            response = await zoho.pipeline_record(str(row['bigin_deal_id']))
+            record = (response.get('data') or [None])[0] if isinstance(response, dict) else None
+            with require_db() as db:
+                db.execute(text("update guruconnect_enquiries set stage='in_process',crm_sync_error=null where id=cast(:enquiry as uuid) and organisation_id=cast(:org as uuid)"), {**scope_parameters(), 'enquiry': enquiry_id})
+                db.commit()
+            return {'record': record, 'already_linked': True}
+        except Exception as error:
+            raise HTTPException(502, 'Unable to update the Bigin lead for this enquiry') from error
     from .crm_provisioning import provision_enquiry_lead
     payload = row.get('payload') if isinstance(row.get('payload'), dict) else {}
     try:
@@ -1024,7 +1034,7 @@ async def pipeline_from_enquiry(body: dict):
         books_contact = provisioned.get('books_contact') or {}
         with require_db() as db:
             db.execute(text("""update guruconnect_enquiries set bigin_contact_id=:contact,bigin_pipeline_id=:pipeline,
-                    bigin_deal_id=:deal,books_contact_id=coalesce(:books_contact, books_contact_id),crm_sync_error=null,follow_up_required=false
+                    bigin_deal_id=:deal,stage='in_process',books_contact_id=coalesce(:books_contact, books_contact_id),crm_sync_error=null,follow_up_required=false
                  where id=cast(:enquiry as uuid) and organisation_id=cast(:org as uuid)"""),
                        {**scope_parameters(), 'enquiry': enquiry_id, 'contact': str(contact.get('id')), 'pipeline': pipeline_id, 'deal': str(record.get('id')), 'books_contact': str(books_contact.get('contact_id') or books_contact.get('id')) if books_contact else None})
             db.commit()

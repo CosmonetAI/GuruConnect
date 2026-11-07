@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Clock3, Plus, RefreshCw, UsersRound } from 'lucide-react'
+import { Clock3, Plus, RefreshCw } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinVisit } from '../../types/walkin'
 import { isWalkinDemoMode, listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
@@ -20,6 +20,7 @@ function waitingTime(value: string) {
 
 export default function WalkinsOverview() {
   const { workspace } = useOffice()
+  const canRegisterVisitor = workspace?.role === 'receptionist'
   const [visits, setVisits] = useState<WalkinVisit[]>([])
   const [query, setQuery] = useState('')
   const [purpose, setPurpose] = useState('')
@@ -66,15 +67,14 @@ export default function WalkinsOverview() {
     <div className="walkin-page">
       <header className="walkin-header">
         <div>
-          <div className="walkin-kicker"><UsersRound size={15} /> CUSTOMER VISITS</div>
           <h1>Walk-in overview</h1>
           <p>Reception queue, visitor assignments, and visit progress in one place.</p>
         </div>
         <div className="walkin-header-actions">
+          {canRegisterVisitor && <Link className="walkin-button primary" to="/walkins/new"><Plus size={16} /> Register visitor</Link>}
           <button className="walkin-button secondary" type="button" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={16} /> Refresh
           </button>
-          <Link className="walkin-button primary" to="/walkins/new"><Plus size={17} /> Register visitor</Link>
         </div>
       </header>
 

@@ -1,4 +1,26 @@
 
+.low-volume-banner {
+  position: fixed;
+  top: 92px;
+  right: 24px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 15px;
+  border: 1px solid #f1d49a;
+  border-radius: 12px;
+  background: #fff9eb;
+  color: #7a561a;
+  box-shadow: 0 10px 28px rgba(49, 67, 86, .14);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.low-volume-banner strong { color: #68450f; }
+.low-volume-banner svg:last-child { margin-left: auto; flex: 0 0 auto; color: #b7791f; }
+
 .connected-recorder .recorder-controls { flex-wrap: wrap; }
 .connected-recorder .recorder-copy { min-width: 0; }
 .connected-recorder .recorder-copy h3,

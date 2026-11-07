@@ -96,7 +96,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       }
       if (workspace) headers.set('X-Workspace-ID', workspace);
       if (selectedMemberId) headers.set('X-Workspace-Member-ID', selectedMemberId);
-      if (init.body) headers.set('Content-Type', 'application/json');
+      if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
       const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
       if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
       if (!response.ok) {
@@ -179,7 +179,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
 }
 export const json = (method: string, value?: unknown, key?: string): RequestInit => ({ method, body: value === undefined ? undefined : JSON.stringify(value), headers: key ? { 'Idempotency-Key': key } : undefined });
 export type Role = 'owner' | 'salesperson' | 'receptionist';
-export interface Workspace { id: string; name: string; role: Role; member_id?: string; display_name?: string; }
+export interface Workspace { id: string; name: string; role: Role; actor_role?: Role; member_id?: string; display_name?: string; }
 export interface Customer { id: string; name: string; created_at: string; notes?: string; }
 export interface Conversation {
   id: string; customer_name_snapshot: string; salesperson_name_snapshot?: string; title?: string; location?: string;
@@ -198,6 +198,6 @@ export interface Job { id: string; run_id?: string; window_id?: string | null; j
 export interface Run { id: string; engine_id: string; kind: string; state: string; model?: string; transcript_version_id?: string; covered_seconds?: number; created_at?: string; versions?: {id:string;english_state:string;kind:string}[]; processed_audio_seconds?:number; translation_characters?:number; translation_strategy?:string; translator_model?:string; translation_input_tokens?:number; translation_output_tokens?:number; }
 export interface Connection { id: string; engine_id: string; state: string; enabled: boolean; generation: number; last_test_at?: string; last_error?: string; queued_jobs?: number; inflight_jobs?: number; safe_config?: Record<string, unknown>; safe_metadata?: { platform_managed?: boolean; readiness_source?: string }; }
 export interface EngineSettings { default_engine_id: string | null; salesperson_engine_selection?: boolean; comparison_allowed?: boolean; allowed_engine_ids?: string[]; budget_policy?:Record<string,unknown>; server_managed_providers?: boolean; }
-export interface Member { user_id: string; display_name?: string; email?: string; role: Role; status: string; availability_status?: string; last_seen_at?: string; }
+export interface Member { user_id: string; display_name?: string; email?: string; role: Role; status: string; availability_status?: string; final_status?: string; final_status_until?: string | null; last_seen_at?: string; }
 export function message(error: unknown): string { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
 export function duration(seconds = 0): string { const s = Math.max(0, Math.floor(seconds)); return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`; }

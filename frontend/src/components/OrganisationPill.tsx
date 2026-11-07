@@ -21,8 +21,9 @@ export default function OrganisationPill() {
     }
   }, [])
 
+  if (!organisationId) return null
   return <div className="organisation-id-pill" role="status" aria-label="Selected platform organisation ID">
     <span>Organisation ID</span>
-    <strong>{organisationId || 'Not selected'}</strong>
+    <strong>{organisationId}</strong>
   </div>
 }

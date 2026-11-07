@@ -148,6 +148,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/team/{user_id}/resend-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resend Invite */
+        post: operations["resend_invite_api_v1_team__user_id__resend_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invites/accept": {
         parameters: {
             query?: never;
@@ -1893,10 +1910,11 @@ export interface components {
              */
             projectName: string;
             /**
-             * Preferredcontactmethod
-             * @default
+             * Customertype
+             * @default customer
+             * @enum {string}
              */
-            preferredContactMethod: string;
+            customerType: "customer" | "vendor";
             /**
              * Purpose
              * @default Other
@@ -2286,6 +2304,40 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resend_invite_api_v1_team__user_id__resend_invite_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-workspace-id"?: string | null;
+                "x-workspace-member-id"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

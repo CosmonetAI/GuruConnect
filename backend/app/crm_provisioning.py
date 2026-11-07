@@ -64,7 +64,7 @@ async def ensure_bigin_contact(zoho, *, name: str, phone: str = "", email: str =
 
 
 async def provision_enquiry_lead(zoho, *, name: str, phone: str = "", email: str = "", details: dict | None = None,
-                                 pipeline_id: str | None = None, stage: str | None = None) -> dict:
+                                 contact_type: str = "customer", pipeline_id: str | None = None, stage: str | None = None) -> dict:
     """Create/link Bigin and Books contacts, then create the Bigin pipeline record."""
     details = details if isinstance(details, dict) else {}
     books_contact = None
@@ -73,7 +73,7 @@ async def provision_enquiry_lead(zoho, *, name: str, phone: str = "", email: str
         status = zoho.status()
         books_org = status.get("organization_id") if status.get("connected") else None
         if books_org and (phone or email):
-            books_contact = await zoho.ensure_books_contact(books_org, name=name, phone=phone, email=email)
+            books_contact = await zoho.ensure_books_contact(books_org, name=name, phone=phone, email=email, contact_type=contact_type)
     except Exception as error:
         books_error = type(error).__name__
         log.warning("books_contact_provision_failed exception_type=%s", books_error)

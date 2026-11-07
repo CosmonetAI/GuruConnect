@@ -15,6 +15,7 @@ export type Enquiry = {
   assignedTo?: string
   assignedSalesperson?: string
   assignedSalespersonEmail?: string
+  forwardedBy?: string
   stage?: 'new' | 'in_process' | 'closed' | 'customer_did_not_show'
   unread?: boolean
   product: string

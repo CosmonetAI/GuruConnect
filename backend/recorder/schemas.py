@@ -22,15 +22,17 @@ class ProfilePatch(Input):
     preferences: dict = Field(default_factory=dict)
     phone: str | None = Field(default=None, max_length=24)
     avatar_path: str | None = Field(default=None, max_length=500)
-    availability_status: Literal["active", "on_leave", "be_right_back"] = "active"
+    availability_status: Literal["active", "inactive", "on_leave", "be_right_back"] = "active"
     leave_end_date: str | None = None
+    final_status: Literal["active", "inactive", "on_leave", "be_right_back"] | None = None
+    final_status_until: str | None = None
 
     @field_validator("availability_status", mode="before")
     @classmethod
     def normalize_legacy_status(cls, value):
         return "active" if value == "not_active" else value
 
-    @field_validator("leave_end_date", mode="before")
+    @field_validator("leave_end_date", "final_status_until", mode="before")
     @classmethod
     def normalize_empty_leave_date(cls, value):
         if value in ("", None):
@@ -45,14 +47,22 @@ class ProfilePatch(Input):
 
     @model_validator(mode="after")
     def validate_availability(self):
-        if self.availability_status == "on_leave":
-            if self.leave_end_date is None:
+        status = self.final_status or self.availability_status
+        leave_date = self.final_status_until or self.leave_end_date
+        if status == "on_leave":
+            if leave_date is None:
                 raise ValueError("A leave end date is required when status is On Leave")
-            if date.fromisoformat(self.leave_end_date) < date.today():
+            if date.fromisoformat(leave_date) < date.today():
                 raise ValueError("Leave end date cannot be in the past")
-        elif self.leave_end_date is not None:
+        elif leave_date is not None:
             raise ValueError("Leave end date is only valid when status is On Leave")
         return self
+
+
+class PresencePing(Input):
+    # Browser session ids arrive as JSON strings; use the same non-strict UUID
+    # input used by the rest of the API instead of rejecting every heartbeat.
+    sessionId: Id | None = None
 
 
 class CustomerCreate(Input):

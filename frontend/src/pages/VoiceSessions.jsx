@@ -260,10 +260,20 @@ function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionI
   const [selectedId, setSelectedId] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [internalEnquiry, setInternalEnquiry] = useState(null);
   const forceRefresh = useRef(false);
   const query = new URLSearchParams({ name, phone, email }).toString();
   const key = `${workspaceId}|${sessionId}|${query}`;
   const refreshSignal = Math.max(refreshToken, crmRefreshVersion);
+  useEffect(() => {
+    const enquiryId = contact?.enquiry_id;
+    if (!workspaceId || !enquiryId) { setInternalEnquiry(null); return undefined; }
+    let current = true;
+    recorderRequest(`/enquiries/${enquiryId}`, workspaceId).then((result) => {
+      if (current) setInternalEnquiry(result);
+    }).catch(() => { if (current) setInternalEnquiry(null); });
+    return () => { current = false; };
+  }, [workspaceId, contact?.enquiry_id]);
   useEffect(() => {
     if (!phone && !email && !name) { setState({ phase: "empty", result: null, error: "" }); return undefined; }
     let current = true;
@@ -322,7 +332,10 @@ function CrmLeadPanel({ contact, identity, biginContactId, workspaceId, sessionI
       </div>
       {state.phase === "error" && <div className="crm-lead-message error" role="alert"><span>{state.error}</span><button type="button" className="button button-secondary" onClick={retry}>Retry</button></div>}
       {state.phase === "empty" && <div className="crm-lead-message">Add the customer’s phone, email or name to search for a CRM lead.</div>}
-      {state.phase === "done" && !deals.length && <div className="crm-lead-message">
+      {state.phase === "done" && !deals.length && internalEnquiry ? <div className="crm-lead-internal">
+        <div><small>CONNECTCOSMOS · INTERNAL ENQUIRY</small><strong>{internalEnquiry.customerName || contactName || "Customer"}</strong><span>{String(internalEnquiry.stage || "new").replaceAll("_", " ")} · {internalEnquiry.assignedSalesperson || internalEnquiry.assignedExecutive || "Unassigned"}</span></div>
+        <a className="button button-secondary" href={`/enquiries/${internalEnquiry.id}`}>Open enquiry <ChevronRight size={16} /></a>
+      </div> : state.phase === "done" && !deals.length && <div className="crm-lead-message">
         <span>{result?.status === "contact_without_deals" ? "No CRM lead found. This contact has no pipeline records yet." : "No CRM lead found for this customer."}</span>
         <button type="button" className="button button-secondary" onClick={retry}>Search again</button>
       </div>}
@@ -679,6 +692,7 @@ export default function VoiceSessions() {
   const [cartSaveError, setCartSaveError] = useState("");
   const [cartSaving, setCartSaving] = useState(false);
   const busy = sessionBusy || captureBusy || cartSaving || Boolean(documentBusy);
+  const navigationBusy = sessionBusy || cartSaving || Boolean(documentBusy);
   const busyRef = useRef(false); busyRef.current = busy;
   const alive = useRef(true);
   const selection = useRef(0);
@@ -690,8 +704,8 @@ export default function VoiceSessions() {
   const catalogueSearch = useRef(0);
   const refreshLive = useRef(null);
   const contextSaves = useRef(new Map());
-  const blocker = useBlocker(busy);
-  useEffect(() => { if (blocker.state === 'blocked') { setError('Finish recording and saving this session before leaving.'); blocker.reset(); } }, [blocker]);
+  const blocker = useBlocker(navigationBusy);
+  useEffect(() => { if (blocker.state === 'blocked') { setError('Please wait for this action to finish. Your recording can continue while you move between pages.'); blocker.reset(); } }, [blocker]);
   useEffect(() => {
     if (!cartSaving && !documentBusy) return;
     const preventLoss = (event) => { event.preventDefault(); event.returnValue = ''; };
@@ -891,7 +905,7 @@ export default function VoiceSessions() {
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
       setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
       setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', tags: data.session?.tags || [], sources: ['Session'], enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
-      await loadSessionExtras(id, ticket);
+      void loadSessionExtras(id, ticket).catch((e) => { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); });
     } catch (e) { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); }
     finally { if (alive.current && ticket === selection.current) { setBusy(false); busyRef.current = false; } }
   };
@@ -926,26 +940,29 @@ export default function VoiceSessions() {
         body: JSON.stringify(next),
       });
       if (!alive.current || ticket !== selection.current) return;
-      setSelectedContact(
-        contact || {
-          id: `session:${data.session.id}`,
-          name: next.name,
-          phone: next.phone,
-          email: next.email,
-          tags: contact?.tags || [],
-          sources: ["Session"],
-          records: {},
-        },
-      );
+      const sessionContact = {
+        ...(contact || {}),
+        id: contact?.id || `session:${data.session.id}`,
+        session_id: data.session.id,
+        name: next.name,
+        phone: next.phone,
+        email: next.email,
+        tags: contact?.tags || [],
+        sources: contact?.sources || ["Session"],
+        records: contact?.records || {},
+      };
+      setSelectedContact(sessionContact);
+      setContacts((current) => [sessionContact, ...current.filter((item) => item.id !== sessionContact.id && item.session_id !== data.session.id)]);
       setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
       setRecorderSessions(data.recorder_sessions || []);
       setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
       setConversationId(data.conversation_id || null);
       setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
-      await load();
-      await loadContacts(contactSearch);
-      await loadSessionExtras(data.session.id, ticket);
+      setBusy(false); busyRef.current = false;
+      void load();
+      void loadContacts(contactSearch);
+      void loadSessionExtras(data.session.id, ticket).catch((e) => { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); });
     } catch (e) {
       if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message);
     } finally {
@@ -1100,9 +1117,11 @@ export default function VoiceSessions() {
       const customer = (customers.contacts || []).find(same);
       const vendor = (vendors.contacts || []).find(same);
       const match = vendor || customer;
-      if (match) {
-        setCustomerType(vendor ? "dealer" : "customer");
-        setDocumentContact(match);
+      const hintedType = String(selectedContact?.customerType || selectedContact?.customer_type || '').toLowerCase();
+      const hintedVendor = hintedType === 'dealer' || hintedType === 'vendor';
+      if (match || hintedVendor) {
+        setCustomerType(vendor || hintedVendor ? "dealer" : "customer");
+        setDocumentContact(match || { name: identity.name, phone: identity.phone, email: identity.email });
       } else {
         setCustomerType("unknown");
         setDocumentContact(null);
@@ -1122,7 +1141,7 @@ export default function VoiceSessions() {
   }, [customerType]);
   useEffect(() => {
     if (session) void resolveDocumentContact();
-  }, [session, identity.phone, identity.email]);
+  }, [session, identity.phone, identity.email, selectedContact?.customerType, selectedContact?.customer_type]);
   useEffect(() => {
     if (!session || !conversationId || !workspace) return;
     const controller = new AbortController();
@@ -1242,7 +1261,7 @@ export default function VoiceSessions() {
     try {
       const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
       if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
-      const supportedTypes = (options.document_types || []).filter((type) => ["invoice", "quote", "sales-order"].includes(type));
+      const supportedTypes = (options.document_types || []).filter((type) => customerType === "dealer" ? type === "purchase-order" : ["invoice", "quote", "sales-order"].includes(type));
       if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
       const customer = { ...identity, ...(options.customer || {}) };
       const snapshot = { scope, session: selectedSession, cart: lines, options: { ...options, customer, document_types: supportedTypes }, sourceDocumentType, sourceDocumentId, sourceDocumentNumber, result: null };
@@ -1315,7 +1334,7 @@ export default function VoiceSessions() {
     const snapshot = documentSnapshot.current;
     if (!snapshot || documentInFlight.current || !documentScopeCurrent(snapshot)) return;
     const recipient = documentEmail.trim();
-    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !recipient || documentDelivery === "download";
+    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !snapshot.options.customer?.email || !recipient || documentDelivery === "download";
     if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email, or choose Download PDF instead of emailing."); return; }
     const existing = snapshot.result;
     if (existing && downloadOnly) {
@@ -1326,7 +1345,7 @@ export default function VoiceSessions() {
     const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.notes || line.product || line.name || "" }));
     if (!lines.length || lines.some((line) => !line.item_id || !Number.isFinite(line.quantity) || line.quantity <= 0)) { setDocumentError("Select at least one catalogue product with a valid quantity."); return; }
     const updateExisting = !existing && snapshot.sourceDocumentId && snapshot.sourceDocumentType === type;
-    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient } : { type, delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
+    const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient } : { type, customer_type: customerType === "dealer" ? "vendor" : "customer", delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
     const signature = JSON.stringify(body);
     const actionName = existing ? "emailAction" : "createAction";
     if (snapshot[actionName]?.signature !== signature) snapshot[actionName] = { signature, requestId: crypto.randomUUID(), body };
@@ -1605,7 +1624,7 @@ export default function VoiceSessions() {
               onDownloadConversation={downloadTranscript}
               sessionStartedAt={recordingSnapshot?.created_at}
             >
-              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={5} grouped sessionOnly />
+              <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={15} grouped sessionOnly />
             </LiveSessionWorkspace>
             {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
             {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} />}
@@ -1629,8 +1648,8 @@ export default function VoiceSessions() {
       />
       <SalesDocumentModal
         open={documentModalOpen}
-        contact={documentOptions?.customer || null}
-        customerType="customer"
+        contact={documentOptions?.customer || documentContact || null}
+        customerType={customerType}
         cart={documentCart}
         subtotal={documentCart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0)}
         discount={documentCart.reduce((sum, line) => sum + (line.discount_type === "fixed" ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0)}
@@ -1639,6 +1658,7 @@ export default function VoiceSessions() {
         delivery={documentDelivery}
         setDelivery={setDocumentDelivery}
         demo={documentOptions?.mode === "local-demo"}
+        forceDownload={!documentOptions?.customer?.email}
         error={documentError}
         createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status, updated: documentResult.document?.updated_existing === true } : null}
         pendingCreation={documentPendingCreation}

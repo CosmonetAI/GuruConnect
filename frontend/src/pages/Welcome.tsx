@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { AudioLines, ArrowRight, ShieldCheck, Languages } from 'lucide-react'
+import { AudioLines, ArrowRight, ShieldCheck, Languages, Eye, EyeOff } from 'lucide-react'
 import { useOffice } from '../contexts/OfficeContext'
 import { json, request, supabase, message } from '../services/officeApi'
 import PageLoader from '../components/PageLoader'
@@ -17,6 +17,7 @@ export default function Welcome() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || busy) return
@@ -58,7 +59,7 @@ export default function Welcome() {
     {(error || office.error) && <p role="alert" className="flow-error">{error || office.error}</p>}{notice && <p role="status" className="flow-note">{notice}</p>}
     <form onSubmit={event => void submit(event)}>{mode === 'signup' && <label>Your name<input name="name" autoComplete="name" required minLength={2} maxLength={120} /></label>}
       <label>Email<input name="email" type="email" autoComplete="email" required maxLength={254} /></label>
-      {mode !== 'reset' && <label>Password<input name="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={mode === 'signup' ? 12 : 1} maxLength={128} /></label>}
+      {mode !== 'reset' && <label>Password<div className="password-input-wrap"><input name="password" type={showPassword ? 'text' : 'password'} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={mode === 'signup' ? 12 : 1} maxLength={128} /><button type="button" className="password-visibility-button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
       <button className="button button-primary" disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : mode === 'reset' ? 'Send reset link' : 'Sign in'} <ArrowRight size={16} /></button>
     </form><div className="welcome-links">{(['signin', 'signup', 'reset'] as const).filter(item => item !== mode).map(item => <button key={item} type="button" disabled={busy} onClick={() => { setMode(item); setError(''); setNotice('') }}>{item === 'signin' ? 'Sign in' : item === 'signup' ? 'Create account' : 'Forgot password?'}</button>)}</div></WelcomeFrame>
 }

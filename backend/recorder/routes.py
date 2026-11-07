@@ -30,36 +30,63 @@ async def get_profile(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
         await connection.execute("""
             update profiles
-            set availability_status='active', leave_end_date=null, updated_at=now()
-            where id=%s and availability_status='on_leave' and leave_end_date < current_date
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=profiles.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                leave_end_date=null,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=profiles.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null, updated_at=now()
+            where id=%s and coalesce(final_status, availability_status)='on_leave'
+              and coalesce(final_status_until, leave_end_date) < current_date
+        """, (user.id,))
+        await connection.execute("""
+            update profiles p
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null,
+                updated_at=now()
+            where p.id=%s
+              and coalesce(p.final_status, p.availability_status)='active'
+              and (p.last_seen_at is null or p.last_seen_at < now()-interval '90 seconds')
+              and not exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds')
         """, (user.id,))
         row = await one(connection, "select * from profiles where id=%s", (user.id,))
     return row or {"id": user.id, "display_name": user.name, "preferences": {}}
 
 
 @router.patch("/profile")
-async def update_profile(body: s.ProfilePatch, request: Request, user: User = Depends(current_user)):
+async def update_profile(body: s.ProfilePatch, request: Request, user: User = Depends(current_user), context: Workspace = Depends(workspace)):
     if len(str(body.preferences)) > 5000 or any(key not in {"theme", "microphone_id", "locale"} for key in body.preferences):
         fail("invalid_preferences")
+    final_status = body.final_status or body.availability_status
+    final_status_until = body.final_status_until or body.leave_end_date
+    if context.role == "receptionist" and final_status not in {"active", "inactive"}:
+        fail("receptionist_status_invalid", 422, "Receptionists can only be Active or Inactive")
     async with request.app.state.db.connection() as connection:
         if body.phone is not None and body.phone and not re.fullmatch(r"\+?[0-9][0-9 ()-]{7,19}", body.phone):
             fail("invalid_phone", 422)
         if body.avatar_path is not None and body.avatar_path and not body.avatar_path.startswith(f"{user.id}/"):
             fail("invalid_avatar", 422)
-        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,leave_end_date,last_seen_at) values(%s,%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,leave_end_date=excluded.leave_end_date,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, body.availability_status, body.leave_end_date))
+        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,leave_end_date,final_status,final_status_until,last_seen_at) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,leave_end_date=excluded.leave_end_date,final_status=excluded.final_status,final_status_until=excluded.final_status_until,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, final_status, final_status_until, final_status, final_status_until))
 
 @router.post("/presence")
-async def presence(request: Request, user: User = Depends(current_user)):
+async def presence(request: Request, body: s.PresencePing = s.PresencePing(), user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, """
-            update profiles
-            set availability_status='active', leave_end_date=null, last_seen_at=now(), updated_at=now()
-            where id=%s and availability_status='on_leave' and leave_end_date < current_date
-            returning id,last_seen_at,availability_status
-        """, (user.id,))
-        if not row:
-            row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s returning id,last_seen_at,availability_status", (user.id,))
-    return row or {"id": user.id, "availability_status": "active"}
+        if body.sessionId:
+            await connection.execute("""
+                update profiles
+                set availability_status='active', leave_end_date=null, final_status='active', final_status_until=null, updated_at=now()
+                where id=%s and coalesce(final_status, availability_status) in ('inactive','be_right_back')
+                  and not exists (
+                      select 1 from profile_presence_sessions s
+                      where s.user_id=%s and s.last_seen_at >= now()-interval '90 seconds'
+                  )
+            """, (user.id, user.id))
+            await connection.execute("""
+                insert into profile_presence_sessions(user_id,session_id,last_seen_at)
+                values(%s,%s,now())
+                on conflict(user_id,session_id) do update set last_seen_at=excluded.last_seen_at
+            """, (user.id, body.sessionId))
+        row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s returning id,last_seen_at,availability_status,final_status,final_status_until", (user.id,))
+    return row or {"id": user.id, "availability_status": "active", "final_status": "active"}
 
 
 @router.get("/analytics")
@@ -116,7 +143,7 @@ async def analytics(request: Request, context: Workspace = Depends(workspace)):
 async def list_workspaces(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
         rows = await many(connection, """
-            select o.id, o.name, m.user_id as member_id, m.role, p.display_name
+            select o.id, o.name, m.user_id as member_id, m.role, actor.role as actor_role, p.display_name
             from organisations o
             join members actor on actor.organisation_id=o.id and actor.user_id=%s and actor.status='active'
             join members m on m.organisation_id=o.id and m.status='active'
@@ -146,32 +173,57 @@ async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
         await connection.execute("""
             update profiles p
-            set availability_status='active', leave_end_date=null, updated_at=now()
-            where p.availability_status='on_leave' and p.leave_end_date < current_date
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null,
+                updated_at=now()
+            where coalesce(p.final_status, p.availability_status)='active'
+              and (p.last_seen_at is null or p.last_seen_at < now()-interval '90 seconds')
+              and not exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds')
               and exists (select 1 from members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
         """, (context.id,))
-        rows = await many(connection, "select m.*,p.display_name,p.availability_status,p.last_seen_at,u.email,case when m.status <> 'active' then m.status when u.confirmed_at is null then 'invited' else 'active' end as status from members m left join profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
+        await connection.execute("""
+            update profiles p
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                leave_end_date=null,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null, updated_at=now()
+            where coalesce(p.final_status, p.availability_status)='on_leave'
+              and coalesce(p.final_status_until, p.leave_end_date) < current_date
+              and exists (select 1 from members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
+        """, (context.id,))
+        rows = await many(connection, """
+            select m.*,p.display_name,
+                   case
+                     when coalesce(p.final_status, p.availability_status) in ('inactive','on_leave') then coalesce(p.final_status, p.availability_status)
+                     when coalesce(p.final_status, p.availability_status)='be_right_back' and p.updated_at > now()-interval '15 minutes' then 'be_right_back'
+                   when exists (select 1 from profile_presence_sessions ps where ps.user_id=p.id and ps.last_seen_at >= now()-interval '90 seconds') then 'active'
+                     else 'inactive'
+                   end as availability_status,
+                   coalesce(p.final_status, p.availability_status, 'active') as final_status,
+                   coalesce(p.final_status_until, p.leave_end_date) as final_status_until,
+                   p.last_seen_at,u.email,
+                   case when m.status <> 'active' then m.status when u.confirmed_at is null then 'invited' else 'active' end as status
+            from members m left join profiles p on p.id=m.user_id
+            join auth.users u on u.id=m.user_id
+            where m.organisation_id=%s order by m.created_at
+        """, (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}
 
 
-@router.post("/invites", status_code=201)
-async def invite(body: s.Invitation, request: Request, context: Workspace = Depends(administrator)):
+async def send_supabase_invite(request: Request, email: str, name: str):
     settings = request.app.state.settings
     if not settings.supabase_url or not settings.supabase_service_role_key:
         fail("auth_not_configured", 503, "Supabase admin authentication is not configured")
 
-    # Supabase creates the account and sends the recipient a one-time invite
-    # link. The link lands on /reset, where the recipient sets their password.
-    # Membership is provisioned here, so no invitation token or second accept
-    # step is needed after the recipient follows the email.
     origin = request.headers.get("origin")
     redirect_origin = origin if origin in settings.cors_origins else settings.cors_origins[0]
-    invite_payload = {"email": body.email.lower(), "data": {"display_name": body.name.strip()}}
+    invite_payload = {"email": email.lower(), "data": {"display_name": name.strip()}}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(
-                f"{settings.supabase_url}/auth/v1/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}" ,
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}",
                 headers={
                     "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
                     "apikey": settings.supabase_service_role_key.get_secret_value(),
@@ -180,9 +232,6 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
                 json=invite_payload,
             )
         if response.status_code >= 400:
-            # Supabase's error body can contain provider details, but it must
-            # never be returned to the browser because it may include sensitive
-            # Auth internals. Keep only stable diagnostic fields in Render logs.
             provider_error = {}
             try:
                 payload = response.json()
@@ -198,15 +247,25 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
                 fail("member_invitation_failed", 409, "This email may already have an account or could not be invited")
             fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
         auth_user = response.json()
-        invited_user_id = auth_user.get("id")
-        if not invited_user_id:
+        if not auth_user.get("id"):
             fail("member_invitation_unavailable", 503, "Supabase did not return the invited member")
+        return auth_user
     except httpx.HTTPError as exc:
         log.warning(
             "supabase_invite_transport_failed request_id=%s exception_type=%s",
             getattr(request.state, "request_id", "unavailable"), type(exc).__name__,
         )
         fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
+
+
+@router.post("/invites", status_code=201)
+async def invite(body: s.Invitation, request: Request, context: Workspace = Depends(administrator)):
+    # Supabase creates the account and sends the recipient a one-time invite
+    # link. The link lands on /reset, where the recipient sets their password.
+    # Membership is provisioned here, so no invitation token or second accept
+    # step is needed after the recipient follows the email.
+    auth_user = await send_supabase_invite(request, body.email, body.name)
+    invited_user_id = auth_user["id"]
 
     token = secrets.token_urlsafe(32)  # retained only as a non-user-visible audit value
     async with request.app.state.db.connection() as connection:
@@ -216,6 +275,28 @@ async def invite(body: s.Invitation, request: Request, context: Workspace = Depe
         await connection.execute("insert into members(organisation_id,user_id,role) values(%s,%s,%s)", (context.id, invited_user_id, body.role))
         await audit(connection, context, "invitation.created", {"invite_id": str(row["id"]), "role": body.role, "user_id": str(invited_user_id)})
     return {**row, "status": "sent"}
+
+
+@router.post("/team/{user_id}/resend-invite")
+async def resend_invite(user_id: UUID, request: Request, context: Workspace = Depends(administrator)):
+    async with request.app.state.db.connection() as connection:
+        member = await one(connection, """
+            select m.role,m.status,p.display_name,u.email,u.confirmed_at
+            from members m
+            left join profiles p on p.id=m.user_id
+            join auth.users u on u.id=m.user_id
+            where m.organisation_id=%s and m.user_id=%s
+            for update
+        """, (context.id, user_id))
+        if not member:
+            fail("member_not_found", 404)
+        if member["role"] == "owner" or member["status"] != "active" or member["confirmed_at"] is not None:
+            fail("invitation_not_pending", 409, "This member no longer has a pending invitation")
+
+    await send_supabase_invite(request, member["email"], member["display_name"] or member["email"])
+    async with request.app.state.db.connection() as connection:
+        await audit(connection, context, "invitation.resent", {"user_id": str(user_id), "email": member["email"]})
+    return {"status": "sent", "email": member["email"]}
 
 
 @router.post("/invites/accept")

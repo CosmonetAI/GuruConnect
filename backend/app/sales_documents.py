@@ -39,7 +39,8 @@ class DocumentEmailInput(BaseModel):
 
 
 class SalesDocumentInput(DocumentEmailInput):
-    type: Literal['invoice', 'quote', 'sales-order']
+    type: Literal['invoice', 'quote', 'sales-order', 'purchase-order']
+    customer_type: Literal['customer', 'vendor'] = 'customer'
     delivery: Literal['email', 'download'] = 'download'
     line_items: list[SalesLine] = Field(min_length=1, max_length=50)
     source_document_id: str | None = Field(default=None, min_length=1, max_length=100)
@@ -166,7 +167,8 @@ class DocumentRepository:
 class SalesDocumentService:
     TYPES = {'invoice': ('create_invoice', 'update_invoice', 'invoice', 'invoice_id', 'invoice_number'),
              'quote': ('create_estimate', 'update_estimate', 'estimate', 'estimate_id', 'estimate_number'),
-             'sales-order': ('create_sales_order', 'update_sales_order', 'salesorder', 'salesorder_id', 'salesorder_number')}
+             'sales-order': ('create_sales_order', 'update_sales_order', 'salesorder', 'salesorder_id', 'salesorder_number'),
+             'purchase-order': ('create_purchase_order', 'update_purchase_order', 'purchaseorder', 'purchaseorder_id', 'purchaseorder_number')}
 
     def __init__(self, repository, customer, *, zoho=None, settings=None, demo=False, sender=None):
         self.repository, self.customer, self.zoho = repository, customer, zoho
@@ -253,6 +255,10 @@ class SalesDocumentService:
         if not self.demo and (not status.get('connected') or not org):
             raise HTTPException(409, 'Connect Zoho Books and select an organization first.')
         lines = await self._lines(body.line_items, org)
+        if body.type == 'purchase-order' and body.customer_type != 'vendor':
+            raise HTTPException(422, 'Purchase orders are available only for vendors.')
+        if body.type != 'purchase-order' and body.customer_type == 'vendor':
+            raise HTTPException(422, 'Vendors can only receive purchase orders.')
         row = {**scope, 'id': identity, 'request_id': str(body.request_id), 'request_hash': hashed,
                'type': body.type, 'state': 'creating', 'demo': self.demo, 'books_org': org,
                'customer': self.customer, 'lines': lines, 'currency': status.get('currency') or 'INR',
@@ -268,14 +274,15 @@ class SalesDocumentService:
                 document = {'external_id': None, 'number': f'SAMPLE-{body.type.upper()}-{identity[:8]}'}
             else:
                 contact = await self.zoho.ensure_books_contact(org, name=self.customer['name'], email=self.customer.get('email') or None,
-                                                             phone=self.customer.get('phone'), contact_type='customer')
-                customer_id = contact.get('contact_id') or contact.get('id')
-                if not customer_id:
+                                                             phone=self.customer.get('phone'), contact_type=body.customer_type)
+                contact_id = contact.get('contact_id') or contact.get('id')
+                if not contact_id:
                     raise RuntimeError('books_contact_missing')
                 create_method, update_method, key, id_key, number_key = self.TYPES[body.type]
                 zone = ZoneInfo(getattr(self.settings, 'app_timezone', None) or 'Asia/Kolkata')
                 source_id = body.source_document_id
-                payload = {'customer_id': customer_id,
+                party_key = 'vendor_id' if body.type == 'purchase-order' else 'customer_id'
+                payload = {party_key: contact_id,
                     'date': datetime.now(zone).date().isoformat(),
                     'discount_type': 'item_level', 'is_discount_before_tax': True,
                     'line_items': [{k: v for k, v in item.items() if k not in {'name', 'sku', 'discount_amount'}} for item in lines],

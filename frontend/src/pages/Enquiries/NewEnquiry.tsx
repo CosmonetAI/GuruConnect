@@ -152,9 +152,9 @@ function SectionHeader({
   )
 }
 
-type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; customerType?: 'Retail' | 'Dealer'; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
 function convertedValues(source: WalkinConversion): NewEnquiryForm {
-  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, company: source.company,
+  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, customerType: source.customerType || 'Retail', company: source.company,
     customerNotes: `${source.purpose} · Visit ${source.visitNumber}\n${source.notes}`.trim(), requirementsSummary: source.requirements, followUpDate: source.followUpDate,
     productRequirements: [{ ...defaultValues.productRequirements[0], product: source.productOrService, quantity: /^\d+$/.test(source.quantity) && Number(source.quantity) > 0 ? Number(source.quantity) : 0, budget: source.budget, timeline: source.timeline, notes: source.requirements }],
   }

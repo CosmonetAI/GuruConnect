@@ -23,10 +23,10 @@ def contiguous_samples(chunks: list[dict]) -> int:
     return expected
 
 
-def processing_window_seconds(audio_bucket: str | None, configured_seconds: int, live_seconds: int = 10) -> int:
+def processing_window_seconds(audio_bucket: str | None, configured_seconds: int, live_seconds: int = 15) -> int:
     """Keep live customer conversations, visitor registration and legacy windows distinct."""
     if audio_bucket == "walkin-audio":
-        return 5
+        return 8
     return live_seconds if audio_bucket == "session-audio" else configured_seconds
 
 

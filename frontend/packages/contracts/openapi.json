@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "GuruConnect API",
+    "title": "ConnectCosmos API",
     "version": "1.0.0"
   },
   "paths": {
@@ -370,6 +370,83 @@
         },
         "responses": {
           "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/team/{user_id}/resend-invite": {
+      "post": {
+        "summary": "Resend Invite",
+        "operationId": "resend_invite_api_v1_team__user_id__resend_invite_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "x-workspace-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "name": "x-workspace-member-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Workspace-Member-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -7868,11 +7945,14 @@
             "title": "Projectname",
             "default": ""
           },
-          "preferredContactMethod": {
+          "customerType": {
             "type": "string",
-            "maxLength": 80,
-            "title": "Preferredcontactmethod",
-            "default": ""
+            "enum": [
+              "customer",
+              "vendor"
+            ],
+            "title": "Customertype",
+            "default": "customer"
           },
           "purpose": {
             "type": "string",

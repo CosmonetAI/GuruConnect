@@ -2,8 +2,21 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { Session, User } from '@supabase/supabase-js'
 import { configured, localMode, request, supabase, message, json, type Workspace } from '../services/officeApi'
 
+const presenceSessionId = (() => {
+  try {
+    const key = 'guruconnect-presence-session'
+    const existing = sessionStorage.getItem(key)
+    if (existing) return existing
+    const created = crypto.randomUUID()
+    sessionStorage.setItem(key, created)
+    return created
+  } catch {
+    return crypto.randomUUID()
+  }
+})()
+
 const localUser = { id: '00000000-0000-0000-0000-000000000001', email: 'local@localhost', app_metadata: {}, user_metadata: { display_name: 'Local user' }, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' } as User
-const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner', member_id: localUser.id }
+const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner', actor_role: 'owner', member_id: localUser.id }
 
 interface OfficeState {
   configured: boolean; localMode: boolean; session: Session | null; user: User | null; loading: boolean
@@ -78,7 +91,10 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
   }, [active, workspaces, localMode])
   useEffect(() => {
     if (!session || localMode) return
-    const ping = () => { void request('/presence', null, json('POST')).catch(() => undefined) }
+    const ping = () => {
+      void request('/presence', null, json('POST', { sessionId: presenceSessionId }))
+        .catch(error => console.warn('Presence API heartbeat failed', error))
+    }
     ping(); const timer = window.setInterval(ping, 30_000)
     return () => window.clearInterval(timer)
   }, [session, localMode])

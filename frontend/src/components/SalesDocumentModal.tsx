@@ -11,6 +11,7 @@ export type SalesDocumentModalProps = {
   sourceDocumentType?: SalesDocumentType | null
   email: string; setEmail: (email: string) => void; subject: string; setSubject: (subject: string) => void
   message: string; setMessage: (message: string) => void; busy: boolean; demo?: boolean; error?: string
+  forceDownload?: boolean
   documentTypes?: SalesDocumentType[]; emailConfigured?: boolean; delivery?: 'email' | 'download'; setDelivery?: (delivery: 'email' | 'download') => void
   createdDocument?: { number?: string; deliveryStatus?: string; updated?: boolean } | null
   pendingCreation?: boolean
@@ -24,7 +25,7 @@ const documents = [
   { value: 'sales-order', title: 'Create sales order', copy: 'Confirm the customer’s order', icon: ShoppingBag },
 ] as const
 
-export default function SalesDocumentModal({ open, contact, customerType, cart, subtotal, discount, documentType, setDocumentType, sourceDocumentType = null, email, setEmail, busy, demo = false, error = '', documentTypes, emailConfigured = true, delivery = 'email', setDelivery, createdDocument, pendingCreation = false, onDownload, onClose, onBack, onSubmit }: SalesDocumentModalProps) {
+export default function SalesDocumentModal({ open, contact, customerType, cart, subtotal, discount, documentType, setDocumentType, sourceDocumentType = null, email, setEmail, busy, demo = false, error = '', forceDownload = false, documentTypes, emailConfigured = true, delivery = 'email', setDelivery, createdDocument, pendingCreation = false, onDownload, onClose, onBack, onSubmit }: SalesDocumentModalProps) {
   const titleId = useId()
   const dialog = useRef<HTMLElement>(null)
   const close = useRef<HTMLButtonElement>(null)
@@ -43,7 +44,7 @@ export default function SalesDocumentModal({ open, contact, customerType, cart, 
   const options = documentTypes ? possible.filter(option => documentTypes.includes(option.value)) : vendor ? possible.filter(option => option.value === 'purchase-order') : documents
   if (!options.length) return null
   const selected = options.find(option => option.value === documentType) || options[0]
-  const downloadOnly = demo || !emailConfigured || !email.trim() || delivery === 'download'
+  const downloadOnly = forceDownload || demo || !emailConfigured || !email.trim() || delivery === 'download'
   const deliveryUncertain = createdDocument?.deliveryStatus === 'uncertain'
   const beforeTax = Math.max(0, subtotal - discount)
   const initials = (contact.name || 'Customer').split(/\s+/).slice(0, 2).map(name => name[0]).join('').toUpperCase()
@@ -75,7 +76,7 @@ export default function SalesDocumentModal({ open, contact, customerType, cart, 
             const copy = isSourceDocument ? `Update and send this ${option.value === 'sales-order' ? 'sales order' : option.value}` : option.copy
             return <label className={`sdm-type-card${selected.value === option.value ? ' is-selected' : ''}${isSourceDocument ? ' is-source-document' : ''}`} key={option.value}><input type="radio" name={`${titleId}-type`} checked={selected.value === option.value} onChange={() => setDocumentType(option.value)} /><span className="sdm-radio"><Check size={10} /></span><Icon size={23} className="sdm-document-icon" /><strong>{title}</strong><small>{demo ? 'Create a sample PDF for this document' : copy}</small></label>
           })}</div></fieldset>
-          <fieldset className="sdm-email-fieldset" disabled={busy || pendingCreation}><legend><span><Mail size={17} />Email details</span><small>{demo ? 'Downloads only in demo' : emailConfigured ? 'Sent securely via Zoho Books' : 'Email delivery is not configured'}</small></legend><label className="sdm-recipient">To ({vendor ? 'vendor' : 'customer'} email)<span><UserRound size={15} /><input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="Enter recipient email" disabled={demo || !emailConfigured} /></span></label>{!email.trim() && <p className="sdm-email-hint"><Download size={13} />No email address? You can create and download the PDF.</p>}{!demo && !emailConfigured && <p className="sdm-email-hint">Email delivery is unavailable. Your document can still be downloaded as a PDF.</p>}{!demo && emailConfigured && setDelivery && <label className="sdm-download-choice"><input type="checkbox" checked={delivery === 'download'} onChange={event => setDelivery(event.target.checked ? 'download' : 'email')} />Download PDF instead of emailing</label>}</fieldset>
+          <fieldset className="sdm-email-fieldset" disabled={busy || pendingCreation}><legend><span><Mail size={17} />Email details</span><small>{forceDownload ? 'No email address — download only' : demo ? 'Downloads only in demo' : emailConfigured ? 'Sent securely via Zoho Books' : 'Email delivery is not configured'}</small></legend><label className="sdm-recipient">To ({vendor ? 'vendor' : 'customer'} email)<span><UserRound size={15} /><input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="Enter recipient email" disabled={demo || !emailConfigured || forceDownload} /></span></label>{forceDownload && <p className="sdm-email-hint"><Download size={13} />No customer email. The document will be created in Zoho Books and downloaded here.</p>}{!forceDownload && !email.trim() && <p className="sdm-email-hint"><Download size={13} />No email address? You can create and download the PDF.</p>}{!demo && !forceDownload && !emailConfigured && <p className="sdm-email-hint">Email delivery is unavailable. Your document can still be downloaded as a PDF.</p>}{!forceDownload && !demo && emailConfigured && setDelivery && <label className="sdm-download-choice"><input type="checkbox" checked={delivery === 'download'} onChange={event => setDelivery(event.target.checked ? 'download' : 'email')} />Download PDF instead of emailing</label>}</fieldset>
           {pendingCreation && <p className="sdm-existing-document" role="status">The previous request could not be confirmed. Check it using the same action before changing document details; this avoids creating a duplicate.</p>}
           {createdDocument && <p className="sdm-existing-document" role="status">Document {createdDocument.number || ''} has been {createdDocument.updated ? 'updated' : 'created'}. {deliveryUncertain ? 'Email submission is uncertain; check its status before retrying.' : 'Retry email delivery or download this PDF without creating another document.'}</p>}
           {error && <p className="sdm-error" role="alert">{error}</p>}

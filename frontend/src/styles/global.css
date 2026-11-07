@@ -66,6 +66,10 @@ html, body, #app {
   box-shadow: 0 2px 6px rgba(0,0,0,0.12) inset;
 }
 .nav-count { margin-left: auto; min-width: 21px; padding: 2px 6px; border-radius: 999px; color: #fff; background: #e25555; font-size: 11px; text-align: center; }
+.password-input-wrap { position: relative; }
+.password-input-wrap input { width: 100%; padding-right: 44px; }
+.password-visibility-button { position: absolute; top: 50%; right: 6px; display: grid; place-items: center; width: 34px; min-height: 34px; padding: 0; border: 0; background: transparent; color: #58708f; transform: translateY(-50%); }
+.password-visibility-button:hover { color: #2563eb; background: #eff5ff; box-shadow: none; transform: translateY(-50%); }
 
 .sidebar-footer {
   margin-top: auto;

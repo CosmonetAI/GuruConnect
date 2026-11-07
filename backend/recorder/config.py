@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Durable browser chunks and provider windows are independent. Customer
     # Sessions publish short progressive windows while recording continues.
     window_seconds: int = Field(default=180, ge=5, le=180)
-    live_window_seconds: int = Field(default=10, ge=5, le=30)
+    live_window_seconds: int = Field(default=15, ge=5, le=30)
     context_seconds: int = Field(default=2, ge=0, le=10)
     signed_url_seconds: int = Field(default=120, ge=30, le=600)
     worker_lease_seconds: int = Field(default=180, ge=30, le=900)

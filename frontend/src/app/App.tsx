@@ -4,7 +4,6 @@ import AppLayout from '../layouts/AppLayout'
 import '../styles/forms.css'
 const Dashboard = lazy(() => import('../pages/Dashboard/Dashboard'))
 const EnquiriesList = lazy(() => import('../pages/Enquiries/EnquiriesList'))
-const NewEnquiry = lazy(() => import('../pages/Enquiries/NewEnquiry'))
 const EnquiryDetail = lazy(() => import('../pages/Enquiries/EnquiryDetail'))
 const Analytics = lazy(() => import('../pages/Analytics'))
 const Settings = lazy(() => import('../pages/Settings'))
@@ -33,9 +32,9 @@ const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
   if (!configured || loading || !user || workspacesLoading || !workspace) return <Welcome />
   return <>{children}</>
 }
-const RoleRoute: FC<{ roles: string[]; children: ReactNode }> = ({ roles, children }) => {
+const RoleRoute: FC<{ roles: string[]; children: ReactNode; ownerOverride?: boolean }> = ({ roles, children, ownerOverride = true }) => {
   const { workspace } = useOffice()
-  return workspace && roles.includes(workspace.role) ? <>{children}</> : <Navigate to="/dashboard" replace />
+  return workspace && (roles.includes(workspace.role) || (ownerOverride && workspace.actor_role === 'owner')) ? <>{children}</> : <Navigate to="/dashboard" replace />
 }
 
 export default function App() {
@@ -55,13 +54,14 @@ export default function App() {
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="enquiries" element={<EnquiriesList />} />
-        <Route path="walkins" element={<RoleRoute roles={['owner','receptionist']}><WalkinsOverview /></RoleRoute>} />
-        <Route path="walkins/new" element={<RoleRoute roles={['owner','receptionist']}><WalkinRegistration /></RoleRoute>} />
-        <Route path="walkins/mine" element={<RoleRoute roles={['owner','receptionist']}><MyWalkins /></RoleRoute>} />
-        <Route path="walkins/history" element={<RoleRoute roles={['owner','receptionist']}><WalkinHistory /></RoleRoute>} />
-        <Route path="walkins/:id" element={<RoleRoute roles={['owner','receptionist']}><WalkinDetail /></RoleRoute>} />
-        <Route path="enquiries/new" element={<NewEnquiry />} />
-        <Route path="enquiries/:id/edit" element={<NewEnquiry />} />
+        <Route path="walkins" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinsOverview /></RoleRoute>} />
+        <Route path="walkins/new" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinRegistration /></RoleRoute>} />
+        <Route path="walkins/mine" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><MyWalkins /></RoleRoute>} />
+        <Route path="walkins/history" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinHistory /></RoleRoute>} />
+        <Route path="walkins/:id" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinDetail /></RoleRoute>} />
+        <Route path="enquiries/register" element={<RoleRoute roles={['owner','salesperson']}><WalkinRegistration enquiryMode /></RoleRoute>} />
+        <Route path="enquiries/new" element={<Navigate to="/enquiries/register" replace />} />
+        <Route path="enquiries/:id/edit" element={<Navigate to="/enquiries" replace />} />
         <Route path="enquiries/:id" element={<EnquiryDetail />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="integrations" element={<Zoho />} />

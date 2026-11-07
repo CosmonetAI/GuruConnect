@@ -75,7 +75,7 @@ export default function VoiceAssistPanel({ customerName, customerPhone, customer
   }, [segments, automatic, threshold])
   return <section className="voice-assist" aria-labelledby="voice-assist-title">
     <div className="walkin-section-heading"><span><Sparkles size={16} /></span><div><h2 id="voice-assist-title">Voice registration</h2><p>Speak naturally. Visitor details are filled in automatically.</p></div></div>
-    <div className="voice-simple-recorder"><Mic2 size={30} aria-hidden /><ConversationRecorder customerName={customerName.trim() || 'Walk-in visitor'} customerPhone={customerPhone} customerEmail={customerEmail} title="Walk-in registration" onConversationChange={onConversationChange} onBusyChange={onBusyChange} onCaptureChange={setCapture} chunkSeconds={5} audioBucket="walkin-audio" compact registrationOnly /></div>
+    <div className="voice-simple-recorder"><Mic2 size={30} aria-hidden /><ConversationRecorder customerName={customerName.trim() || 'Walk-in visitor'} customerPhone={customerPhone} customerEmail={customerEmail} title="Walk-in registration" onConversationChange={onConversationChange} onBusyChange={onBusyChange} onCaptureChange={setCapture} chunkSeconds={8} audioBucket="walkin-audio" compact registrationOnly /></div>
     {supported && segments.length > 0 && <div className="voice-transcript" aria-live="polite">{segments.map(segment => <p key={segment.id}><strong>{segment.speaker}:</strong> {segment.text}{!segment.final && '…'}</p>)}</div>}
     {speechError && <p role="alert">{speechError}</p>}{quiet && <p role="alert">Microphone input is very quiet. Move closer and check the selected microphone.</p>}
   </section>

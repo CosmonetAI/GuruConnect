@@ -114,6 +114,11 @@ class EnquiryCreate(BaseModel):
 EnquiryUpdate = EnquiryCreate
 
 
+class EnquiryAssignment(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    assigneeId: UUID
+
+
 # A deleted recording is not exposed as still available. Its enquiry metadata
 # remains durable and readable under the same workspace/owner authorization.
 SELECT_ENQUIRY = """
@@ -121,12 +126,14 @@ select e.*, c.capture_state, c.upload_state, c.transcription_state,
        c.english_state, c.speaker_state, c.final_state, c.duration_seconds,
        c.deleted_at as recording_deleted_at,
        assigned_profile.display_name as assigned_salesperson_name,
-       assigned_user.email as assigned_salesperson_email
+       assigned_user.email as assigned_salesperson_email,
+       forwarded_profile.display_name as forwarded_by_name
 from public.guruconnect_enquiries e
 left join public.conversations c on c.id=e.conversation_id
   and c.organisation_id=e.organisation_id and c.owner_id=e.owner_id
 left join public.profiles assigned_profile on assigned_profile.id=e.assigned_to
 left join auth.users assigned_user on assigned_user.id=e.assigned_to
+left join public.profiles forwarded_profile on forwarded_profile.id=e.owner_id
 left join public.voice_ai_contexts ai_context on ai_context.conversation_id=e.conversation_id
 """
 
@@ -146,6 +153,7 @@ def serialize_enquiry(row: dict) -> dict:
     payload["assignedTo"] = str(row["assigned_to"]) if row.get("assigned_to") else None
     payload["assignedSalesperson"] = row.get("assigned_salesperson_name") or payload.get("assignedExecutive", "")
     payload["assignedSalespersonEmail"] = row.get("assigned_salesperson_email", "")
+    payload["forwardedBy"] = payload.get("forwardedBy") or row.get("forwarded_by_name") or "Team"
     payload["tags"] = derive_business_tags(row.get("ai_context") or {}, payload=payload)
     if row["conversation_id"] and row.get("capture_state") and not row.get("recording_deleted_at"):
         payload["recording"] = {
@@ -172,7 +180,7 @@ async def list_enquiries(request: Request, context: Workspace = Depends(workspac
     # is restricted to that member while the owner remains the authenticated actor.
     scoped_all = context.admin and context.personal
     scope_user = context.member_id if not scoped_all else context.user.id
-    where = """where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
+    where = """where e.organisation_id=%s and (%s or e.assigned_to=%s or (e.owner_id=%s and e.assigned_to is null))
       and (e.customer_name ilike %s or e.phone ilike %s or e.id::text ilike %s
            or ('ENQ-'||to_char(coalesce(e.ticket_day,(e.created_at at time zone 'Asia/Kolkata')::date),'DDMMYYYY')||'-'||
                lpad(coalesce(e.daily_sequence,e.enquiry_number)::text,6,'0')) ilike %s)
@@ -345,7 +353,7 @@ async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_
 async def update_enquiry(enquiry_id: UUID, body: EnquiryUpdate, request: Request, context: Workspace = Depends(workspace)):
     payload = body.model_dump(mode="json")
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s) for update",
+        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.assigned_to=%s or (e.owner_id=%s and e.assigned_to is null)) for update",
                         (enquiry_id, context.id, context.admin, context.user.id, context.user.id))
         if not row:
             fail("enquiry_not_found", 404)
@@ -364,6 +372,81 @@ async def update_enquiry(enquiry_id: UUID, body: EnquiryUpdate, request: Request
             where id=%s and organisation_id=%s""",
             (Jsonb(payload), payload_hash, body.conversationId, body.customerName, body.phone, body.channel, body.branch, enquiry_id, context.id))
         await audit(connection, context, "enquiry.updated", {"enquiry_id": str(enquiry_id)}, body.conversationId)
+        saved = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s", (enquiry_id, context.id))
+    return serialize_enquiry(saved)
+
+
+@router.get("/assignees")
+async def list_assignees(request: Request, context: Workspace = Depends(workspace)):
+    if context.role not in {"owner", "salesperson"}:
+        fail("enquiry_assignment_not_allowed", 403)
+    role_filter = "('owner','salesperson')" if context.role == "owner" else "('owner')"
+    async with request.app.state.db.connection() as connection:
+        await connection.execute("""
+            update public.profiles p
+            set availability_status='inactive', final_status='inactive', final_status_until=null, updated_at=now()
+            where coalesce(p.final_status, p.availability_status)='active'
+              and (p.last_seen_at is null or p.last_seen_at < now()-interval '90 seconds')
+              and not exists (select 1 from public.profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds')
+              and exists (select 1 from public.members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
+        """, (context.id,))
+        rows = await many(connection, f"""select m.user_id,m.role,p.display_name,u.email,
+                case when coalesce(p.final_status, p.availability_status) in ('inactive','on_leave') then coalesce(p.final_status, p.availability_status)
+                     when coalesce(p.final_status, p.availability_status)='be_right_back' and p.updated_at > now()-interval '15 minutes' then 'be_right_back'
+                     when exists (select 1 from public.profile_presence_sessions ps where ps.user_id=p.id and ps.last_seen_at >= now()-interval '90 seconds') then 'active'
+                     else 'inactive' end as presence_status,
+                count(e.id) filter (where e.stage in ('new','in_process')) as open_tickets
+            from public.members m
+            join public.profiles p on p.id=m.user_id
+            join auth.users u on u.id=m.user_id
+            left join public.guruconnect_enquiries e on e.organisation_id=m.organisation_id and e.assigned_to=m.user_id
+            where m.organisation_id=%s and m.status='active' and m.role in {role_filter}
+            group by m.user_id,m.role,p.display_name,u.email,p.id,p.availability_status,p.final_status,p.final_status_until,p.last_seen_at
+            order by case when m.role='salesperson' then 0 else 1 end, open_tickets asc, p.display_name""", (context.id,))
+    return {"items": [{"id": str(row["user_id"]), "name": row["display_name"] or row["email"], "email": row["email"], "role": row["role"], "openTickets": row["open_tickets"], "presenceStatus": row["presence_status"]} for row in rows]}
+
+
+@router.patch("/{enquiry_id}/assignment")
+async def assign_enquiry(enquiry_id: UUID, body: EnquiryAssignment, request: Request, context: Workspace = Depends(workspace)):
+    if context.role not in {"owner", "salesperson"}:
+        fail("enquiry_assignment_not_allowed", 403)
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.assigned_to=%s or (e.owner_id=%s and e.assigned_to is null)) for update",
+                        (enquiry_id, context.id, context.admin, context.user.id, context.user.id))
+        if not row:
+            fail("enquiry_not_found", 404)
+        target = await one(connection, """select m.user_id,m.role,p.display_name,u.email
+            from public.members m join public.profiles p on p.id=m.user_id join auth.users u on u.id=m.user_id
+            where m.organisation_id=%s and m.user_id=%s and m.status='active' and m.role in ('owner','salesperson')""",
+                           (context.id, body.assigneeId))
+        if not target:
+            fail("enquiry_assignment_not_allowed", 422, "Choose an active owner or salesperson.")
+        if context.role == "salesperson" and target["role"] != "owner":
+            fail("enquiry_assignment_not_allowed", 403, "Salespeople can transfer enquiries to an owner only.")
+        payload = dict(row["payload"] or {})
+        actor = await one(connection, "select display_name from public.profiles where id=%s", (context.user.id,))
+        payload.update({
+            "assignedExecutive": target["display_name"] or target["email"],
+            "assignedSalespersonEmail": target["email"],
+            "followUpOwner": target["display_name"] or target["email"],
+            "forwardedBy": (actor or {}).get("display_name") or "Team",
+        })
+        await connection.execute("""update public.guruconnect_enquiries
+            set assigned_to=%s,payload=%s,unread=true
+            where id=%s and organisation_id=%s""", (target["user_id"], Jsonb(payload), enquiry_id, context.id))
+        source_walkin = payload.get("sourceWalkinId")
+        if source_walkin:
+            try:
+                UUID(str(source_walkin))
+            except ValueError:
+                source_walkin = None
+        if source_walkin:
+            await connection.execute("""update public.guruconnect_walkin_visits
+                set assigned_agent_id=%s,assigned_at=coalesce(assigned_at,clock_timestamp()),
+                    status=case when status in ('Registered','Waiting for Assignment') then 'Assigned' else status end,
+                    assignment_note=%s,updated_at=clock_timestamp()
+                where id=%s and organisation_id=%s""", (target["user_id"], f"Enquiry assigned by {(actor or {}).get('display_name') or 'team'}", source_walkin, context.id))
+        await audit(connection, context, "enquiry.assigned", {"enquiry_id": str(enquiry_id), "assigned_to": str(target["user_id"])})
         saved = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s", (enquiry_id, context.id))
     return serialize_enquiry(saved)
 
@@ -387,7 +470,7 @@ async def track_public_ticket(request: Request, token: str = Query(min_length=16
 @router.get("/{enquiry_id}")
 async def get_enquiry(enquiry_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)",
+        row = await one(connection, SELECT_ENQUIRY + " where e.id=%s and e.organisation_id=%s and (%s or e.assigned_to=%s or (e.owner_id=%s and e.assigned_to is null))",
                         (enquiry_id, context.id, context.admin, context.user.id, context.user.id))
         if not row:
             fail("enquiry_not_found", 404)

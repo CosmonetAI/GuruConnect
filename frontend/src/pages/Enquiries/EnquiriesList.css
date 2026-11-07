@@ -8,7 +8,7 @@
 .enquiry-card {
   position: relative;
   overflow: hidden;
-  min-height: 252px;
+  min-height: 0;
   background: linear-gradient(145deg, #ffffff 0%, #f7fbff 72%, #edf6ff 100%);
   border-radius: 14px;
   padding: 15px;
@@ -17,7 +17,7 @@
   display: flex;
   flex-direction: column;
   gap: 7px;
-  height: 100%;
+  height: auto;
   box-sizing: border-box;
   transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
 }
@@ -65,7 +65,12 @@
 }
 .enquiry-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .enquiry-card-actions .button { padding: 9px 10px; font-size: 12px; }
-.enquiries-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.flow-page-header:has(.enquiries-header-actions) { display: block; }
+.enquiries-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.enquiry-forwarded-by { margin-left: auto; color: #7890a9; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.enquiry-contact-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.enquiry-contact-row p { margin: 0; }
+.enquiry-forwarded-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 7px; border: 1px solid #dbe6f2; border-radius: 999px; color: #59718e; background: #f5f8fc; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .missed-visitors-intro { margin-top: 0; color: #62738c; }
 .missed-visitors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .missed-visitor-card { min-height: 268px; height: 100%; box-sizing: border-box; padding: 13px; border: 1px solid #d8e5f2; border-radius: 13px; background: linear-gradient(145deg, #fff, #f7fbff); box-shadow: 0 6px 16px rgba(26, 66, 104, .06); }
@@ -84,3 +89,12 @@
 @media (max-width: 1180px) { .enquiries-grid, .missed-visitors-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .enquiries-grid, .missed-visitors-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .enquiries-header-actions { width: 100%; } .enquiries-header-actions .button { flex: 1; } .enquiries-grid, .missed-visitors-grid { grid-template-columns: 1fr; } }
+
+/* Enquiry cards stay compact and show the current customer data only. */
+.enquiries-grid { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+.enquiry-card-actions { margin-top: 12px; flex-wrap: nowrap; align-items: stretch; }
+.enquiry-card-actions .button { flex: 1 1 0; min-width: 0; justify-content: center; white-space: nowrap; }
+.enquiry-contact-row { justify-content: space-between; flex-wrap: wrap; }
+.enquiry-forwarded-detail { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.enquiry-detail-label { color: #7890a9; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+@media (max-width: 700px) { .enquiry-card-actions { flex-wrap: wrap; } }

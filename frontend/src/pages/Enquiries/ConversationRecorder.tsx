@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, Square, Upload } from 'lucide-react'
+import { AlertTriangle, Check, FileAudio2, Mic2, Pause, Play, RotateCcw, Square, Upload, Volume2 } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { duration, json, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
@@ -55,9 +55,9 @@ const ConversationRecorder = forwardRef<ConversationRecorderHandle, Conversation
 
 export default ConversationRecorder
 
-const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, onConsentChange, providerReadiness, processingStatus, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
+const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, onConsentChange, providerReadiness, processingStatus, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 15, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
   const { user, workspace, loading, localMode, error: authError } = useOffice()
-  const [consent, setConsent] = useState(false)
+  const [consent, setConsent] = useState(registrationOnly)
   const [phase, setPhase] = useState<Phase>('idle')
   const [capture, setCapture] = useState<CaptureState>(emptyCapture)
   const [file, setFile] = useState<File | null>(null)
@@ -75,6 +75,9 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const active = useRef<RecorderSession | null>(null)
   const abort = useRef<AbortController | null>(null)
   const operationRef = useRef(false)
+  const quietSince = useRef<number | null>(null)
+  const audibleSince = useRef<number | null>(null)
+  const [lowVolumeWarning, setLowVolumeWarning] = useState(false)
   const idRef = useRef<string | null>(initialConversationId || null)
   const notifiedSaved = useRef<string | null>(null)
   const creation = useRef<{ key: string; body: object } | null>(null)
@@ -82,11 +85,31 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const callbacks = useRef({ onConversationChange, onBusyChange, onSaved, onCaptureChange })
   callbacks.current = { onConversationChange, onBusyChange, onSaved, onCaptureChange }
   const captureActive = ['recording', 'paused'].includes(capture.capture)
-  const unfinished = !!conversationId && !saved
+  const hasPendingRecovery = recoveries.some(row => !conversationId || row.conversationId === conversationId)
+  const unfinished = !!conversationId && !saved && (captureActive || capture.saving || capture.samples > 0 || capture.pendingChunks > 0 || !!file || hasPendingRecovery)
   const anotherMemberView = !!user && !!workspace?.member_id && workspace.member_id !== user.id
   const busy = operation || captureActive || capture.saving || (!anotherMemberView && (unfinished || (!!file && !saved)))
   const blocked = loading || !user || !workspace || anotherMemberView
   const meterLevel = Math.min(1, Math.max(0, capture.level * 8))
+
+  useEffect(() => {
+    if (!captureActive || capture.capture === 'paused') {
+      quietSince.current = null
+      audibleSince.current = null
+      setLowVolumeWarning(false)
+      return
+    }
+    const now = Date.now()
+    if (capture.level < 0.3) {
+      audibleSince.current = null
+      if (quietSince.current === null) quietSince.current = now
+      if (now - quietSince.current >= 5000) setLowVolumeWarning(true)
+    } else {
+      quietSince.current = null
+      if (audibleSince.current === null) audibleSince.current = now
+      if (now - audibleSince.current >= 5000) setLowVolumeWarning(false)
+    }
+  }, [capture.capture, capture.level, captureActive])
 
   useImperativeHandle(ref, () => ({
     start: () => startMicrophone(true),
@@ -294,6 +317,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const flowName = registrationOnly ? 'registration' : 'session'
   const status = saved ? (singleAction ? `${flowName.toUpperCase()} ENDED` : 'AUDIO SAVED') : phase === 'preparing' ? `PREPARING ${flowName.toUpperCase()}` : capture.capture === 'paused' ? `${flowName.toUpperCase()} PAUSED` : captureActive ? `${flowName.toUpperCase()} RECORDING` : operation ? `ENDING ${flowName.toUpperCase()}` : singleAction ? 'READY TO START' : 'READY TO ADD AUDIO'
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}${sessionOnly ? ' session-recorder' : ''}`}>
+    {lowVolumeWarning && <div className="low-volume-banner" role="status"><AlertTriangle size={17} /><span><strong>Your microphone sounds quiet.</strong> Please speak a little louder or move closer to the microphone.</span><Volume2 size={17} /></div>}
     <div className={grouped ? 'session-recording-container' : undefined}>
       <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
         {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
@@ -313,7 +337,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
           {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
         </div>
       </div>
-      <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => { setConsent(event.target.checked); onConsentChange?.(event.target.checked) }} /><span>I have permission from all intended participants to record and process this conversation.</span></label></div>
+      {!registrationOnly && <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => { setConsent(event.target.checked); onConsentChange?.(event.target.checked) }} /><span>I have permission from all intended participants to record and process this conversation.</span></label></div>}
       {anotherMemberView && <p role="status">Switch to your own account view to record.</p>}
       {loading && <p role="status">Loading workspace…</p>}
       {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}

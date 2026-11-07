@@ -158,6 +158,7 @@ export default function WalkinDetail() {
           phone: visit.mobileNumber,
           email: visit.email,
           company: visit.companyName,
+          customerType: visit.customerType === 'vendor' ? 'Dealer' : 'Retail',
           assignedExecutive: visit.assignedAgentName ?? '',
           purpose: visit.purpose,
           productOrService: requirements.productOrService || visit.productOrService,
