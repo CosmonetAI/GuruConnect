@@ -566,8 +566,28 @@ async def list_recordings(visit_id: UUID, request: Request, context: Workspace =
     async with request.app.state.db.connection() as connection:
         await visit(connection, context, visit_id)
         rows = await many(connection, """with matches as materialized (
-            select c.* from public.guruconnect_walkin_recordings r
+            select c.*, c.active_version_id as transcript_version_id,
+                   coalesce(active_transcript.turns, '[]'::jsonb) as transcript_turns
+            from public.guruconnect_walkin_recordings r
             join public.conversations c on c.id=r.conversation_id and c.organisation_id=r.organisation_id and c.owner_id=r.owner_id
+            left join lateral (
+              select v.id as version_id,
+                     jsonb_agg(jsonb_build_object(
+                       'id', t.id,
+                       'ordinal', t.ordinal,
+                       'start_seconds', t.start_seconds,
+                       'end_seconds', t.end_seconds,
+                       'source_text', t.source_text,
+                       'english_text', t.english_text,
+                       'source_language', t.source_language,
+                       'speaker_ref', t.speaker_ref,
+                       'speaker_confidence', t.speaker_confidence
+                     ) filter (where t.id is not null) order by t.ordinal) as turns
+              from public.transcript_versions v
+              left join public.transcript_turns t on t.version_id=v.id
+              where v.id=c.active_version_id
+              group by v.id
+            ) active_transcript on true
             where r.organisation_id=%s and r.visit_id=%s and (%s or r.owner_id=%s) and c.deleted_at is null),
             totals as (select count(*) as total from matches), page_rows as (
             select * from matches order by created_at desc,id desc limit %s offset %s)
@@ -575,8 +595,15 @@ async def list_recordings(visit_id: UUID, request: Request, context: Workspace =
                           (context.id, visit_id, context.admin, context.user.id, pageSize, (page - 1) * pageSize))
     # Return only public metadata needed by the review UI, without provider
     # snapshots, hashes, lease values or internal processing configuration.
-    fields = {"id", "customer_name_snapshot", "salesperson_name_snapshot", "title", "created_at", "duration_seconds", "total_samples", "capture_state", "upload_state", "transcription_state", "english_state", "speaker_state", "final_state", "source_language", "owner_id"}
-    return {"items": [{key: value for key, value in row.items() if key in fields} for row in rows if row["id"]], "total": rows[0]["total"], "page": page, "pageSize": pageSize}
+    fields = {"id", "customer_name_snapshot", "salesperson_name_snapshot", "title", "created_at", "duration_seconds", "total_samples", "capture_state", "upload_state", "transcription_state", "english_state", "speaker_state", "final_state", "language_hint", "owner_id", "active_version_id", "transcript_version_id"}
+    items = []
+    for row in rows:
+        if not row["id"]:
+            continue
+        item = {key: value for key, value in row.items() if key in fields}
+        item["transcript"] = row.get("transcript_turns") or []
+        items.append(item)
+    return {"items": items, "total": rows[0]["total"], "page": page, "pageSize": pageSize}
 
 
 @router.post("/{visit_id}/recordings")
