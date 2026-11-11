@@ -328,8 +328,25 @@ class ZohoClient:
     async def list_deleted_bigin_records(self, module, deleted_type='recycle', page=1):
         return await self.request('GET', f'/bigin/v2/{module}/deleted', params={'type': deleted_type, 'page': page, 'per_page': 200})
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
-    async def list_pipeline_records(self, pipeline_id, page=1):
-        fields = 'id,Deal_Name,Stage,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Sub_Pipeline,Pipeline,Description,Created_Time,Modified_Time,Created_By,Modified_By,Last_Activity_Time,Tag,Associated_Products,Secondary_Contacts'
+    async def list_pipeline_records(self, pipeline_id, page=1, layout=None):
+        if layout is None:
+            layout_response = await self.pipeline_layout()
+            layout_rows = layout_response.get('layouts', []) if isinstance(layout_response, dict) else []
+            layout = next((row for row in layout_rows if str(row.get('id')) == str(pipeline_id)), None)
+        field_names = {
+            'id', 'Deal_Name', 'Stage', 'Amount', 'Expected_Revenue',
+            'Probability', 'Closing_Date', 'Next_Step', 'Contact_Name',
+            'Account_Name', 'Owner', 'Sub_Pipeline', 'Pipeline', 'Description',
+            'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By',
+            'Last_Activity_Time', 'Tag', 'Associated_Products',
+            'Secondary_Contacts',
+        }
+        for section in (layout or {}).get('sections', []):
+            for field in section.get('fields', []):
+                api_name = field.get('api_name')
+                if api_name and field.get('visible', True):
+                    field_names.add(api_name)
+        fields = ','.join(sorted(field_names))
         return await self.request('GET','/bigin/v2/Pipelines',params={'pipeline_id': pipeline_id, 'fields': fields, 'per_page': 200, 'page': page, 'sort_by': 'Modified_Time', 'sort_order': 'desc'})
     async def search_pipeline_records(self, query): return await self.request('GET','/bigin/v2/Pipelines/search',params={'word': query})
     async def pipeline_record(self, record_id): return await self.request('GET',f'/bigin/v2/Pipelines/{record_id}')

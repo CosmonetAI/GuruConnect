@@ -1041,6 +1041,7 @@ async def pipeline_from_enquiry(body: dict):
             db.commit()
         return {'record': record, 'contact': contact, 'already_linked': False}
     except Exception as error:
+        log.exception('bigin_enquiry_provision_failed enquiry_id=%s exception_type=%s', enquiry_id, type(error).__name__)
         with require_db() as db:
             db.execute(text("update guruconnect_enquiries set crm_sync_error=:error where id=cast(:enquiry as uuid) and organisation_id=cast(:org as uuid)"),
                        {**scope_parameters(), 'enquiry': enquiry_id, 'error': type(error).__name__})
@@ -1154,13 +1155,6 @@ async def delete_task(task_id: str):
 @app.post('/api/pipelines/sync')
 async def sync_pipelines():
     try:
-        with require_db() as db:
-            last = db.execute(text("""select synced_at from zoho_pipeline_sync
-              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"""), {'org': get_organisation_id(), 'member': get_member_id()}).scalar()
-            if last:
-                age = (now() - last).total_seconds()
-                if age < 3600:
-                    return {'synced': False, 'limited': True, 'last_sync': last.isoformat(), 'next_sync_in_seconds': int(3600-age)}
         layouts = _pipeline_layouts(await zoho.pipeline_layout())
         fetched = []
         for layout in layouts:

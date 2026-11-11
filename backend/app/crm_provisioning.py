@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import logging
+from datetime import date
 from typing import Any
 
 from .crm_lead import find_contacts, normalize_email, normalize_phone, split_name
@@ -94,6 +95,8 @@ async def provision_enquiry_lead(zoho, *, name: str, phone: str = "", email: str
     payload = {
         "Deal_Name": details.get("deal_name") or f"{name.strip() or 'Customer'} - New enquiry",
         "Stage": stage or "New Enquiry",
+        "Sub_Pipeline": details.get("sub_pipeline") or "Sales Pipeline Standard",
+        "Closing_Date": details.get("closing_date") or date.today().isoformat(),
         "Pipeline": {"id": str(pipeline_id)},
         "Contact_Name": {"id": str(contact["id"])},
         "Description": details.get("description") or "Created from ConnectCosmos visitor enquiry",
