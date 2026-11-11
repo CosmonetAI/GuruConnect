@@ -50,7 +50,7 @@ class ZohoClient:
     def status(self):
         c=self._connection()
         if not c: return {'status':'not_connected','connected':False}
-        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
+        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'mail_account_id':c.get('mail_account_id'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
     def configuration(self):
         c=self._connection() or {}
         return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
@@ -100,6 +100,55 @@ class ZohoClient:
                 await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
                 response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
         response.raise_for_status(); return response.json() if response.content else {'ok': True}
+
+    async def mail_accounts(self):
+        """Resolve the Mail account IDs available to this OAuth user."""
+        await self.refresh()
+        connection = self._connection()
+        if not connection or not connection.get('access_token'):
+            raise RuntimeError('Zoho is not connected')
+        domain = str(settings.zoho_mail_api_domain or 'https://mail.zoho.com').rstrip('/')
+        headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/json'}
+        for attempt in range(2):
+            async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+                response = await client.get(f'{domain}/api/accounts', headers=headers)
+            if response.status_code == 401 and attempt == 0:
+                await self.refresh(force=True)
+                connection = self._connection()
+                headers['Authorization'] = f"Zoho-oauthtoken {connection['access_token']}"
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            raw_accounts = payload.get('data') if isinstance(payload, dict) else []
+            accounts = []
+            for account in raw_accounts if isinstance(raw_accounts, list) else []:
+                if not isinstance(account, dict) or not account.get('accountId'):
+                    continue
+                account_id = str(account['accountId'])
+                address = account.get('mailboxAddress') or account.get('incomingUserName') or account.get('primaryEmailAddress') or ''
+                accounts.append({'account_id': account_id, 'email': str(address), 'label': str(account.get('accountDisplayName') or address or account_id)})
+            current = str(connection.get('mail_account_id') or '')
+            ids = {account['account_id'] for account in accounts}
+            selected = current if current in ids else (accounts[0]['account_id'] if len(accounts) == 1 else None)
+            if selected != current:
+                with require_db() as db:
+                    db.execute(text("""update zoho_connections set mail_account_id=:selected,updated_at=now()
+                      where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+                      {'selected': selected, 'org': _organisation_id.get(), 'member': _member_id.get()}); db.commit()
+            return {'mail_accounts': accounts, 'mail_account_id': selected}
+        raise RuntimeError('Zoho Mail account lookup failed')
+
+    async def select_mail_account(self, account_id):
+        self._member()
+        available = await self.mail_accounts()
+        selected = str(account_id or '')
+        if selected not in {account['account_id'] for account in available['mail_accounts']}:
+            raise ValueError('Select a valid Zoho Mail account')
+        with require_db() as db:
+            db.execute(text("""update zoho_connections set mail_account_id=:selected,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'selected': selected, 'org': _organisation_id.get(), 'member': _member_id.get()}); db.commit()
+        return self.status()
 
     async def download_sales_document(self, org, kind, document_id):
         """Download Zoho's authoritative PDF using this member's connection.
@@ -166,26 +215,45 @@ class ZohoClient:
                 await self.refresh(force=True)
         raise RuntimeError('Zoho PDF download failed')
     async def smoke_test(self):
-        result=await self.request('GET','/books/v3/organizations')
-        raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
-        if isinstance(raw_orgs, dict):
-            raw_orgs = raw_orgs.get('organizations') or raw_orgs.get('data') or raw_orgs.get('organization') or [raw_orgs]
-        if isinstance(raw_orgs, dict): raw_orgs = [raw_orgs]
+        current=self._connection() or {}; selected=current.get('organization_id')
+        books_error = None
+        try:
+            result=await self.request('GET','/books/v3/organizations')
+            raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
+            if isinstance(raw_orgs, dict):
+                raw_orgs = raw_orgs.get('organizations') or raw_orgs.get('data') or raw_orgs.get('organization') or [raw_orgs]
+            if isinstance(raw_orgs, dict): raw_orgs = [raw_orgs]
+        except Exception as error:
+            log.warning('zoho_books_organizations_unavailable exception_type=%s', type(error).__name__)
+            raw_orgs = []
+            books_error = 'Zoho Books organization lookup failed. The saved organization will remain available.'
         orgs = []
         for org in raw_orgs if isinstance(raw_orgs, list) else []:
             if not isinstance(org, dict): continue
             org_id = org.get('organization_id') or org.get('id')
             if org_id: orgs.append({**org, 'organization_id': str(org_id), 'organization_name': org.get('organization_name') or org.get('name') or org.get('org_name') or str(org_id)})
-        current=self._connection() or {}; selected=current.get('organization_id')
         ids={str(org.get('organization_id')) for org in orgs if org.get('organization_id')}
         if len(orgs)==1:
-            selected=orgs[0].get('organization_id'); await self.select_organization(selected)
+            only_org = orgs[0].get('organization_id')
+            if str(selected or '') != str(only_org or ''):
+                await self.select_organization(only_org)
+            selected = only_org
         elif orgs and selected not in ids:
             selected=None
         if not orgs and selected:
             orgs=[{'organization_id': str(selected), 'organization_name': 'Selected Books organization'}]
-        log.info('zoho_books_organizations count=%s selected=%s', len(orgs), bool(selected))
-        return {'organizations':orgs,'organization_id':selected}
+        mail_error = None
+        try:
+            mail = await self.mail_accounts()
+        except Exception as error:
+            # A token created before the Mail scopes were added can still read
+            # Books. Keep the working Books selector usable while the UI asks
+            # the owner to reconnect for Mail account access.
+            log.warning('zoho_mail_accounts_unavailable exception_type=%s', type(error).__name__)
+            mail = {'mail_accounts': [], 'mail_account_id': current.get('mail_account_id')}
+            mail_error = 'Zoho Mail account lookup failed. Reconnect Zoho with the Mail account scopes.'
+        log.info('zoho_books_organizations count=%s selected=%s mail_accounts=%s mail_selected=%s', len(orgs), bool(selected), len(mail['mail_accounts']), bool(mail['mail_account_id']))
+        return {'organizations':orgs,'organization_id':selected, 'books_organizations_error': books_error, 'mail_accounts_error': mail_error, **mail}
     async def select_organization(self, organization_id):
         self._member()
         currencies = await self.request('GET', '/books/v3/settings/currencies', params={'organization_id': organization_id})

@@ -20,6 +20,35 @@ from .security import User, Workspace, administrator, conversation, current_user
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("recorder.api")
 
+DOCUMENT_TYPES = ("quote", "invoice", "sales-order", "purchase-order")
+DOCUMENT_ROLES = ("owner", "salesperson")
+
+
+def default_document_permissions(role: str) -> dict[str, dict[str, bool]]:
+    enabled = role in DOCUMENT_ROLES
+    return {document_type: {
+                "create": enabled, "edit": enabled, "delete": enabled,
+                "accept": enabled if document_type == "quote" else False,
+                "mark-paid": enabled if document_type == "invoice" else False,
+            }
+            for document_type in DOCUMENT_TYPES}
+
+
+def merge_document_permissions(rows: list[dict]) -> dict[str, dict[str, dict[str, bool]]]:
+    result = {role: default_document_permissions(role) for role in DOCUMENT_ROLES}
+    for row in rows:
+        role = row.get("role")
+        document_type = row.get("document_type")
+        if role in result and document_type in DOCUMENT_TYPES:
+            result[role][document_type] = {
+                "create": bool(row.get("can_create")),
+                "edit": bool(row.get("can_edit")),
+                "delete": bool(row.get("can_delete")),
+                "accept": bool(row.get("can_accept")) if document_type == "quote" else False,
+                "mark-paid": bool(row.get("can_mark_paid")) if document_type == "invoice" else False,
+            }
+    return result
+
 
 async def audit(connection, context: Workspace, action: str, metadata: dict | None = None, conversation_id=None):
     await connection.execute("insert into audit_events(organisation_id,conversation_id,actor_id,action,metadata) values(%s,%s,%s,%s,%s)", (context.id, conversation_id, context.user.id, action, Jsonb(metadata or {})))
@@ -171,31 +200,11 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
 @router.get("/team")
 async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        await connection.execute("""
-            update profiles p
-            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
-                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
-                final_status_until=null,
-                updated_at=now()
-            where coalesce(p.final_status, p.availability_status)='active'
-              and (p.last_seen_at is null or p.last_seen_at < now()-interval '90 seconds')
-              and not exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds')
-              and exists (select 1 from members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
-        """, (context.id,))
-        await connection.execute("""
-            update profiles p
-            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
-                leave_end_date=null,
-                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
-                final_status_until=null, updated_at=now()
-            where coalesce(p.final_status, p.availability_status)='on_leave'
-              and coalesce(p.final_status_until, p.leave_end_date) < current_date
-              and exists (select 1 from members m where m.organisation_id=%s and m.user_id=p.id and m.status='active')
-        """, (context.id,))
         rows = await many(connection, """
             select m.*,p.display_name,
                    case
-                     when coalesce(p.final_status, p.availability_status) in ('inactive','on_leave') then coalesce(p.final_status, p.availability_status)
+                     when coalesce(p.final_status, p.availability_status)='on_leave' and coalesce(p.final_status_until, p.leave_end_date) >= current_date then 'on_leave'
+                     when coalesce(p.final_status, p.availability_status)='inactive' then 'inactive'
                      when coalesce(p.final_status, p.availability_status)='be_right_back' and p.updated_at > now()-interval '15 minutes' then 'be_right_back'
                    when exists (select 1 from profile_presence_sessions ps where ps.user_id=p.id and ps.last_seen_at >= now()-interval '90 seconds') then 'active'
                      else 'inactive'
@@ -210,6 +219,46 @@ async def team(request: Request, context: Workspace = Depends(administrator)):
         """, (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}
+
+
+@router.get("/role-document-permissions")
+async def role_document_permissions(request: Request, context: Workspace = Depends(administrator)):
+    async with request.app.state.db.connection() as connection:
+        rows = await many(connection, """
+            select role,document_type,can_create,can_edit,can_delete,can_accept,can_mark_paid
+            from role_document_permissions
+            where organisation_id=%s
+        """, (context.id,))
+    return {"roles": merge_document_permissions(rows)}
+
+
+@router.patch("/role-document-permissions/{role}")
+async def update_role_document_permissions(role: str, body: dict, request: Request, context: Workspace = Depends(administrator)):
+    if role not in DOCUMENT_ROLES:
+        fail("invalid_document_role", 422, "Choose a valid workspace role")
+    permissions = body.get("permissions") if isinstance(body, dict) else None
+    if not isinstance(permissions, dict):
+        fail("invalid_document_permissions", 422, "Document permissions are required")
+    clean = {}
+    for document_type in DOCUMENT_TYPES:
+        value = permissions.get(document_type, {})
+        if not isinstance(value, dict):
+            fail("invalid_document_permissions", 422, "Each document permission must be an object")
+        allowed_actions = ("create", "edit", "delete", "accept", "mark-paid")
+        clean[document_type] = {action: bool(value.get(action, False)) for action in allowed_actions}
+        clean[document_type]["accept"] = clean[document_type]["accept"] if document_type == "quote" else False
+        clean[document_type]["mark-paid"] = clean[document_type]["mark-paid"] if document_type == "invoice" else False
+    async with request.app.state.db.connection() as connection:
+        for document_type, value in clean.items():
+            await connection.execute("""
+                insert into role_document_permissions(organisation_id,role,document_type,can_create,can_edit,can_delete,can_accept,can_mark_paid,updated_at)
+                values(%s,%s,%s,%s,%s,%s,%s,%s,now())
+                on conflict (organisation_id,role,document_type) do update set
+                  can_create=excluded.can_create,can_edit=excluded.can_edit,can_delete=excluded.can_delete,
+                  can_accept=excluded.can_accept,can_mark_paid=excluded.can_mark_paid,updated_at=now()
+            """, (context.id, role, document_type, value["create"], value["edit"], value["delete"], value["accept"], value["mark-paid"]))
+        await audit(connection, context, "role.document_permissions.updated", {"role": role, "permissions": clean})
+    return {"role": role, "permissions": clean}
 
 
 async def send_supabase_invite(request: Request, email: str, name: str):

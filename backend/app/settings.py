@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ''
     database_url: str = ''
     zoho_accounts_url: str = 'https://accounts.zoho.com'
+    zoho_mail_api_domain: str = 'https://mail.zoho.com'
     zoho_api_domain: str = 'https://www.zohoapis.com'
     openai_api_key: str = ''
     openai_model: str = 'gpt-4o-mini'

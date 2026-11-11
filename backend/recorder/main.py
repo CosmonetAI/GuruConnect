@@ -13,6 +13,8 @@ from .config import get_settings
 from .connection_routes import router as connection_router
 from .db import Database, one
 from .enquiry_routes import router as enquiry_router
+from .followup_email import internal_router as followup_internal_router
+from .followup_email import router as followup_email_router
 from .internal_routes import router as internal_router
 from .middleware import RequestBoundary, security_headers
 from .recording_routes import router as recording_router
@@ -48,6 +50,7 @@ select
     and to_regclass('public.guruconnect_walkin_agents') is not null
     and to_regclass('public.guruconnect_walkin_recordings') is not null
     and to_regclass('public.guruconnect_missed_visitors') is not null
+    and to_regclass('public.guruconnect_followup_email_deliveries') is not null
     and to_regclass('recorder_private.conversation_requests') is not null
     and to_regprocedure('public.create_workspace(uuid,text)') is not null
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
@@ -168,7 +171,8 @@ def create_app(settings=None, *, allow_local=False):
         except Exception:
             return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
 
-    for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router, walkin_router):
+    for router in (public_router, recording_router, transcript_router, connection_router, internal_router,
+                   enquiry_router, walkin_router, followup_email_router, followup_internal_router):
         app.include_router(router)
     # One backend process serves both products. Existing ConnectCosmos routes
     # remain under /api/v1; the GG sales assistant keeps its /api routes.

@@ -20,6 +20,7 @@ import {
 import type { WalkinAgent, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../../types/walkin'
 import WalkinRecordingPanel from './WalkinRecordingPanel'
 import './Walkins.css'
+import { formatCustomerName } from '../../utils/formatCustomerName'
 import { useOffice } from '../../contexts/OfficeContext'
 import { request, type Page, type Conversation } from '../../services/officeApi'
 
@@ -182,7 +183,7 @@ export default function WalkinDetail() {
       <header className="walkin-header">
         <div>
           <div className="walkin-kicker"><UsersRound size={15} /> VISIT {visit.visitNumber}</div>
-          <h1>{visit.customerName}</h1>
+          <h1>{formatCustomerName(visit.customerName)}</h1>
           <p>{visit.mobileNumber}{visit.companyName ? ` · ${visit.companyName}` : ''}</p>
         </div>
         <span className={`walkin-status large status-${visit.status.toLowerCase().replaceAll(' ', '-')}`}>{visit.status}</span>

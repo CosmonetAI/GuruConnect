@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     azure_translator_region: str = ""
     azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
     app_timezone: str = "Asia/Kolkata"
+    # Used by the server-side Zoho Mail follow-up sender and the Supabase
+    # weekday cron callback. The token itself remains in zoho_connections.
+    zoho_accounts_url: str = "https://accounts.zoho.com"
+    zoho_mail_api_domain: str = "https://mail.zoho.com"
+    zoho_refresh_cron_secret: str = ""
 
     @field_validator("openai_translation_model")
     @classmethod

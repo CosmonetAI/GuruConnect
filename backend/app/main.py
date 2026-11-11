@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from .db import require_db, row_dict, now, sales_workspace, scope_parameters
+from .db import require_db, row_dict, now, sales_workspace, scope_parameters, require_document_permission, document_permission
 from .zoho import zoho, refresh_loop, refresh_all, set_organisation_id, set_member_id, get_organisation_id, get_member_id
 from .chat import get_or_create_customer, get_or_create_customer_sync, run_graph
 from .voice_ai import VoiceConversationOrchestrator
@@ -82,10 +82,7 @@ async def zoho_workspace_scope(request: Request, call_next):
         context = await workspace(parent_request, user, org, member)
         # Voice history/notes do not call Zoho. Every other sales route may
         # invoke the sales agent or integration and requires a sales role.
-        if context.role == 'receptionist' and not (
-            request.url.path.startswith('/api/voice-sessions') or
-            request.url.path.startswith('/api/zoho/')
-        ):
+        if context.role == 'receptionist' and not request.url.path.startswith('/api/voice-sessions'):
             raise HTTPException(403, 'Sales access required')
         token = sales_workspace.set(context)
         set_organisation_id(str(context.id))
@@ -357,11 +354,15 @@ async def zoho_connect(payload:CodeIn):
 @app.post('/api/zoho/organizations')
 async def zoho_organizations():
     try: return await zoho.smoke_test()
-    except Exception: raise HTTPException(502,'Unable to load Zoho Books organizations')
+    except Exception: raise HTTPException(502,'Unable to load Zoho Books organizations or Mail accounts')
 @app.post('/api/zoho/organization')
 async def zoho_organization(payload:OrganizationIn):
     try: return await zoho.select_organization(payload.organization_id)
     except Exception: raise HTTPException(400,'Unable to select Zoho Books organization')
+@app.post('/api/zoho/mail-account')
+async def zoho_mail_account(payload: dict):
+    try: return await zoho.select_mail_account(payload.get('account_id'))
+    except Exception: raise HTTPException(400,'Unable to select Zoho Mail account')
 @app.post('/api/zoho/smoke-test')
 async def zoho_smoke():
     try: return await zoho.smoke_test()
@@ -1354,6 +1355,19 @@ async def purchase_order_options():
     except Exception:
         raise HTTPException(502, 'Unable to load purchase order options')
 
+
+@app.get('/api/role-document-permissions')
+@app.get('/api/v1/role-document-permissions')
+async def current_role_document_permissions():
+    context = sales_workspace.get()
+    if context is None:
+        raise HTTPException(401, 'Authentication required')
+    actions = ('create', 'edit', 'delete', 'accept', 'mark-paid')
+    return {'role': context.role, 'permissions': {
+        document_type: {action: document_permission(document_type, action) for action in actions}
+        for document_type in ('quote', 'invoice', 'sales-order', 'purchase-order')
+    }}
+
 @app.get('/api/purchase-orders/vendors/{vendor_id}')
 async def purchase_order_vendor(vendor_id: str):
     try:
@@ -1470,6 +1484,7 @@ async def quotes(search: str = '', search_text: str = '', date: str = '', page: 
 @app.post('/api/quotes')
 async def create_quote(payload: dict):
     try:
+        require_document_permission('quote', 'create')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
@@ -1530,6 +1545,7 @@ async def email_quote(estimate_id: str, payload: dict | None = None):
 @app.post('/api/quotes/{estimate_id}/accept')
 async def accept_quote(estimate_id: str):
     try:
+        require_document_permission('quote', 'accept')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         try:
@@ -1563,6 +1579,7 @@ async def orders(search: str = '', search_text: str = '', date: str = '', page: 
 @app.post('/api/orders')
 async def create_order(payload: dict):
     try:
+        require_document_permission('sales-order', 'create')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org: raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         if not payload.get('customer_id'): raise HTTPException(422, 'Customer is required')
@@ -1609,6 +1626,7 @@ async def purchase_orders(search: str = '', search_text: str = '', date: str = '
 @app.post('/api/purchase-orders')
 async def create_purchase_order(payload: dict):
     try:
+        require_document_permission('purchase-order', 'create')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org:
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
@@ -1658,6 +1676,7 @@ async def invoices(search: str = '', search_text: str = '', date: str = '', page
 @app.post('/api/invoices')
 async def create_invoice(payload: dict):
     try:
+        require_document_permission('invoice', 'create')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org:
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
@@ -1688,6 +1707,7 @@ async def get_invoice(invoice_id: str):
 @app.post('/api/invoices/{invoice_id}/payments')
 async def create_invoice_payment(invoice_id: str, payload: dict):
     try:
+        require_document_permission('invoice', 'mark-paid')
         status = zoho.status(); org = status.get('organization_id')
         if not status.get('connected') or not org:
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
@@ -1887,39 +1907,51 @@ async def delete_product(item_id: str): return await _delete_books_record(zoho.d
 
 @app.put('/api/quotes/{estimate_id}')
 async def update_quote(estimate_id: str, payload: dict):
+    require_document_permission('quote', 'edit')
     result = await _update_books_record(zoho.update_estimate, estimate_id, payload)
     quote = result.get('estimate') if isinstance(result, dict) else None
     _cache_recent_rows('quotes', [quote] if quote else [])
     return {'quote': quote, 'response': result}
 @app.delete('/api/quotes/{estimate_id}')
-async def delete_quote(estimate_id: str): return await _delete_books_record(zoho.delete_estimate, estimate_id, 'quotes')
+async def delete_quote(estimate_id: str):
+    require_document_permission('quote', 'delete')
+    return await _delete_books_record(zoho.delete_estimate, estimate_id, 'quotes')
 
 @app.put('/api/orders/{salesorder_id}')
 async def update_order(salesorder_id: str, payload: dict):
+    require_document_permission('sales-order', 'edit')
     result = await _update_books_record(zoho.update_sales_order, salesorder_id, payload)
     order = result.get('salesorder') if isinstance(result, dict) else None
     _cache_recent_rows('orders', [order] if order else [])
     return {'order': order, 'response': result}
 @app.delete('/api/orders/{salesorder_id}')
-async def delete_order(salesorder_id: str): return await _delete_books_record(zoho.delete_sales_order, salesorder_id, 'orders')
+async def delete_order(salesorder_id: str):
+    require_document_permission('sales-order', 'delete')
+    return await _delete_books_record(zoho.delete_sales_order, salesorder_id, 'orders')
 
 @app.put('/api/purchase-orders/{purchaseorder_id}')
 async def update_purchase_order(purchaseorder_id: str, payload: dict):
+    require_document_permission('purchase-order', 'edit')
     result = await _update_books_record(zoho.update_purchase_order, purchaseorder_id, payload)
     purchase_order = result.get('purchaseorder') if isinstance(result, dict) else None
     _cache_recent_rows('purchase_orders', [purchase_order] if purchase_order else [])
     return {'purchase_order': purchase_order, 'response': result}
 @app.delete('/api/purchase-orders/{purchaseorder_id}')
-async def delete_purchase_order(purchaseorder_id: str): return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id, 'purchase_orders')
+async def delete_purchase_order(purchaseorder_id: str):
+    require_document_permission('purchase-order', 'delete')
+    return await _delete_books_record(zoho.delete_purchase_order, purchaseorder_id, 'purchase_orders')
 
 @app.put('/api/invoices/{invoice_id}')
 async def update_invoice(invoice_id: str, payload: dict):
+    require_document_permission('invoice', 'edit')
     result = await _update_books_record(zoho.update_invoice, invoice_id, payload)
     invoice = result.get('invoice') if isinstance(result, dict) else None
     _cache_recent_rows('invoices', [invoice] if invoice else [])
     return {'invoice': invoice, 'response': result}
 @app.delete('/api/invoices/{invoice_id}')
-async def delete_invoice(invoice_id: str): return await _delete_books_record(zoho.delete_invoice, invoice_id, 'invoices')
+async def delete_invoice(invoice_id: str):
+    require_document_permission('invoice', 'delete')
+    return await _delete_books_record(zoho.delete_invoice, invoice_id, 'invoices')
 
 @app.put('/api/contacts/{contact_id}')
 async def update_contact(contact_id: str, payload: dict):

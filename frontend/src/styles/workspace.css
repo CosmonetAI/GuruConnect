@@ -17,7 +17,7 @@ h3 { font-size: 16px; }
 input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .app-main { position: relative; min-width: 0; }
 .app-content { width: 100%; max-width: 1392px; padding: 72px 32px 32px; margin: 0 auto; }
-.platform-bar { position: absolute; top: 16px; right: 32px; z-index: 30; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.platform-bar { position: absolute; top: 16px; right: 32px; z-index: 30; display: flex; justify-content: flex-end; align-items: flex-start; gap: 8px; max-width: calc(100% - 64px); flex-wrap: wrap; }
 .availability-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid #bce8cc; border-radius: 999px; background: #e8f8ef; color: #18794e; }
 .availability-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .availability-pill select { appearance: none; border: 0; padding: 0 15px 0 0; background: transparent; color: inherit; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 6px) 50%, 100% 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
@@ -26,9 +26,13 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .availability-pill-inactive { color: #b42318; border-color: #f7c6c2; background: #ffebe9; }
 .availability-pill-on_leave { color: #9a6700; border-color: #f5dc91; background: #fff7db; }
 .availability-pill-be_right_back { color: #1d4ed8; border-color: #cbdcff; background: #eaf1ff; }
-.organisation-id-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 13px; border: 1px solid #dce6f3; border-radius: 999px; background: #fff; color: #526d90; font-size: 11px; box-shadow: 0 2px 8px rgba(26, 66, 104, .05); }
+.organisation-id-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 13px; border: 1px solid #dce6f3; border-radius: 999px; background: #fff; color: #526d90; font-size: 11px; text-decoration: none; box-shadow: 0 2px 8px rgba(26, 66, 104, .05); }
 .organisation-id-pill span { color: #7890ac; font-weight: 700; }
 .organisation-id-pill strong { color: #173d69; font-variant-numeric: tabular-nums; }
+.organisation-id-pill:hover { border-color: #9dbde1; background: #f7fbff; }
+.organisation-slideshow-pill { min-width: 190px; justify-content: space-between; }
+.organisation-pill-slide { display: inline-flex; align-items: center; gap: 8px; animation: organisation-pill-slide-in .28s ease; }
+@keyframes organisation-pill-slide-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .sidebar { position: sticky; top: 0; z-index: 100; height: 100vh; width: 248px; flex: 0 0 248px; background: #102440; padding: 26px 16px; overflow: visible; }
 .sidebar-brand { gap: 10px; padding: 0 4px 28px; }
 .brand-title { font-size: 20px; font-weight: 750; letter-spacing: -.035em; }
@@ -240,14 +244,65 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .settings-form .button { justify-self: start; }
 .settings-account-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 22px; }
 .settings-account-actions button { display: inline-flex; align-items: center; gap: 8px; }
-.team-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #e0e8f4; padding: 14px 0; }
+.team-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 0; padding: 14px 0; }
+.team-row + .team-row { border-top: 1px solid #e0e8f4; }
+.team-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid #e0e8f4; }
+.team-section-heading h2 { margin: 0; }
+.team-section-actions { display: flex; align-items: center; gap: 8px; }
+.team-invite-button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #cbdcff; color: #175cd3; background: #f5f8ff; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.team-invite-button:hover:not(:disabled) { background: #eaf1ff; }
+.team-invite-button:disabled { cursor: not-allowed; opacity: .55; }
 .team-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.team-pills > .team-pill[class*="team-pill-status-"] { display: none; }
+.team-row-actions > .team-pill { display: inline-flex; }
 .team-delete-button { border: 1px solid #f0b8b1; color: #b42318; background: #fff7f6; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .team-delete-button:hover:not(:disabled) { background: #ffebe9; }
 .team-delete-button:disabled { cursor: not-allowed; opacity: .55; }
 .team-resend-button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #b9d2ff; color: #175cd3; background: #f5f8ff; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .team-resend-button:hover:not(:disabled) { background: #eaf1ff; }
 .team-resend-button:disabled { cursor: not-allowed; opacity: .55; }
+.team-configure-button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #b9e1d7; color: #117c67; background: #f1fbf8; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.team-configure-button:hover:not(:disabled) { background: #e6f8f2; }
+.team-configure-button:disabled { cursor: not-allowed; opacity: .55; }
+.role-config-backdrop { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 20px; background: rgba(13, 37, 67, .42); }
+.role-config-modal { width: min(760px, 100%); max-height: min(820px, 92vh); overflow: auto; border: 1px solid #dbe6f2; border-radius: 18px; background: #fff; box-shadow: 0 24px 80px rgba(13, 37, 67, .24); }
+.role-config-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 24px 26px 20px; border-bottom: 1px solid #e6edf5; }
+.role-config-heading small { color: #117c67; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.role-config-heading h2 { margin: 6px 0 5px; color: #17365f; font-size: 23px; }
+.role-config-heading p { margin: 0; color: #71839b; font-size: 13px; }
+.role-config-heading > button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 8px; color: #71839b; background: #f3f7fb; cursor: pointer; }
+.role-config-list { display: grid; gap: 12px; padding: 20px 26px; }
+.role-config-role-tabs { display: flex; gap: 8px; padding: 18px 26px 0; }
+.role-config-role-tabs button { padding: 8px 14px; border: 1px solid #d9e5f0; border-radius: 999px; color: #36516f; background: #fff; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.role-config-role-tabs button.selected { border-color: #9ed8ca; color: #117c67; background: #ecfbf6; }
+.role-config-bulk { display: grid; gap: 14px; margin: 18px 26px 0; padding: 14px; border: 1px solid #dbe7f1; border-radius: 12px; background: #f7fbfe; }
+.role-config-bulk-label { display: block; margin-bottom: 8px; color: #71839b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.role-config-scope-actions, .role-config-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.role-config-scope-actions button, .role-config-bulk-actions button { padding: 7px 10px; border: 1px solid #d3e1ed; border-radius: 8px; color: #36516f; background: #fff; font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
+.role-config-scope-actions button.selected { border-color: #9ed8ca; color: #117c67; background: #eafaf5; }
+.role-config-bulk-actions { padding-top: 10px; border-top: 1px solid #e2ebf3; }
+.role-config-bulk-actions { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+.role-config-bulk-actions span { color: #17365f; font-size: 11px; font-weight: 800; }
+.role-config-bulk-actions > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.role-config-bulk-actions button:first-of-type { border-color: #b9e1d7; color: #117c67; background: #effbf7; }
+.role-config-bulk-actions button:last-of-type { color: #a64a43; background: #fffafa; }
+.role-config-tree { position: relative; display: grid; gap: 12px; padding: 20px 26px; }
+.role-config-tree:before { content: ''; position: absolute; top: 53px; bottom: 42px; left: 37px; border-left: 1px solid #cfe0ec; }
+.role-config-tree-root { position: relative; z-index: 1; width: max-content; padding: 7px 12px; border: 1px solid #cfe0ec; border-radius: 8px; color: #17365f; background: #f5f9fd; font-size: 12px; font-weight: 800; }
+.role-config-tree .role-config-card { position: relative; margin-left: 24px; }
+.role-config-tree .role-config-card:before { content: ''; position: absolute; top: 50%; left: -25px; width: 24px; border-top: 1px solid #cfe0ec; }
+.role-config-card { display: grid; grid-template-columns: minmax(190px, .8fr) minmax(340px, 1.2fr); align-items: center; gap: 22px; padding: 16px; border: 1px solid #e0e9f3; border-radius: 12px; background: #fbfdff; }
+.role-config-card-copy { min-width: 0; }
+.role-config-card h3 { margin: 0 0 4px; color: #17365f; font-size: 15px; }
+.role-config-card p { margin: 0; color: #71839b; font-size: 12px; }
+.role-config-actions { display: grid; gap: 7px; }
+.role-config-actions-label { color: #7890ad; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.role-config-action-grid { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 7px; }
+.role-config-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #d9e5f0; border-radius: 8px; color: #36516f; background: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
+.role-config-toggle input { accent-color: #117c67; }
+.role-config-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 26px 22px; border-top: 1px solid #e6edf5; }
+.invite-modal { width: min(560px, 100%); max-height: min(720px, 92vh); overflow: auto; border: 1px solid #dbe6f2; border-radius: 18px; background: #fff; box-shadow: 0 24px 80px rgba(13, 37, 67, .24); }
+.invite-form { gap: 16px; padding: 22px 26px 26px; }
 .team-member-info { display: grid; gap: 3px; min-width: 0; color: #17365f; }
 .team-member-info strong { font-weight: 650; }
 .team-member-info small { overflow: hidden; color: #7890ad; text-overflow: ellipsis; white-space: nowrap; }
@@ -263,7 +318,8 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .team-pill-status-be_right_back { color: #1d4ed8; background: #eaf1ff; border-color: #cbdcff; }
 .team-pill-status-invited { color: #9a6700; background: #fff7db; border-color: #f5dc91; }
 .team-pill-status-pending, .team-pill-status-not_active { color: #667085; background: #f2f4f7; border-color: #dfe3e8; }
-@media (max-width: 560px) { .team-row { align-items: flex-start; flex-direction: column; }.team-row-actions { justify-content: flex-start; width: 100%; }.team-pills { justify-content: flex-start; } }
+@media (max-width: 700px) { .team-section-actions { margin-top: 0; transform: none; }.role-config-card { grid-template-columns: 1fr; align-items: flex-start; }.role-config-actions { width: 100%; }.role-config-bulk-actions { grid-template-columns: 1fr; gap: 10px; }.role-config-bulk-actions > div { justify-content: flex-start; } }
+@media (max-width: 560px) { .team-section-heading { align-items: flex-start; flex-direction: column; }.team-section-actions { width: 100%; }.team-section-actions button { flex: 1; justify-content: center; }.team-row { align-items: flex-start; flex-direction: column; }.team-row-actions { justify-content: flex-start; width: 100%; }.team-pills { justify-content: flex-start; }.role-config-action-grid { grid-template-columns: 1fr; } }
 .skip-navigation { position: fixed; top: -100px; left: 16px; padding: 12px; border-radius: 8px; background: white; color: #2563eb; z-index: 1100; }
 .skip-navigation:focus { top: 16px; }
 .app-content:focus { outline: none; }

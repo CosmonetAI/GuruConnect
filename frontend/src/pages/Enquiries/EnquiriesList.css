@@ -72,21 +72,69 @@
 .enquiry-contact-row p { margin: 0; }
 .enquiry-forwarded-pill { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 7px; border: 1px solid #dbe6f2; border-radius: 999px; color: #59718e; background: #f5f8fc; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .missed-visitors-intro { margin-top: 0; color: #62738c; }
-.missed-visitors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
-.missed-visitor-card { min-height: 268px; height: 100%; box-sizing: border-box; padding: 13px; border: 1px solid #d8e5f2; border-radius: 13px; background: linear-gradient(145deg, #fff, #f7fbff); box-shadow: 0 6px 16px rgba(26, 66, 104, .06); }
-.missed-visitor-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.missed-visitors-dialog { max-width: 1100px !important; }
+.missed-visitors-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; max-height: calc(100dvh - 220px); overflow-y: auto; padding: 2px 6px 8px 1px; }
+.missed-visitor-card { min-height: 0; height: auto; box-sizing: border-box; padding: 11px; border: 1px solid #d8e5f2; border-radius: 11px; background: linear-gradient(145deg, #fff, #f7fbff); box-shadow: 0 4px 12px rgba(26, 66, 104, .05); }
+.missed-visitor-card { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.missed-visitor-card:hover, .missed-visitor-card:focus-visible { border-color: #8db5da; box-shadow: 0 8px 18px rgba(26, 66, 104, .11); transform: translateY(-1px); outline: none; }
+.missed-visitor-card-heading { display: block; }
+.missed-visitor-card-heading > div { width: 100%; min-width: 0; }
 .missed-visitor-card h3 { margin: 4px 0 0; color: #17385e; font-size: 16px; }
+.missed-visitor-ticket-number { display: block; color: #5b7899; font-size: 10px; font-weight: 700; letter-spacing: .04em; overflow-wrap: anywhere; }
 .missed-visitor-eyebrow { color: #5b7899; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
-.missed-visitor-status { padding: 4px 6px; border-radius: 999px; color: #9a5410; background: #fff3d9; font-size: 9px; font-weight: 800; white-space: normal; text-align: center; }
-.missed-visitor-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; margin: 13px 0 0; }
+.missed-visitor-status { display: inline-flex; margin-top: 8px; padding: 4px 6px; border-radius: 999px; color: #9a5410; background: #fff3d9; font-size: 9px; font-weight: 800; white-space: normal; text-align: center; }
+.missed-visitor-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 9px; margin: 10px 0 0; }
 .missed-visitor-summary div, .missed-visitor-fields div { min-width: 0; }
 .missed-visitor-summary dt, .missed-visitor-fields span { color: #7890a9; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
 .missed-visitor-summary dd { margin: 3px 0 0; color: #17385e; font-size: 11px; overflow-wrap: anywhere; }
-.missed-visitor-fields { display: grid; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #e4edf6; }
+.missed-visitor-reason { grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid #e4edf6; }
+.missed-visitor-fields { display: grid; gap: 6px; max-height: 92px; overflow: auto; margin-top: 11px; padding-top: 10px; border-top: 1px solid #e4edf6; }
 .missed-visitor-fields strong { display: block; margin-top: 3px; color: #36516e; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.missed-visitor-mail { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 14px; padding: 9px 11px; border: 1px solid #bfd5ea; border-radius: 9px; color: #1857a5; background: #f4f9ff; font-size: 12px; font-weight: 750; cursor: pointer; }
+.missed-visitor-mail:hover:not(:disabled) { border-color: #7ea9d6; background: #e9f3ff; }
+.missed-visitor-mail:disabled { cursor: not-allowed; opacity: .58; }
+.missed-ticket-link { padding: 0; border: 0; color: #1857a5; background: transparent; font: inherit; font-size: 11px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.missed-ticket-link:hover { color: #0e3d79; }
+.follow-up-edit-dialog { width: min(520px, calc(100vw - 32px)); }
+.follow-up-edit-intro { margin: 12px 0 2px; color: #62738c; font-size: 13px; }
+.follow-up-edit-form { display: grid; gap: 12px; margin-top: 14px; }
+.follow-up-edit-form label { display: grid; gap: 6px; color: #59718e; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.follow-up-edit-form input { box-sizing: border-box; width: 100%; border: 1px solid #cbdbea; border-radius: 8px; padding: 10px 11px; color: #17385e; background: #fff; font: inherit; font-weight: 400; text-transform: none; letter-spacing: normal; }
+.follow-up-mail-dialog { width: min(620px, calc(100vw - 32px)); }
+.follow-up-mail-form { display: grid; gap: 12px; margin-top: 14px; }
+.follow-up-mail-form label { display: grid; gap: 6px; color: #59718e; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.follow-up-mail-form input, .follow-up-mail-form textarea { box-sizing: border-box; width: 100%; border: 1px solid #cbdbea; border-radius: 8px; padding: 10px 11px; color: #17385e; background: #fff; font-family: inherit; font-size: 13px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; }
+.follow-up-mail-form textarea { resize: vertical; line-height: 1.45; }
+.follow-up-cc-input { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 42px; padding: 5px 7px; border: 1px solid #cbdbea; border-radius: 8px; background: #fff; }
+.follow-up-cc-input:focus-within { border-color: #80aaff; box-shadow: 0 0 0 3px rgba(65, 119, 230, .16); }
+.follow-up-cc-input input { flex: 1 1 150px; width: auto; min-width: 120px; padding: 5px 4px; border: 0; outline: 0; box-shadow: none; }
+.follow-up-cc-pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 6px; border: 1px solid #b8d2f4; border-radius: 999px; color: #1f5b9d; background: #edf5ff; font: inherit; font-size: 11px; font-weight: 500; line-height: 1.15; cursor: pointer; }
+.follow-up-cc-pill span { color: #5d7da5; font-size: 12px; line-height: 1; }
+.follow-up-mail-recipient { margin: 0; color: #62738c; font-size: 13px; }
+.follow-up-mail-recipient strong { color: #17385e; }
+.follow-up-mail-sender { display: grid; gap: 2px; margin: -4px 0 0; color: #62738c; font-size: 13px; }
+.follow-up-mail-sender strong { color: #17385e; }
+.follow-up-mail-sender span { color: #7890a9; font-size: 12px; }
+.follow-up-mail-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.follow-up-mail-sent { display: grid; gap: 10px; margin-top: 18px; color: #62738c; }
+.follow-up-mail-sent strong { color: #17385e; font-size: 18px; }
+.follow-up-mail-sent .button { justify-self: end; }
 .missed-visitors-empty { display: grid; place-items: center; gap: 7px; padding: 48px 20px; color: #6d829a; text-align: center; }
 .missed-visitors-empty strong { color: #17385e; }
-@media (max-width: 1180px) { .enquiries-grid, .missed-visitors-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.missed-visitor-details-dialog { width: min(720px, calc(100vw - 32px)); }
+.missed-visitor-details-title { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.missed-visitor-details-title strong { padding: 5px 8px; border-radius: 999px; color: #9a5410; background: #fff3d9; font-size: 10px; font-weight: 800; line-height: 1.2; }
+.missed-visitor-details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 16px; color: #5b7899; font-size: 12px; }
+.missed-visitor-details-heading strong { padding: 5px 8px; border-radius: 999px; color: #9a5410; background: #fff3d9; font-size: 10px; text-align: center; }
+.missed-visitor-details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 18px; margin: 0; }
+.missed-visitor-details-grid dt, .missed-visitor-details-fields span { color: #7890a9; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.missed-visitor-details-grid dd { margin: 4px 0 0; color: #17385e; font-size: 13px; overflow-wrap: anywhere; }
+.missed-visitor-details-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #e4edf6; }
+.missed-visitor-details-fields strong { display: block; margin-top: 4px; color: #36516e; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.missed-visitor-details-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.missed-visitor-details-actions .missed-visitor-mail { width: auto; margin-top: 0; }
+@media (max-width: 560px) { .missed-visitor-details-grid, .missed-visitor-details-fields { grid-template-columns: 1fr; } .missed-visitor-details-heading { align-items: flex-start; flex-direction: column; } .missed-visitor-details-actions { flex-wrap: wrap; } }
+@media (max-width: 1180px) { .enquiries-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .missed-visitors-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .enquiries-grid, .missed-visitors-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .enquiries-header-actions { width: 100%; } .enquiries-header-actions .button { flex: 1; } .enquiries-grid, .missed-visitors-grid { grid-template-columns: 1fr; } }
 

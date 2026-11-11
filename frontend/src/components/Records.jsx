@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Trash2 } from 'lucide-react';
+import { canDocumentAction } from '../services/documentPermissions';
 import { call } from '../shared/api';
 
 export function ProductValue({ value }) {
@@ -90,10 +92,10 @@ export function ContactCard({ contact }) {
   return <article className="product-card">{saveMessage && <div className="success">{saveMessage}</div>}<div className="product-card-top"><span className="active-label">{sourceLabel}</span><span className="product-sku">{id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Customer record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button><button type="button" className="secondary" onClick={remove}>Delete</button></div>{showDetails && <DetailModalPortal eyebrow={sourceLabel.toUpperCase()} title={name} fields={detailFields} editableKeys={editableKeys} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
 }
 
-const documentKind = type => type === 'Quote' || type === 'quote' ? 'quote' : type === 'Invoice' || type === 'invoice' ? 'invoice' : '';
-const documentId = record => record?.estimate_id || record?.invoice_id || record?.external_id || record?.id;
+const documentKind = type => type === 'Quote' || type === 'quote' ? 'quote' : type === 'Invoice' || type === 'invoice' ? 'invoice' : type === 'Sales order' || type === 'sales-order' ? 'sales-order' : type === 'Purchase order' || type === 'purchase-order' ? 'purchase-order' : '';
+const documentId = record => record?.estimate_id || record?.salesorder_id || record?.purchaseorder_id || record?.invoice_id || record?.external_id || record?.id;
 
-export function DocumentCardActions({ record, type, onRecordUpdate }) {
+export function DocumentCardActions({ record, type, onRecordUpdate, onRecordDelete, permissions }) {
   const kind = documentKind(type || record?.__document_type);
   const id = documentId(record);
   const [busy, setBusy] = useState('');
@@ -104,6 +106,7 @@ export function DocumentCardActions({ record, type, onRecordUpdate }) {
   const [accountError, setAccountError] = useState('');
   const [partialPayment, setPartialPayment] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   if (!kind || !id) return null;
   const refresh = async () => {
     const result = await call(`/${kind === 'quote' ? 'quotes' : 'invoices'}/${id}`);
@@ -111,6 +114,7 @@ export function DocumentCardActions({ record, type, onRecordUpdate }) {
     onRecordUpdate?.(fresh);
     return fresh;
   };
+  const deletePath = kind === 'quote' ? `/quotes/${id}` : kind === 'invoice' ? `/invoices/${id}` : kind === 'sales-order' ? `/orders/${id}` : `/purchase-orders/${id}`;
   const action = async (actionName, options = {}) => {
     if (busy) return;
     setBusy(actionName); setMessage('');
@@ -141,12 +145,27 @@ export function DocumentCardActions({ record, type, onRecordUpdate }) {
     if (partialPayment && (!Number.isFinite(Number(paymentAmount)) || Number(paymentAmount) <= 0)) { setAccountError('Enter the amount received.'); return; }
     void action('paid', { account_id: accountId, ...(partialPayment ? { amount: Number(paymentAmount), amount_applied: Number(paymentAmount) } : {}) });
   };
+  const canEdit = permissions ? canDocumentAction(permissions, kind, 'edit') : true;
+  const canDelete = permissions ? canDocumentAction(permissions, kind, 'delete') : false;
+  const canAccept = permissions ? canDocumentAction(permissions, kind, 'accept') : true;
+  const canMarkPaid = permissions ? canDocumentAction(permissions, kind, 'mark-paid') : true;
+  const removeDocument = async () => {
+    if (busy || !canDelete) return;
+    setBusy('delete'); setMessage('');
+    try { await call(deletePath, { method: 'DELETE' }); onRecordDelete?.(id); }
+    catch (error) { setMessage(error.message || 'Unable to delete this document'); }
+    finally { setBusy(''); setConfirmDeleteOpen(false); }
+  };
   return <>
   <div className={`document-card-actions document-card-actions-${kind}`} onClick={event => event.stopPropagation()}>
-    {kind === 'quote' && <button type="button" className="secondary" onClick={() => void action('accept')} disabled={Boolean(busy)}>{busy === 'accept' ? 'Marking accepted...' : 'Mark accepted'}</button>}
-    {kind === 'invoice' && <><button type="button" className="secondary" onClick={() => void openPaid(false)} disabled={Boolean(busy)}>{busy === 'paid' ? 'Marking paid...' : 'Mark paid'}</button><button type="button" className="secondary" onClick={() => void openPaid(true)} disabled={Boolean(busy)}>Partial payment</button></>}
+    <div className="document-card-primary-actions">
+      {kind === 'quote' && canAccept && <button type="button" className="secondary" onClick={() => void action('accept')} disabled={Boolean(busy)}>{busy === 'accept' ? 'Marking accepted...' : 'Mark accepted'}</button>}
+      {kind === 'invoice' && canMarkPaid && <><button type="button" className="secondary" onClick={() => void openPaid(false)} disabled={Boolean(busy)}>{busy === 'paid' ? 'Marking paid...' : 'Mark paid'}</button><button type="button" className="secondary" onClick={() => void openPaid(true)} disabled={Boolean(busy)}>Partial payment</button></>}
+    </div>
+    {canDelete && <button type="button" className="document-card-delete-action" onClick={() => setConfirmDeleteOpen(true)} disabled={Boolean(busy)} aria-label={`Delete ${String(type || kind).toLowerCase()}`} title="Delete document"><Trash2 size={15} aria-hidden="true" /></button>}
     {message && <span className={/unable|error/i.test(message) ? 'mail-error' : 'mail-success'} role="status">{message}</span>}
   </div>
+  {confirmDeleteOpen && createPortal(<div className="document-delete-backdrop" role="presentation" onClick={() => { if (!busy) setConfirmDeleteOpen(false); }}><section className="document-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="document-delete-title" onClick={event => event.stopPropagation()}><div className="document-delete-icon"><Trash2 size={19} aria-hidden="true" /></div><div><small>DELETE DOCUMENT</small><h3 id="document-delete-title">Delete this {String(type || kind).toLowerCase()}?</h3><p>This action cannot be undone in Zoho Books.</p></div><div className="document-delete-actions"><button type="button" className="secondary" onClick={() => setConfirmDeleteOpen(false)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="document-delete-confirm" onClick={() => void removeDocument()} disabled={Boolean(busy)}>{busy === 'delete' ? 'Deleting…' : 'Delete document'}</button></div></section></div>, document.body)}
   {accountPickerOpen && createPortal(<div className="modal-backdrop" onClick={() => { if (!busy) setAccountPickerOpen(false); }}><form className="product-details-modal" onSubmit={event => { event.preventDefault(); confirmPaid(); }} onClick={event => event.stopPropagation()}>
     <div className="modal-heading"><div><small>ZOHO BOOKS PAYMENT</small><h3>{partialPayment ? 'Record partial payment' : 'Mark invoice paid'}</h3></div><button type="button" onClick={() => setAccountPickerOpen(false)} aria-label="Close account selector">×</button></div>
     <p>Select the cash or bank account that received this invoice payment. {partialPayment ? 'Enter the amount received; Zoho Books will apply it to this invoice.' : 'Zoho Books will apply the invoice’s full outstanding balance.'}</p>
@@ -159,7 +178,7 @@ export function DocumentCardActions({ record, type, onRecordUpdate }) {
   </>;
 }
 
-export function RecordCard({ record, type }) {
+export function RecordCard({ record, type, permissions }) {
   const [current, setCurrent] = useState(record); const [mailing, setMailing] = useState(false); const [mailStatus, setMailStatus] = useState(''); const [showDetails, setShowDetails] = useState(false);
   useEffect(() => setCurrent(record), [record]);
   const title = current.estimate_number || current.salesorder_number || current.purchaseorder_number || current.invoice_number || current.reference_number || current.customer_name || current.customer || current.vendor_name || 'Record';
@@ -170,7 +189,9 @@ export function RecordCard({ record, type }) {
   const send = async () => { if (!id || mailing) return; setMailing(true); setMailStatus(''); try { const recipient = current.email || current.contact_email || current.vendor_email; const emailPayload = recipient ? { to_mail_ids: [recipient], subject: `${title} from ConnectCosmos`, body: `Please find the ${type.toLowerCase()} attached. Reference: ${current.reference_number || title}.` } : {}; await call(emailPath, { method: 'POST', body: JSON.stringify(emailPayload) }); setMailStatus('Email sent'); } catch (e) { setMailStatus(e.message || 'Unable to send email'); } finally { setMailing(false); } };
   const save = async values => { const result = await call(updatePath, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.quote || result.order || result.purchase_order || result.invoice || {}) })); };
   const editable = ['reference_number', 'date', 'due_date', 'expiry_date', 'delivery_date', 'expected_delivery_date', 'notes', 'terms', 'discount', 'shipping_charge', 'adjustment', 'adjustment_description', 'line_items'];
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Commercial record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button>{id && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send'}</button>}<DocumentCardActions record={current} type={type} onRecordUpdate={fresh => setCurrent(old => ({ ...old, ...fresh }))} />{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModalPortal eyebrow={type.toUpperCase()} title={title} fields={fields} editableKeys={editable} onSave={save} onClose={() => setShowDetails(false)} action={id && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
+  const canEdit = permissions ? canDocumentAction(permissions, documentKind(type), 'edit') : true;
+  if (!current) return null;
+  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Commercial record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button>{id && canEdit && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send'}</button>}<DocumentCardActions record={current} type={type} permissions={permissions} onRecordDelete={() => setCurrent(null)} onRecordUpdate={fresh => setCurrent(old => ({ ...old, ...fresh }))} />{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModalPortal eyebrow={type.toUpperCase()} title={title} fields={fields} editableKeys={canEdit ? editable : []} onSave={canEdit ? save : undefined} onClose={() => setShowDetails(false)} action={id && canEdit && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
 }
 
 export function LookupField({ value, onChange, onSearch, options, selected, placeholder, renderOption, required = false }) {

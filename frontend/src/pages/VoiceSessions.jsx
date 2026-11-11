@@ -36,6 +36,7 @@ import { DocumentCardActions } from "../components/Records";
 import { request as recorderRequest } from "../services/officeApi";
 import { useOffice } from "../contexts/OfficeContext";
 import { supabase } from "../services/officeApi";
+import { canDocumentAction, DOCUMENT_TYPES, useDocumentPermissions } from "../services/documentPermissions";
 import "../zoho/styles.css";
 import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
@@ -115,12 +116,12 @@ const documentMatchRank = (record, { customerName, email, phone, priority }) => 
   return 6;
 };
 
-function SessionDocumentsModal({ identity, cart, documentResult, documents, documentSearchState, searchQuery, onSearchQueryChange, documentsError, onOpenDocument, onCreate, onDownload, onClose }) {
+function SessionDocumentsModal({ identity, cart, documentResult, documents, documentSearchState, searchQuery, onSearchQueryChange, documentsError, onOpenDocument, onCreate, onDownload, onClose, permissions, onRecordDelete }) {
   if (typeof document === "undefined") return null;
   return createPortal(<div className="session-documents-modal-backdrop" role="presentation" onClick={onClose}>
     <section className="session-documents-modal" role="dialog" aria-modal="true" aria-label="Documents for this customer" onClick={(event) => event.stopPropagation()}>
       <div className="session-documents-modal-heading"><div className="session-documents-modal-heading-copy"><small>ZOHO BOOKS</small><strong>Documents for {identity.name || "this customer"}</strong></div><SessionDocumentSearchStatus documentSearchState={documentSearchState} /><button type="button" onClick={onClose} aria-label="Close documents"><X size={18} /></button></div>
-      <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={documents} documentSearchState={documentSearchState} searchQuery={searchQuery} onSearchQueryChange={onSearchQueryChange} documentsError={documentsError} onOpenDocument={onOpenDocument} onCreate={onCreate} onDownload={onDownload} />
+      <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={documents} documentSearchState={documentSearchState} searchQuery={searchQuery} onSearchQueryChange={onSearchQueryChange} documentsError={documentsError} onOpenDocument={onOpenDocument} onCreate={onCreate} onDownload={onDownload} permissions={permissions} onRecordDelete={onRecordDelete} />
     </section>
   </div>, document.body);
 }
@@ -393,7 +394,7 @@ function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywo
   );
 }
 
-function SessionDocumentsPanel({ cart, documentResult, documents, documentSearchState, searchQuery, onSearchQueryChange, documentsError, onOpenDocument, onCreate, onDownload }) {
+function SessionDocumentsPanel({ cart, documentResult, documents, documentSearchState, searchQuery, onSearchQueryChange, documentsError, onOpenDocument, onCreate, onDownload, permissions, onRecordDelete }) {
   const [searchInput, setSearchInput] = useState(searchQuery ?? "");
   const document = documentResult?.document;
   const hasCart = cart.length > 0;
@@ -433,7 +434,7 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
               <div className="session-document-record-title"><strong>{documentTitle(record, definition)}</strong>{externalUrl && <a href={externalUrl} download target="_blank" rel="noreferrer" className="session-document-open-link" onClick={(event) => event.stopPropagation()} title="Download from Zoho Books"><Download size={13} />Download</a>}</div>
               <span className="session-document-record-meta">{documentName(record) || "Contact not provided"}</span>
               <span className="session-document-record-meta">{record.date || record.created_time || "Date not provided"}{record.status ? ` · ${String(record.status).replaceAll("_", " ")}` : ""}{record.total != null ? ` · ${record.currency_symbol || "₹"}${Number(record.total).toLocaleString("en-IN")}` : ""}</span>
-              <DocumentCardActions record={record} type={definition.type} />
+              <DocumentCardActions record={record} type={definition.type} permissions={permissions} onRecordDelete={() => onRecordDelete?.(record)} />
             </article>
             {record === documents[0] && createdDocumentCard}
           </Fragment>;
@@ -441,7 +442,7 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
         {!documents.length && createdDocumentCard}
       </div>}
       {searchItems.length > 0 && searchItems.every(({ state }) => state.status !== "searching") && !documentsError && documents.length === 0 && <p className="session-documents-empty-search">No matching Zoho Books documents found for this customer.</p>}
-      {!document && hasCart ? <div className="session-document-card session-document-empty">
+      {!document && hasCart && DOCUMENT_TYPES.some(type => canDocumentAction(permissions, type, "create")) ? <div className="session-document-card session-document-empty">
         <div>
           <strong>Ready to create a document</strong>
           <span>{cart.length} product{cart.length === 1 ? "" : "s"} selected in the cart.</span>
@@ -592,6 +593,7 @@ export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, workspace, localMode, setCaptureBusy } = useOffice();
+  const { permissions: documentPermissions } = useDocumentPermissions();
   const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
     name: searchParams.get("name") || "",
@@ -651,7 +653,6 @@ export default function VoiceSessions() {
   const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
   const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
   const documentDrafts = useRef(new Map());
-  const crmWarmScope = useRef("");
   currentDocumentScope.current = `${user?.id}:${workspace?.id}:${workspace?.member_id || user?.id}:${session}`;
   const [recorderGeneration, setRecorderGeneration] = useState(0);
   const [captureBusy, setRecorderBusy] = useState(false);
@@ -703,6 +704,9 @@ export default function VoiceSessions() {
   const captureRef = useRef(captureState); captureRef.current = captureState;
   const catalogueSearch = useRef(0);
   const refreshLive = useRef(null);
+  const documentInitialSearchSession = useRef(null);
+  const documentSearchInFlight = useRef(false);
+  const documentLastSearchToken = useRef(0);
   const contextSaves = useRef(new Map());
   const blocker = useBlocker(navigationBusy);
   useEffect(() => { if (blocker.state === 'blocked') { setError('Please wait for this action to finish. Your recording can continue while you move between pages.'); blocker.reset(); } }, [blocker]);
@@ -719,10 +723,14 @@ export default function VoiceSessions() {
     try { return await call(path, { ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || user?.id } }, workspace?.id); }
     finally { controllers.current.delete(controller); }
   };
-  // Warm the customer document cache when the session opens. The Documents tab
-  // only reads this state; changing tabs must not restart the four Zoho searches.
+  // Load once when a contact opens, then refresh once whenever Documents is
+  // opened. Changing other tabs does not restart the Zoho searches.
   useEffect(() => {
     if (!session) return undefined;
+    const initialSearch = documentInitialSearchSession.current !== session;
+    const refreshSearch = documentRefreshToken !== documentLastSearchToken.current;
+    if (!initialSearch && !refreshSearch) return undefined;
+    if (documentSearchInFlight.current) return undefined;
     const customerName = String(identity.name || selectedContact?.name || "").trim();
     const ticket = selection.current;
     let cancelled = false;
@@ -738,6 +746,8 @@ export default function VoiceSessions() {
       setSessionDocumentQuery(customerName);
       return undefined;
     }
+    if (initialSearch) documentInitialSearchSession.current = session;
+    documentLastSearchToken.current = documentRefreshToken;
     const query = sessionDocumentQuery.trim();
     if (!query) {
       setSessionDocuments([]);
@@ -745,11 +755,9 @@ export default function VoiceSessions() {
       setSessionDocumentsBusy(false);
       return undefined;
     }
-    const nameParts = customerName.split(/\s+/).filter(Boolean);
-    const terms = query === customerName
-      ? [...new Set([customerName, nameParts[0], nameParts.length > 1 ? nameParts[nameParts.length - 1] : ""].filter(Boolean))]
-      : [query];
+    const terms = [query];
     const contactMatch = { customerName, email: identity.email, phone: identity.phone };
+    documentSearchInFlight.current = true;
     const hasDocumentCache = sessionDocuments.length > 0 || Object.keys(sessionDocumentSearchState).length > 0;
     if (!hasDocumentCache) setSessionDocuments([]);
     setSessionDocumentSearchState(Object.fromEntries(sessionDocumentDefinitions.map((definition) => [definition.type, { status: "searching", count: 0, refresh: documentRefreshToken > 0 }])));
@@ -780,27 +788,11 @@ export default function VoiceSessions() {
       }
     };
     const searchTimer = window.setTimeout(() => { void Promise.all(sessionDocumentDefinitions.map(loadDefinition)).finally(() => {
+      documentSearchInFlight.current = false;
       if (currentSearch()) setSessionDocumentsBusy(false);
     }); }, 260);
     return () => { cancelled = true; window.clearTimeout(searchTimer); };
   }, [session, identity.name, selectedContact?.name, sessionDocumentQuery, documentRefreshToken]);
-
-  // Warm Bigin once per opened session as well. CrmLeadPanel reuses the
-  // in-flight/result cache when the salesperson opens the CRM Lead tab.
-  useEffect(() => {
-    if (!session) return undefined;
-    const phone = identity.phone || selectedContact?.phone || "";
-    const email = identity.email || selectedContact?.email || "";
-    const name = identity.name || selectedContact?.name || "";
-    if (!phone && !email && !name) return undefined;
-    const warmScope = `${workspace?.id}|${session}|${name}|${phone}|${email}`;
-    if (crmWarmScope.current === warmScope) return undefined;
-    crmWarmScope.current = warmScope;
-    const query = new URLSearchParams({ name, phone, email }).toString();
-    const key = `${workspace?.id}|${session}|${query}`;
-    void loadCrmLead(key, query, workspace?.id, true).catch(() => {});
-    return undefined;
-  }, [session, workspace?.id, identity.name, identity.phone, identity.email, selectedContact?.name, selectedContact?.phone, selectedContact?.email]);
   const openSessionDocument = async (record) => {
     const definition = sessionDocumentDefinitions.find((item) => item.type === record.__document_type);
     const id = definition && record[definition.idKey];
@@ -872,7 +864,7 @@ export default function VoiceSessions() {
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
     setCart([]); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
-    setActiveTab("conversation"); setSessionDocuments([]); setSessionDocumentSearchState({}); setSessionDocumentQuery(null); setSessionDocumentsError(""); setSessionDocumentDetailsBusy(false); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); setArchivedConversationId(null);
+    setActiveTab("conversation"); setSessionDocuments([]); setSessionDocumentSearchState({}); setSessionDocumentQuery(null); setDocumentRefreshToken(0); documentInitialSearchSession.current = null; documentSearchInFlight.current = false; documentLastSearchToken.current = 0; setSessionDocumentsError(""); setSessionDocumentDetailsBusy(false); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); setArchivedConversationId(null);
     setCartProductSearchOpen(false); setViewProduct(null); setCartSearchError("");
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
   };
@@ -1140,8 +1132,8 @@ export default function VoiceSessions() {
     };
   }, [customerType]);
   useEffect(() => {
-    if (session) void resolveDocumentContact();
-  }, [session, identity.phone, identity.email, selectedContact?.customerType, selectedContact?.customer_type]);
+    if (session && activeTab === "documents") void resolveDocumentContact();
+  }, [session, activeTab, identity.phone, identity.email]);
   useEffect(() => {
     if (!session || !conversationId || !workspace) return;
     const controller = new AbortController();
@@ -1261,7 +1253,8 @@ export default function VoiceSessions() {
     try {
       const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
       if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
-      const supportedTypes = (options.document_types || []).filter((type) => customerType === "dealer" ? type === "purchase-order" : ["invoice", "quote", "sales-order"].includes(type));
+      const availableTypes = sourceDocumentId ? (options.document_edit_types || options.document_types || []) : (options.document_create_types || options.document_types || []);
+      const supportedTypes = availableTypes.filter((type) => customerType === "dealer" ? type === "purchase-order" : ["invoice", "quote", "sales-order"].includes(type));
       if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
       const customer = { ...identity, ...(options.customer || {}) };
       const snapshot = { scope, session: selectedSession, cart: lines, options: { ...options, customer, document_types: supportedTypes }, sourceDocumentType, sourceDocumentId, sourceDocumentNumber, result: null };
@@ -1571,7 +1564,7 @@ export default function VoiceSessions() {
                 <button type="button" onClick={() => setCustomerOpen(true)}><UserRound size={15} />Customer details</button>
                 <button type="button" className={activeTab === "context" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "context" ? "conversation" : "context")}><BookUser size={15} />Enquiry context</button>
                 <button type="button" className={activeTab === "history" ? "selected" : ""} onClick={() => setActiveTab(activeTab === "history" ? "conversation" : "history")}><Headphones size={15} />Recordings ({recorderSessions.length})</button>
-                <button type="button" className={activeTab === "documents" ? "selected" : ""} onClick={() => { if (activeTab !== "documents") setDocumentRefreshToken((value) => value + 1); setActiveTab(activeTab === "documents" ? "conversation" : "documents"); }}><FileText size={15} />Documents</button>
+                <button type="button" className={activeTab === "documents" ? "selected" : ""} onClick={() => { if (activeTab !== "documents") { if (!documentSearchInFlight.current) setDocumentRefreshToken((value) => value + 1); setActiveTab("documents"); } else setActiveTab("conversation"); }}><FileText size={15} />Documents</button>
                 <button type="button" className={activeTab === "lead" ? "selected" : ""} onClick={() => { if (activeTab !== "lead") { crmRefreshVersion += 1; setCrmRefreshToken((value) => value + 1); } setActiveTab(activeTab === "lead" ? "conversation" : "lead"); }}><Columns3 size={15} />CRM lead</button>
               </nav>
             </>
@@ -1591,7 +1584,7 @@ export default function VoiceSessions() {
           {session && <>
             {activeTab !== "conversation" && activeTab !== "documents" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : activeTab === "lead" ? "CRM lead details" : "Enquiry context"}>
               <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : activeTab === "documents" ? "Documents" : activeTab === "lead" ? "CRM lead" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} permissions={documentPermissions} onRecordDelete={(record) => setSessionDocuments(current => current.filter(item => item !== record))} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
@@ -1627,7 +1620,7 @@ export default function VoiceSessions() {
               <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={15} grouped sessionOnly />
             </LiveSessionWorkspace>
             {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
-            {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} />}
+            {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} permissions={documentPermissions} onRecordDelete={(record) => setSessionDocuments(current => current.filter(item => item !== record))} />}
           </>}
         </section>
       </div>

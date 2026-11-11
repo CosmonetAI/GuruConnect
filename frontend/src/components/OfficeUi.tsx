@@ -95,7 +95,7 @@ export function OfficeStatus({ value }: { value?: string | null }) {
   return <span className={`office-status office-status-${tone}`}>{text.replaceAll('_', ' ')}</span>
 }
 
-export function OfficeDialog({ title, children, close, busy = false, className = '' }: { title: string; children: ReactNode; close: () => void; busy?: boolean; className?: string }) {
+export function OfficeDialog({ title, children, close, busy = false, className = '' }: { title: ReactNode; children: ReactNode; close: () => void; busy?: boolean; className?: string }) {
   const id = useId()
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(close)

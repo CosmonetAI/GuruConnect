@@ -179,8 +179,20 @@ class SalesDocumentService:
             status = await asyncio.to_thread(self.zoho.status)
             if not status.get('connected') or not status.get('organization_id'):
                 raise HTTPException(409, 'Connect the salesperson’s Zoho Books account and select an organization first.')
+        if self.demo:
+            document_types = list(self.TYPES)
+            create_types = list(self.TYPES)
+            edit_types = list(self.TYPES)
+        else:
+            from .db import current_workspace, document_permission
+            current_workspace()
+            document_types = [document_type for document_type in self.TYPES
+                              if document_permission(document_type, 'create') or document_permission(document_type, 'edit')]
+            create_types = [document_type for document_type in self.TYPES if document_permission(document_type, 'create')]
+            edit_types = [document_type for document_type in self.TYPES if document_permission(document_type, 'edit')]
         return {'mode': 'local-demo' if self.demo else 'zoho', 'customer': self.customer,
-                'customer_type': 'customer', 'document_types': list(self.TYPES),
+                'customer_type': 'customer', 'document_types': document_types,
+                'document_create_types': create_types, 'document_edit_types': edit_types,
                 'email': {'provider': 'zoho_books', 'configured': not self.demo}}
 
     async def _lines(self, lines, org):
@@ -425,7 +437,11 @@ def install_sales_document_routes(app, service_factory):
     async def create(session_id: UUID, body: SalesDocumentInput, idempotency_key: str | None = Header(default=None)):
         if idempotency_key and idempotency_key != str(body.request_id):
             raise HTTPException(409, 'The action key does not match this request.')
-        return await (await service(session_id)).create(body)
+        workflow = await service(session_id)
+        if not workflow.demo:
+            from .db import require_document_permission
+            require_document_permission(body.type, 'edit' if body.source_document_id else 'create')
+        return await workflow.create(body)
 
     @app.post('/api/voice-sessions/{session_id}/sales-documents/{document_id}/email')
     async def email(session_id: UUID, document_id: UUID, body: DocumentEmailInput):

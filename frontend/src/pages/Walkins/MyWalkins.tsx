@@ -7,6 +7,7 @@ import { useOffice } from '../../contexts/OfficeContext'
 import PageLoader from '../../components/PageLoader'
 import WalkinPagination from './WalkinPagination'
 import './Walkins.css'
+import { formatCustomerName } from '../../utils/formatCustomerName'
 
 export default function MyWalkins() {
   const { workspace } = useOffice()
@@ -89,7 +90,7 @@ export default function MyWalkins() {
               <thead><tr><th>Customer / reference</th><th>Purpose</th><th>Checked in</th><th>Assigned</th><th>Waiting</th><th>Status</th><th /></tr></thead>
               <tbody>{visits.map((visit) => (
                 <tr key={visit.id}>
-                  <td><Link className="walkin-customer-link" to={`/walkins/${visit.id}`}>{visit.customerName}</Link><small>{visit.visitNumber} · {visit.mobileNumber}</small></td>
+                  <td><Link className="walkin-customer-link" to={`/walkins/${visit.id}`}>{formatCustomerName(visit.customerName)}</Link><small>{visit.visitNumber} · {visit.mobileNumber}</small></td>
                   <td>{visit.purpose}</td>
                   <td>{new Date(visit.checkInAt).toLocaleString()}</td>
                   <td>{visit.assignedAt ? new Date(visit.assignedAt).toLocaleString() : '—'}</td>

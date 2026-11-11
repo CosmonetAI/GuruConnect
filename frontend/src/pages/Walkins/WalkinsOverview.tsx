@@ -7,6 +7,7 @@ import { useOffice } from '../../contexts/OfficeContext'
 import PageLoader from '../../components/PageLoader'
 import WalkinPagination from './WalkinPagination'
 import './Walkins.css'
+import { formatCustomerName } from '../../utils/formatCustomerName'
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -103,7 +104,7 @@ export default function WalkinsOverview() {
               <thead><tr><th>Visit / Customer</th><th>Purpose</th><th>Checked in</th><th>Waiting</th><th>Sales agent</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>{visits.map((visit) => (
                 <tr key={visit.id}>
-                  <td><Link className="walkin-customer-link" to={`/walkins/${visit.id}`}>{visit.customerName}</Link><small>{visit.visitNumber} · {visit.mobileNumber}</small></td>
+                  <td><Link className="walkin-customer-link" to={`/walkins/${visit.id}`}>{formatCustomerName(visit.customerName)}</Link><small>{visit.visitNumber} · {visit.mobileNumber}</small></td>
                   <td>{visit.purpose}</td>
                   <td>{formatDate(visit.checkInAt)}</td>
                   <td>{waitingTime(visit.checkInAt)}</td>

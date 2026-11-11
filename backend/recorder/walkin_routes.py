@@ -262,6 +262,29 @@ class StatusChange(Versioned):
     status: Status
 
 
+class ContactChange(Versioned):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    customerName: Annotated[str, Field(min_length=2, max_length=150)]
+    mobileNumber: Annotated[str, Field(min_length=7, max_length=20)]
+    email: Annotated[str, Field(max_length=320)] = ""
+
+    _safe_text = field_validator("*", mode="before")(safe_text)
+
+    @field_validator("mobileNumber")
+    @classmethod
+    def valid_phone(cls, value):
+        if not re.fullmatch(r"\+?[0-9().\-\s]{7,20}", value) or not 7 <= len(re.sub(r"\D", "", value)) <= 15:
+            raise ValueError("Enter a valid mobile number")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        if value and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("Enter a valid email address")
+        return value
+
+
 class Requirement(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     detailedRequirement: Annotated[str, Field(max_length=10000)] = ""
@@ -641,14 +664,24 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
     async with request.app.state.db.connection() as connection:
         await rollup_missed_visitors(connection)
         rows = await many(connection, """
-            select m.*, p.display_name as assigned_agent_name,
-                   e.daily_sequence, e.ticket_day
+            select m.*, v.updated_at as visit_updated_at, p.display_name as assigned_agent_name,
+                   e.daily_sequence, e.ticket_day,
+                   latest_followup.sent_at as last_follow_up_sent_at,
+                   latest_followup.source as last_follow_up_source
             from public.guruconnect_missed_visitors m
             left join public.profiles p on p.id=m.assigned_agent_id
             left join public.guruconnect_walkin_visits v
               on v.id=m.visit_id and v.organisation_id=m.organisation_id
             left join public.guruconnect_enquiries e
               on e.id=v.converted_enquiry_id and e.organisation_id=v.organisation_id
+            left join lateral (
+              select d.sent_at, d.source
+              from public.guruconnect_followup_email_deliveries d
+              where d.organisation_id=m.organisation_id and d.visit_id=m.visit_id
+                and d.status='sent'
+              order by d.sent_at desc nulls last, d.created_at desc
+              limit 1
+            ) latest_followup on true
             where m.organisation_id=%s
               and m.expires_at > now()
               and (%s or m.member_id=%s or m.registered_by=%s or m.assigned_agent_id=%s)
@@ -660,8 +693,18 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
             limit 200
         """, (context.id, context.admin, context.user.id, context.user.id, context.user.id))
         followups = await many(connection, """select e.id,e.customer_name,e.phone,e.payload,e.created_at,
-                    e.assigned_to,e.follow_up_required
+                    e.assigned_to,e.follow_up_required,
+                    latest_followup.sent_at as last_follow_up_sent_at,
+                    latest_followup.source as last_follow_up_source
              from public.guruconnect_enquiries e
+             left join lateral (
+               select d.sent_at, d.source
+               from public.guruconnect_followup_email_deliveries d
+               where d.organisation_id=e.organisation_id
+                 and d.visit_id=e.id and d.status='sent'
+               order by d.sent_at desc nulls last, d.created_at desc
+               limit 1
+             ) latest_followup on true
              where e.organisation_id=%s and e.follow_up_required
                and e.stage <> 'closed'
                and (%s or e.assigned_to=%s or e.owner_id=%s)
@@ -681,8 +724,11 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
         "email": row["email"], "purpose": row["purpose"], "payload": row["payload"],
         "assignedAgentName": row["assigned_agent_name"] or "Salesperson",
         "checkInAt": row["check_in_at"].isoformat(), "missedAt": row["missed_at"].isoformat(),
+        "updatedAt": row["visit_updated_at"].isoformat() if row.get("visit_updated_at") else row["check_in_at"].isoformat(),
         "expiresAt": row["expires_at"].isoformat(),
-        "followUp": False, "reason": "Walked in · no session started",
+        "lastFollowUpSentAt": row["last_follow_up_sent_at"].isoformat() if row.get("last_follow_up_sent_at") else None,
+        "lastFollowUpSource": row.get("last_follow_up_source"),
+        "followUp": False, "reason": "Session not started",
     } for row in rows]
     items.extend({
         "id": f"followup:{row['id']}", "visitId": str(row["id"]), "visitNumber": "Follow-up enquiry",
@@ -692,8 +738,11 @@ async def list_missed_visitors(request: Request, context: Workspace = Depends(wo
         "purpose": (row["payload"] or {}).get("notes") or "No business intent detected",
         "assignedAgentName": (row["payload"] or {}).get("assignedExecutive") or "Salesperson",
         "checkInAt": row["created_at"].isoformat(), "missedAt": row["created_at"].isoformat(),
-        "expiresAt": (row["created_at"] + timedelta(days=14)).isoformat(), "payload": row["payload"] or {}, "followUp": True,
-        "reason": "Nothing fruitful captured",
+        "expiresAt": (row["created_at"] + timedelta(days=14)).isoformat(),
+        "lastFollowUpSentAt": row["last_follow_up_sent_at"].isoformat() if row.get("last_follow_up_sent_at") else None,
+        "lastFollowUpSource": row.get("last_follow_up_source"),
+        "payload": row["payload"] or {}, "followUp": True,
+        "reason": "Nothing useful detected",
     } for row in followups)
     return {"items": items}
 
@@ -703,6 +752,52 @@ async def get_visit(visit_id: UUID, request: Request, context: Workspace = Depen
     async with request.app.state.db.connection() as connection:
         row = await visit(connection, context, visit_id)
     return serialize_visit(row)
+
+
+@router.patch("/{visit_id}/contact")
+async def update_contact(visit_id: UUID, body: ContactChange, request: Request,
+                         context: Workspace = Depends(workspace)):
+    async with request.app.state.db.connection() as connection:
+        row = await visit(connection, context, visit_id, lock=True)
+        if row["status"] in CLOSED:
+            fail("walkin_closed", 409)
+        missed = await one(connection, """
+            select id from public.guruconnect_missed_visitors m
+            where m.organisation_id=%s and m.visit_id=%s and m.expires_at > now()
+              and (%s or m.member_id=%s or m.registered_by=%s or m.assigned_agent_id=%s)
+              and not exists (
+                select 1 from public.guruconnect_walkin_recordings r
+                where r.organisation_id=m.organisation_id and r.visit_id=m.visit_id
+              )
+        """, (context.id, visit_id, context.admin, context.user.id, context.user.id, context.user.id))
+        if not missed:
+            fail("follow_up_not_found", 404, "This missed visitor is no longer available")
+        check_version(row, body.expectedUpdatedAt)
+        payload = dict(row.get("payload") or {})
+        payload.update(customerName=body.customerName, mobileNumber=body.mobileNumber, email=body.email)
+        await connection.execute("""
+            update public.guruconnect_walkin_visits
+               set customer_name=%s, mobile_number=%s, payload=%s, updated_at=clock_timestamp()
+             where id=%s and organisation_id=%s
+        """, (body.customerName, body.mobileNumber, Jsonb(payload), visit_id, context.id))
+        await connection.execute("""
+            update public.guruconnect_missed_visitors
+               set customer_name=%s, mobile_number=%s, email=%s, payload=%s
+             where organisation_id=%s and visit_id=%s
+        """, (body.customerName, body.mobileNumber, body.email, Jsonb(payload), context.id, visit_id))
+        if row.get("converted_enquiry_id"):
+            await connection.execute("""
+                update public.guruconnect_enquiries
+                   set customer_name=%s, phone=%s,
+                       payload=jsonb_set(jsonb_set(jsonb_set(payload,'{customerName}',to_jsonb(%s::text),true),'{phone}',to_jsonb(%s::text),true),'{email}',to_jsonb(%s::text),true)
+                 where organisation_id=%s and id=%s
+            """, (body.customerName, body.mobileNumber, body.customerName, body.mobileNumber,
+                   body.email, context.id, row["converted_enquiry_id"]))
+        await history(connection, context, row, "Contact details changed",
+                      old_value=row["customer_name"],
+                      new_value=body.customerName)
+        saved = await visit(connection, context, visit_id)
+    return serialize_visit(saved)
 
 
 @router.patch("/{visit_id}/assignment")

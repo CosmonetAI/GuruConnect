@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from contextvars import ContextVar
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 from .settings import settings
@@ -53,3 +53,36 @@ def scope_parameters():
     context = current_workspace()
     return {'org': str(context.id), 'member': str(context.member_id),
             'actor': str(context.user.id), 'admin': context.admin}
+
+
+DOCUMENT_TYPES = ('quote', 'invoice', 'sales-order', 'purchase-order')
+
+
+def document_permission(document_type: str, action: str) -> bool:
+    """Return the configured role permission, with safe role defaults."""
+    context = current_workspace()
+    if document_type not in DOCUMENT_TYPES or action not in {'create', 'edit', 'delete', 'accept', 'mark-paid'}:
+        return False
+    if context.role == 'receptionist':
+        default = False
+    else:
+        default = True
+    with require_db() as db:
+        row = db.execute(text('''
+            select can_create,can_edit,can_delete
+            from role_document_permissions
+            where organisation_id=cast(:org as uuid) and role=:role and document_type=:document_type
+        '''), {'org': str(context.id), 'role': context.role, 'document_type': document_type}).mappings().first()
+    return bool(row[action_map(action)]) if row else default
+
+
+def require_document_permission(document_type: str, action: str) -> None:
+    if not document_permission(document_type, action):
+        raise HTTPException(403, {
+            'code': 'document_permission_denied',
+            'message': f'{action.title()} access is disabled for this role on {document_type.replace("-", " ")}.',
+        })
+
+
+def action_map(action: str) -> str:
+    return {'create': 'can_create', 'edit': 'can_edit', 'delete': 'can_delete', 'accept': 'can_accept', 'mark-paid': 'can_mark_paid'}[action]
