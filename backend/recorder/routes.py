@@ -192,6 +192,47 @@ async def analytics(
             from guruconnect_enquiries e
             where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
         """, enquiry_scope_args + (window_start, window_end))
+        performance = await many(connection, """
+            select m.user_id as "userId",
+                   coalesce(p.display_name, 'Unassigned') as name,
+                   (select count(*) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as calls,
+                   (select count(*) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.final_state='complete' and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as conversations,
+                   (select count(*) from guruconnect_enquiries e where e.organisation_id=m.organisation_id
+                     and e.follow_up_required and (e.owner_id=m.user_id or e.assigned_to=m.user_id)
+                     and e.created_at >= %s and e.created_at < %s) as pending,
+                   (select coalesce(sum(c.duration_seconds), 0) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as "activeTime",
+                   (select count(*) from guruconnect_enquiries e where e.organisation_id=m.organisation_id
+                     and e.stage='closed' and (e.owner_id=m.user_id or e.assigned_to=m.user_id)
+                     and e.created_at >= %s and e.created_at < %s) as won
+            from members m
+            left join profiles p on p.id=m.user_id
+            where m.organisation_id=%s and m.status='active'
+                and (%s or m.user_id=%s)
+                and m.role in ('owner', 'admin', 'salesperson')
+            order by name
+        """, (window_start, window_end, window_start, window_end, window_start, window_end,
+              window_start, window_end, window_start, window_end, context.id, scoped_all, scope_user))
+        call_activity = await many(connection, f"""
+            with periods as (
+                select date_trunc('{bucket}', c.created_at) as period,
+                       count(*) as calls,
+                       count(*) filter (where c.final_state='complete') as conversations,
+                       coalesce(sum(c.duration_seconds), 0) as duration
+                from conversations c
+                where {conversation_scope} and c.created_at >= %s and c.created_at < %s
+                    and c.deleted_at is null
+                group by period
+            )
+            select periods.*,
+                   (select count(*) from guruconnect_walkin_visits v
+                    where v.organisation_id=%s
+                      and (%s or v.registered_by=%s or v.assigned_agent_id=%s)
+                      and date_trunc('{bucket}', v.created_at)=periods.period) as visitors
+            from periods order by period
+        """, conversation_scope_args + (window_start, window_end) + visit_scope_args)
         latest = await many(connection, f"""
             select e.id, e.customer_name as "customerName", e.created_at as "createdAt",
                    e.stage, e.channel, e.branch, e.assigned_to as "assignedTo",
@@ -211,6 +252,20 @@ async def analytics(
         "visitors": visitors,
         "conversations": conversations,
         "followUps": followups,
+        "followUpCoverage": {
+            "due": followups["pending"],
+            "overdue": followups["overdue"],
+            "completed": None,
+            "coverage": None,
+        },
+        "salespersonPerformance": [
+            {**item, "userId": str(item["userId"])}
+            for item in performance
+        ],
+        "callActivity": [
+            {**item, "period": item["period"].isoformat()}
+            for item in call_activity
+        ],
         "latestActivities": [
             {**item, "id": str(item["id"]), "createdAt": item["createdAt"].isoformat()}
             for item in latest
