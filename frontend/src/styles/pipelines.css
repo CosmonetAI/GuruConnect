@@ -9,3 +9,66 @@
 .deal-card:hover{border-color:#9ed8c8;box-shadow:0 10px 24px rgba(26,66,104,.12);transform:translateY(-2px)}.deal-card.linked-deal{border-color:#2862e8;box-shadow:0 0 0 3px #2862e833,0 10px 24px rgba(40,98,232,.18)}
 .pipeline-form::before{content:'REQUIRED  Deal name, stage, and sub-pipeline are required. All other fields are optional.';grid-column:1 / -1;display:block;padding:9px 11px;border:1px solid #f2d08c;border-radius:8px;background:#fff7e5;color:#8c5a08;font-size:11px;font-weight:700;line-height:1.4}
 .pipeline-actions{display:flex;justify-content:flex-end;margin:-10px 0 14px}.recycle-button{display:inline-flex;align-items:center;gap:8px;border:1px solid #f0c7c7;border-radius:8px;background:#fff7f7;color:#a33f3f;padding:10px 14px;font:700 13px inherit;cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,background .16s ease}.recycle-button:hover{background:#fff0f0;box-shadow:0 6px 16px rgba(163,63,63,.14);transform:translateY(-1px)}.recycle-button:disabled{opacity:.6;cursor:not-allowed;transform:none}.recycle-modal{max-width:680px}.recycle-note{color:#72849a;font-size:13px;line-height:1.5;margin:0 0 18px}.recycle-section{border:1px solid #e0e8ef;border-radius:10px;padding:12px;margin-top:12px;background:#fbfdff}.recycle-section-heading{display:flex;justify-content:space-between;align-items:center;color:#294663;font-size:14px;margin-bottom:8px}.recycle-section-heading span{display:grid;place-items:center;min-width:24px;height:24px;border-radius:999px;background:#eef5fb;color:#55718d;font-size:11px}.recycle-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-top:1px solid #edf1f5}.recycle-row>div{min-width:0}.recycle-row b,.recycle-row small{display:block}.recycle-row b{color:#304d69;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recycle-row small{margin-top:4px;color:#8998a8;font-size:11px}.recycle-row code{color:#7790a8;font-size:11px;word-break:break-all}.recycle-empty{margin:8px 0 2px;color:#8a99a8;font-size:12px}@media(max-width:700px){.pipeline-actions{justify-content:stretch}.recycle-button{width:100%;justify-content:center}}
+.deal-modal-backdrop{align-items:center;padding:24px;background:rgba(16,35,55,.48);backdrop-filter:blur(3px)}
+.deal-modal{max-width:920px;width:min(920px,100%);max-height:min(90vh,860px);padding:0;overflow:auto;border:1px solid #dfe8ee;border-radius:18px;box-shadow:0 28px 80px rgba(24,52,75,.22)}
+.deal-modal>.eyebrow,.deal-modal>h3,.deal-modal>.modal-stage{margin-left:34px;margin-right:68px}
+.deal-modal>.eyebrow{display:block;padding-top:30px;color:#0f8b70;font-size:11px;letter-spacing:1.6px}
+.deal-modal>h3{margin-top:8px;margin-bottom:8px;color:#1f3853;font-size:28px;line-height:1.18;letter-spacing:-.5px}
+.deal-modal>.modal-stage{display:inline-block;margin-top:0;margin-bottom:26px;padding:7px 11px;border:1px solid #bce6da;border-radius:999px;background:#effbf7;color:#137b67;font-size:12px;font-weight:700}
+.deal-modal>.detail-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin:0;padding:1px;background:#e5edf1;border-top:1px solid #e5edf1;border-bottom:1px solid #e5edf1}
+.deal-modal>.detail-grid>.detail-field{min-width:0;min-height:78px;padding:16px 18px;background:#fff}
+.deal-modal>.detail-grid>.detail-field:nth-child(-n+3){background:#f7fbfa}
+.deal-modal>.detail-grid>.detail-field>small{margin-bottom:7px;color:#7a8d9f;font-size:10px;font-weight:800;letter-spacing:.55px;text-transform:uppercase}
+.deal-modal>.detail-grid>.detail-field>.detail-value{color:#243f5c;font-size:14px;line-height:1.55}
+.deal-modal>.detail-grid>.detail-field>.detail-value .detail-empty{color:#a1aeb9}
+.deal-modal>.detail-grid>.detail-field>.detail-value>.detail-nested-grid{gap:7px}
+.deal-modal>.detail-grid>.detail-field>.detail-value>.detail-nested-grid .detail-nested-field{grid-template-columns:1fr;gap:3px;padding-top:7px}
+.deal-modal>.deal-actions{margin:0;padding:20px 34px 14px;background:#fff}
+.deal-modal>a{margin:0;padding:0 34px 28px;color:#0f806a}
+.modal-close{right:22px;top:18px;width:34px;height:34px;border-radius:50%;font-size:25px;line-height:1;background:#f1f6f7;color:#6d8294}
+.modal-close:hover{background:#e3f3ee;color:#117c67}
+.deal-modal>.description{margin:0;padding:20px 34px;border-bottom:1px solid #e5edf1}
+@media(max-width:760px){.deal-modal-backdrop{padding:10px}.deal-modal{max-height:94vh;border-radius:14px}.deal-modal>.eyebrow,.deal-modal>h3,.deal-modal>.modal-stage{margin-left:20px;margin-right:58px}.deal-modal>h3{font-size:23px}.deal-modal>.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.deal-modal>.detail-grid>.detail-field:nth-child(-n+3){background:#fff}.deal-modal>.detail-grid>.detail-field:first-child,.deal-modal>.detail-grid>.detail-field:nth-child(2){background:#f7fbfa}.deal-modal>.deal-actions{padding:16px 20px 12px}.deal-modal>a{padding:0 20px 22px}}
+@media(max-width:460px){.deal-modal>.detail-grid{grid-template-columns:1fr}.deal-modal>.detail-grid>.detail-field{min-height:0;padding:13px 16px}.deal-modal>.deal-actions{display:grid}.deal-modal>.deal-actions .deal-action{width:100%}}
+.deal-modal-backdrop{left:248px}
+@media(max-width:1100px) and (min-width:761px){.deal-modal-backdrop{left:220px}}
+@media(max-width:760px){.deal-modal-backdrop{left:0}}
+.opportunity-modal>.eyebrow{padding-top:28px}
+.opportunity-modal>h3{margin-bottom:20px}
+.opportunity-details{display:grid;gap:16px;padding:0 28px 4px}
+.opportunity-summary{display:flex;align-items:center;gap:14px;padding:18px 20px;border:1px solid #dcebe7;border-radius:14px;background:linear-gradient(120deg,#f3fbf8,#f7fbfd)}
+.opportunity-avatar{display:grid;place-items:center;flex:0 0 46px;width:46px;height:46px;border-radius:13px;background:#137f6b;color:#fff;font-size:14px;font-weight:800;letter-spacing:.5px}
+.opportunity-summary-copy{display:grid;min-width:0;gap:3px;flex:1}
+.opportunity-summary-label,.section-kicker{color:#168b73;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
+.opportunity-summary-copy strong{overflow:hidden;color:#203c59;font-size:17px;text-overflow:ellipsis;white-space:nowrap}
+.opportunity-summary-copy>span:last-child{overflow:hidden;color:#71869a;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.opportunity-status{display:flex;align-items:center;gap:7px;flex:0 0 auto;padding:7px 10px;border:1px solid #bce6da;border-radius:999px;background:#fff;color:#137b67;font-size:11px;font-weight:800}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#20b087}
+.opportunity-section{min-width:0;padding:20px;border:1px solid #e0e9ee;border-radius:13px;background:#fff}
+.opportunity-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;padding:0;overflow:hidden;background:#e1ebef}
+.opportunity-metric{display:grid;gap:6px;min-width:0;padding:17px 16px;background:#f8fbfc}
+.opportunity-metric svg{color:#148b73}
+.opportunity-metric span,.person-row small,.next-step small,.additional-field small{color:#7d91a3;font-size:10px;font-weight:800;letter-spacing:.45px;text-transform:uppercase}
+.opportunity-metric strong{overflow:hidden;color:#243f5c;font-size:14px;text-overflow:ellipsis;white-space:nowrap}
+.opportunity-content{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.opportunity-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.opportunity-section-heading h4{margin:4px 0 0;color:#294560;font-size:16px}
+.opportunity-people{display:grid;gap:13px}
+.person-row{display:flex;align-items:flex-start;gap:10px;padding-bottom:13px;border-bottom:1px solid #edf2f4}
+.person-row>svg{flex:0 0 auto;margin-top:3px;color:#168b73}
+.person-row>div{display:grid;min-width:0;gap:3px}
+.person-row strong{color:#294560;font-size:13px}
+.person-row span{overflow:hidden;color:#72869a;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.next-step{display:grid;gap:6px;margin-top:16px;padding:12px 14px;border-radius:9px;background:#f5faf8}
+.next-step strong{color:#2b4a63;font-size:13px;font-weight:600;line-height:1.45}
+.opportunity-description{margin:0;color:#405c74;font-size:13px;line-height:1.7;white-space:pre-wrap}
+.opportunity-description.is-empty{color:#98a7b3}
+.additional-fields{padding-bottom:16px}
+.additional-count{color:#899aaa;font-size:11px}
+.additional-field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.additional-field{min-width:0;padding:12px 13px;border:1px solid #e7eef1;border-radius:9px;background:#f8fbfc}
+.additional-field>div{margin-top:5px;color:#36536c;font-size:12px;line-height:1.5;word-break:break-word}
+.opportunity-modal>.deal-actions{padding:16px 28px 12px}
+.opportunity-modal>a{padding:0 28px 24px}
+@media(max-width:760px){.opportunity-modal>.eyebrow,.opportunity-modal>h3{margin-left:20px;margin-right:58px}.opportunity-details{padding:0 16px 4px}.opportunity-summary{padding:15px}.opportunity-status{align-self:flex-start}.opportunity-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.opportunity-content{grid-template-columns:1fr}.opportunity-modal>.deal-actions{padding:14px 16px 10px}.opportunity-modal>a{padding:0 16px 20px}}
+@media(max-width:460px){.opportunity-summary{align-items:flex-start;flex-wrap:wrap}.opportunity-status{margin-left:60px}.additional-field-grid{grid-template-columns:1fr}.opportunity-metric{padding:14px 12px}}

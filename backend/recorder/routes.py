@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from urllib.parse import quote
 
@@ -119,52 +119,102 @@ async def presence(request: Request, body: s.PresencePing = s.PresencePing(), us
 
 
 @router.get("/analytics")
-async def analytics(request: Request, context: Workspace = Depends(workspace)):
-    """Return workspace totals for owners and member totals for salespeople.
-
-    Authorization is always checked against the authenticated actor, never a
-    client-supplied member identity.
-    """
-    scoped_all = context.admin
+async def analytics(
+    request: Request,
+    context: Workspace = Depends(workspace),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    group_by: str = Query(default="day", alias="groupBy"),
+):
+    """Return one role-scoped analytics snapshot from supported records."""
+    if group_by not in {"day", "week", "month", "quarter", "year"}:
+        fail("invalid_analytics_group", 422, "Choose a valid analytics grouping")
+    scoped_all = context.admin and context.member_id == context.user.id
     scope_user = context.member_id
+    window_end = end or datetime.now(timezone.utc)
+    window_start = start or window_end - timedelta(days=30)
+    if window_start.tzinfo is None:
+        window_start = window_start.replace(tzinfo=timezone.utc)
+    if window_end.tzinfo is None:
+        window_end = window_end.replace(tzinfo=timezone.utc)
+    if window_start >= window_end:
+        fail("invalid_analytics_range", 422, "The analytics start must be before the end")
+
+    enquiry_scope = "e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)"
+    enquiry_scope_args = (context.id, scoped_all, scope_user, scope_user)
+    visit_scope = "v.organisation_id=%s and (%s or v.registered_by=%s or v.assigned_agent_id=%s)"
+    visit_scope_args = (context.id, scoped_all, scope_user, scope_user)
+    conversation_scope = "c.organisation_id=%s and (%s or c.owner_id=%s)"
+    conversation_scope_args = (context.id, scoped_all, scope_user)
     async with request.app.state.db.connection() as connection:
-        total = await one(connection, """
-            select count(*) as total
-            from guruconnect_enquiries
-            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
-        """, (context.id, scoped_all, scope_user, scope_user))
-        channels = await many(connection, """
-            select channel, count(*) as count
-            from guruconnect_enquiries
-            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
-            group by channel order by count desc, channel
-        """, (context.id, scoped_all, scope_user, scope_user))
-        stages = await many(connection, """
-            select stage, count(*) as count
-            from guruconnect_enquiries
-            where organisation_id=%s and (%s or owner_id=%s or assigned_to=%s)
-            group by stage
-            order by case stage when 'new' then 0 when 'in_process' then 1 when 'closed' then 2 else 3 end
-        """, (context.id, scoped_all, scope_user, scope_user))
-        latest = await many(connection, """
+        total = await one(connection, f"""
+            select count(*) as total from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+        """, enquiry_scope_args + (window_start, window_end))
+        stages = await many(connection, f"""
+            select coalesce(e.stage, 'new') as stage, count(*) as count
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by e.stage
+            order by case e.stage when 'new' then 0 when 'in_process' then 1
+                when 'proposal' then 2 when 'negotiation' then 3
+                when 'closed' then 4 when 'lost' then 5 else 6 end
+        """, enquiry_scope_args + (window_start, window_end))
+        channels = await many(connection, f"""
+            select coalesce(nullif(e.channel, ''), 'Other') as channel, count(*) as count
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by e.channel order by count desc, channel
+        """, enquiry_scope_args + (window_start, window_end))
+        bucket = {"day": "day", "week": "week", "month": "month", "quarter": "quarter", "year": "year"}[group_by]
+        trend = await many(connection, f"""
+            select date_trunc('{bucket}', e.created_at) as period, count(*) as enquiries
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by period order by period
+        """, enquiry_scope_args + (window_start, window_end))
+        visitors = await one(connection, f"""
+            select count(*) as total,
+                   count(*) filter (where v.status in ('Completed','Converted to Enquiry')) as converted,
+                   count(*) filter (where v.status in ('Waiting for Assignment','Assigned','Waiting for Sales Agent','Follow-up Required')) as pending
+            from guruconnect_walkin_visits v
+            where {visit_scope} and v.created_at >= %s and v.created_at < %s
+        """, visit_scope_args + (window_start, window_end))
+        conversations = await one(connection, f"""
+            select count(*) as total, coalesce(sum(c.duration_seconds), 0) as duration
+            from conversations c
+            where {conversation_scope} and c.created_at >= %s and c.created_at < %s
+                and c.deleted_at is null
+        """, conversation_scope_args + (window_start, window_end))
+        followups = await one(connection, f"""
+            select count(*) filter (where e.follow_up_required) as pending,
+                   count(*) filter (where e.follow_up_required and e.created_at < now() - interval '7 days') as overdue
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+        """, enquiry_scope_args + (window_start, window_end))
+        latest = await many(connection, f"""
             select e.id, e.customer_name as "customerName", e.created_at as "createdAt",
                    e.stage, e.channel, e.branch, e.assigned_to as "assignedTo",
                    coalesce(p.display_name, e.payload->>'assignedExecutive', 'Awaiting assignment') as "assignedName"
             from guruconnect_enquiries e
             left join public.profiles p on p.id=e.assigned_to
-            where e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)
-            order by e.created_at desc, e.id desc
-            limit 8
-        """, (context.id, scoped_all, scope_user, scope_user))
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            order by e.created_at desc, e.id desc limit 20
+        """, enquiry_scope_args + (window_start, window_end))
     return {
         "total": total["total"],
+        "organizationWide": scoped_all,
+        "range": {"start": window_start.isoformat(), "end": window_end.isoformat(), "groupBy": group_by},
         "channels": channels,
         "stages": stages,
-        "latestVisitors": [
+        "trend": [{"period": item["period"].isoformat(), "enquiries": item["enquiries"]} for item in trend],
+        "visitors": visitors,
+        "conversations": conversations,
+        "followUps": followups,
+        "latestActivities": [
             {**item, "id": str(item["id"]), "createdAt": item["createdAt"].isoformat()}
             for item in latest
         ],
-        "organizationWide": scoped_all,
     }
 
 
