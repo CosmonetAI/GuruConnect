@@ -122,7 +122,7 @@ async def test(connection_id: UUID, body: s.TestConnection, request: Request, co
     try:
         credentials = SecretBox(request.app.state.settings).decrypt(secret["encrypted_value"]) if secret else {}
         if row["engine_id"] == "elevenlabs":
-            smoke = await ElevenLabsAdapter(credentials.get("api_key", "")).test(functional=body.functional)
+            smoke = await ElevenLabsAdapter(credentials.get("api_key", ""), model_id=request.app.state.settings.elevenlabs_transcription_model).test(functional=body.functional)
         elif row["engine_id"] == "azure-translator":
             smoke = await AzureTranslator(credentials.get("api_key", ""), credentials.get("region") or row["config"].get("region", "")).test(functional=body.functional)
         elif row["engine_id"] == "openai-translator":

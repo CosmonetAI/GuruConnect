@@ -289,7 +289,7 @@ class ZohoClient:
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)
     async def create_books_contact(self, org, data): return await self.request('POST','/books/v3/contacts',params={'organization_id':org},json=data)
-    async def ensure_books_contact(self, org, *, name, email=None, phone=None, contact_type='customer'):
+    async def ensure_books_contact(self, org, *, name, email=None, phone=None, contact_type='customer', company=None, notes=None):
         """Find a matching Books customer before creating one, so walk-ins are idempotent."""
         email = (email or '').strip().lower()
         phone = ''.join(ch for ch in (phone or '') if ch.isdigit())
@@ -299,8 +299,12 @@ class ZohoClient:
             payload = await (self.search_books_vendors(org, query) if contact_type == 'vendor' else self.search_books_customers(org, query))
             rows = payload.get('contacts', payload.get('data', []))
             for row in rows:
-                row_email = (row.get('email') or '').strip().lower()
-                row_phone = ''.join(ch for ch in str(row.get('phone') or row.get('mobile') or '') if ch.isdigit())
+                people = row.get('contact_persons') or row.get('contact_person') or []
+                if isinstance(people, dict):
+                    people = [people]
+                person = people[0] if isinstance(people, list) and people and isinstance(people[0], dict) else {}
+                row_email = (row.get('email') or person.get('email') or '').strip().lower()
+                row_phone = ''.join(ch for ch in str(row.get('phone') or row.get('mobile') or person.get('mobile') or person.get('phone') or '') if ch.isdigit())
                 if (email and row_email == email) or (phone and row_phone and row_phone[-10:] == phone[-10:]):
                     return row
         display_name = (name or email or phone or 'Walk-in customer').strip()
@@ -308,12 +312,14 @@ class ZohoClient:
         payload = {
             'contact_name': display_name,
             'contact_type': contact_type,
+            'company_name': (company or '').strip() or None,
+            'notes': (notes or '').strip() or None,
             'contact_persons': [{
                 'first_name': parts[0], 'last_name': parts[1] if len(parts) > 1 else '',
                 'email': email, 'mobile': phone or None, 'is_primary_contact': True,
             }],
         }
-        result = await self.create_books_contact(org, payload)
+        result = await self.create_books_contact(org, {key: value for key, value in payload.items() if value not in (None, '')})
         return result.get('contact') or (result.get('data') or [None])[0] or result
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)

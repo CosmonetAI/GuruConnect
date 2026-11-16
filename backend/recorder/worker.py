@@ -131,7 +131,7 @@ class MainWorker:
         audio, conv = await self.audio_file(job)
         try:
             credentials = await self.credentials(job["connection_id"])
-            adapter = ElevenLabsAdapter(credentials.get("api_key") or credentials.get("key"))
+            adapter = ElevenLabsAdapter(credentials.get("api_key") or credentials.get("key"), model_id=self.settings.elevenlabs_transcription_model)
             await self.begin_submission(job)
             await self.usage(job, "final-pass" if job["kind"] == "finalise" else "progressive-context", (job["payload"]["sample_end"]-job["payload"].get("sample_start",0))/16000)
             result = await adapter.process(audio, conv["language_hint"], str(job["id"]))
@@ -313,6 +313,8 @@ class MainWorker:
             async with self.db.connection() as connection:
                 # Mark cleanup complete; retained tombstone fences all late work.
                 await connection.execute("delete from transcript_words where version_id in(select id from transcript_versions where conversation_id=%s)",(conv["id"],))
+                await connection.execute("delete from conversation_extractions where conversation_id=%s",(conv["id"],))
+                await connection.execute("delete from voice_ai_contexts where conversation_id=%s",(conv["id"],))
                 for table in ("transcript_revisions","speaker_assignments","diarization_intervals","translations"):
                     await connection.execute(f"delete from {table} where conversation_id=%s",(conv["id"],))
                 await connection.execute("delete from transcript_turns where conversation_id=%s",(conv["id"],))

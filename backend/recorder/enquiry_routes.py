@@ -334,6 +334,14 @@ async def create_enquiry(body: EnquiryCreate, request: Request, response: Respon
 
 async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_name, timezone_name):
     """Create the editable owner queue item as soon as a walk-in is assigned."""
+    linked_recording = await one(connection, """
+        select conversation_id
+          from public.guruconnect_walkin_recordings
+         where organisation_id=%s and visit_id=%s
+         order by created_at desc
+         limit 1
+    """, (context.id, row["id"]))
+    conversation_id = linked_recording["conversation_id"] if linked_recording else None
     product = row["payload"].get("productOrService", "")
     payload = {
         "customerName": row["payload"]["customerName"],
@@ -371,9 +379,9 @@ async def create_walkin_enquiry(connection, context, row, assigned_to, assigned_
     tracking_token = secrets.token_urlsafe(12)
     tracking_hash = hashlib.sha256(tracking_token.encode()).hexdigest()
     created = await one(connection, """insert into public.guruconnect_enquiries
-        (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash)
-        values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s) returning id""",
-        (context.id, context.user.id, key, digest, Jsonb(payload), payload["customerName"], payload["phone"], payload["channel"], payload["branch"], assigned_to, ticket_day, daily_sequence, tracking_hash))
+        (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash)
+        values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s) returning id""",
+        (context.id, context.user.id, conversation_id, key, digest, Jsonb(payload), payload["customerName"], payload["phone"], payload["channel"], payload["branch"], assigned_to, ticket_day, daily_sequence, tracking_hash))
     await audit(connection, context, "enquiry.created_from_walkin", {"enquiry_id": str(created["id"]), "walkin_id": str(row["id"])})
     return created["id"]
 

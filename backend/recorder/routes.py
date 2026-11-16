@@ -623,7 +623,8 @@ async def create_run(connection, context: Workspace, conv: dict, engine_id: str,
         strategy = "openai" if translator and translator["engine_id"] == "openai-translator" else "azure"
         if translator:
             snapshot["translation"] = {"provider": translator["engine_id"], "config": translator["config"]}
-    return await one(connection, "insert into processing_runs(conversation_id,organisation_id,connection_id,connection_generation,engine_id,model_version,config_snapshot,translation_strategy,translator_connection_id,translator_generation,kind,state,idempotency_key,audio_manifest_hash) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning *", (conv["id"], context.id, conn["id"] if conn else None, conn["generation"] if conn else None, engine_id, "scribe_v2" if engine_id == "elevenlabs" else "large-v3", Jsonb(snapshot), strategy, translator["id"] if translator else None, translator["generation"] if translator else None, kind, "pending" if ready else "blocked", idempotency_key, conv.get("manifest_hash")))
+    configured_model = ((conn.get("config") or {}).get("model") if conn else None) or (getattr(settings, "elevenlabs_transcription_model", "") if engine_id == "elevenlabs" and settings else "")
+    return await one(connection, "insert into processing_runs(conversation_id,organisation_id,connection_id,connection_generation,engine_id,model_version,config_snapshot,translation_strategy,translator_connection_id,translator_generation,kind,state,idempotency_key,audio_manifest_hash) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning *", (conv["id"], context.id, conn["id"] if conn else None, conn["generation"] if conn else None, engine_id, configured_model if engine_id == "elevenlabs" else "large-v3", Jsonb(snapshot), strategy, translator["id"] if translator else None, translator["generation"] if translator else None, kind, "pending" if ready else "blocked", idempotency_key, conv.get("manifest_hash")))
 
 
 @router.post("/conversations", status_code=201)
@@ -632,8 +633,8 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
                            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     if context.member_id != context.user.id:
         fail("personal_workspace_required", 403, "Switch to your own workspace before creating a recording")
-    if body.audio_bucket == "walkin-audio" and context.role != "receptionist":
-        fail("walkin_recording_role_required", 403, "Only receptionists can create walk-in recordings")
+    if body.audio_bucket == "walkin-audio" and context.role not in {"receptionist", "salesperson", "owner"}:
+        fail("walkin_recording_role_required", 403, "Only owners, salespeople, or receptionists can create walk-in recordings")
     if body.audio_bucket == "session-audio" and context.role == "receptionist":
         fail("session_recording_role_required", 403, "Receptionists must use walk-in recording")
     # Walk-in recordings must enter the durable processing pipeline. Older
@@ -684,7 +685,7 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
                 customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, body.customer_name or "Name not provided", email, phone, email, normalized_phone, body.is_unnamed or not body.customer_name))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))
         row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed,audio_bucket) values(%s,%s,%s,%s,%s,%s,%s,%s,true,%s) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint, body.audio_bucket))
-        run = None if audio_only else await create_run(connection, context, row, engine_id, "production", "initial")
+        run = None if audio_only else await create_run(connection, context, row, engine_id, "production", "initial", settings=request.app.state.settings)
         if run is None:
             await connection.execute("update conversations set transcription_state='blocked' where id=%s", (row["id"],))
             row["transcription_state"] = "blocked"

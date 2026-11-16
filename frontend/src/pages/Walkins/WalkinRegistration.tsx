@@ -5,7 +5,6 @@ import { z } from 'zod'
 import { type RegisterWalkinInput, type WalkinAgent } from '../../types/walkin'
 import { request } from '../../services/officeApi'
 import { attachWalkinRecording, isWalkinDemoMode, listWalkinAgents, registerWalkin } from '../../services/walkinService'
-import { createEnquiry } from '../../services/enquiryService'
 import { useOffice } from '../../contexts/OfficeContext'
 import ConversationRecorder from '../Enquiries/ConversationRecorder'
 import VoiceFieldMic from './VoiceFieldMic'
@@ -81,12 +80,16 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const allowLeave = useRef(false)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const [voicePreview, setVoicePreview] = useState<WalkinVoicePreview | null>(null)
+  const liveTranscriptRef = useRef<HTMLDivElement | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [pendingValues, setPendingValues] = useState<FormValues | null>(null)
   const blocker = useBlocker(() => !allowLeave.current && (voiceBusy || saving))
+  const selfAssignSalesperson = !enquiryMode && workspace?.role === 'salesperson'
+  const selfAssignOwner = workspace?.role === 'owner'
+  const currentDisplayName = user?.user_metadata?.display_name || user?.email || 'Salesperson'
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
   useEffect(() => {
-    if (!workspace) return
+    if (!workspace || selfAssignSalesperson) return
     let active = true
     const loadAgents = () => void listWalkinAgents(workspace.id).then((items) => {
       if (active) setAgents([...items].sort((left, right) => (left.role === 'owner' ? 1 : 0) - (right.role === 'owner' ? 1 : 0) || presenceRank(left.presenceStatus) - presenceRank(right.presenceStatus) || availabilityRank(left.availability) - availabilityRank(right.availability) || (left.openTickets ?? 0) - (right.openTickets ?? 0) || left.name.localeCompare(right.name)))
@@ -94,7 +97,10 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
     loadAgents()
     const timer = window.setInterval(loadAgents, 15_000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [workspace])
+  }, [selfAssignSalesperson, workspace])
+  useEffect(() => {
+    if (selfAssignOwner && user?.id) setSelectedAgentId(user.id)
+  }, [selfAssignOwner, user?.id])
   useEffect(() => { if (blocker.state === 'blocked') { setError('End the visitor recording before leaving this page.'); blocker.reset() } }, [blocker])
   useEffect(() => {
     if (!voiceId || !workspace) { setVoicePreview(null); return }
@@ -102,7 +108,10 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
     let timer: number | undefined
     const refresh = async () => {
       try {
-        const result = await request<WalkinVoicePreview>(`/conversations/${encodeURIComponent(voiceId)}/walkin-preview`, workspace.id, {}, workspace.member_id)
+        // Walk-in previews are served by the walk-in router.  The recorder
+        // conversation itself is still created under /conversations, but
+        // polling the old path made every preview request return 404.
+        const result = await request<WalkinVoicePreview>(`/walkins/${encodeURIComponent(voiceId)}/walkin-preview`, workspace.id, {}, workspace.member_id)
         if (!cancelled) {
           setVoicePreview(result)
           const fields = result.fields || {}
@@ -110,18 +119,24 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             const next = { ...previous }
             for (const key of ['customerName', 'mobileNumber', 'email', 'companyName', 'projectName'] as const) {
               const value = fields[key]
-              if (value && !next[key]) next[key] = value as never
+              if (value && next[key] !== value) next[key] = value as never
             }
             if (fields.customerType === 'vendor' && next.customerType !== 'vendor') next.customerType = 'vendor'
             return next
           })
         }
       } catch { /* processing is asynchronous; the recorder remains usable */ }
-      if (!cancelled) timer = window.setTimeout(() => void refresh(), 2500)
+      // Poll quickly while the recording is being translated so the first
+      // completed text fills the form without waiting for the full recording.
+      if (!cancelled) timer = window.setTimeout(() => void refresh(), 1000)
     }
     void refresh()
     return () => { cancelled = true; if (timer) window.clearTimeout(timer) }
   }, [voiceId, workspace])
+  useEffect(() => {
+    const panel = liveTranscriptRef.current
+    if (panel) panel.scrollTop = panel.scrollHeight
+  }, [voicePreview?.transcript?.length])
   useEffect(() => {
     if (!agentMenuOpen) return
     const closeOnOutsideClick = (event: MouseEvent) => {
@@ -180,37 +195,12 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
       appointmentStatus: 'Walk-in',
       appointmentReference: '',
       internalNotes: '',
-      }
-      if (enquiryMode) {
-        const assignedExecutive = user?.user_metadata?.display_name || user?.email || 'Salesperson'
-        const created = await createEnquiry(workspace.id, {
-          customerName: values.customerName,
-          phone: input.mobileNumber,
-          email: values.email || undefined,
-          channel: 'Retail Walk-in',
-          branch: 'Walk-in',
-          assignedExecutive,
-          product: values.projectName || '',
-          quantity: 1,
-          unit: 'nos',
-          notes: '',
-          customerNotes: '',
-          salespersonNotes: '',
-          requirementsSummary: values.projectName || '',
-          customerType: 'Retail',
-          company: values.companyName || '',
-          projectName: values.projectName || '',
-          preferredContactMethod: '',
-          productRequirements: [],
-          followUpDate: '',
-          followUpOwner: assignedExecutive,
-          priority: 'Normal',
-        }, saveKey, workspace.member_id)
-        allowLeave.current = true
-        navigate(`/enquiries/${encodeURIComponent(created.id)}`, { replace: true })
-        return
+      conversationId: voiceConversation.current || undefined,
       }
       const visit = await registerWalkin(workspace.id, input, saveKey)
+      // The hosted endpoint commits this link atomically with the enquiry.
+      // Keep the idempotent attach for local mode and older running API
+      // processes while they are being restarted.
       const recordingId = voiceConversation.current
       if (recordingId) {
         let linked = false
@@ -218,7 +208,9 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
         if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ } }
       }
       allowLeave.current = true
-      navigate('/walkins', { replace: true })
+      navigate(enquiryMode && visit.convertedEnquiryReference
+        ? `/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}`
+        : '/walkins', { replace: true })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {
@@ -242,23 +234,25 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             <span>01</span>
             <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
             <div className="walkin-registration-recorder">
-              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id) }} onBusyChange={setVoiceBusy} chunkSeconds={8} audioBucket="walkin-audio" compact registrationOnly />
+              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); if (!id) { setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
             </div>
           </div>
           {voiceId && <div className="walkin-live-results" aria-live="polite">
-            <div className="walkin-live-results-header"><strong>Live registration details</strong><span>{voicePreview?.conversation?.english_state === 'complete' ? 'Translated' : 'Listening and extracting…'}</span></div>
-            {voicePreview?.transcript?.slice(-1).map((turn, index) => <p key={`${turn.english_text || turn.source_text || 'turn'}-${index}`}>{turn.english_text || turn.source_text || 'Transcribing the latest answer…'}</p>)}
+            <div className="walkin-live-results-header"><strong>Live registration details</strong><span>{voicePreview?.conversation?.english_state === 'complete' ? 'Translation complete' : 'Listening and extracting…'}</span></div>
+            <div className="walkin-live-transcript" ref={liveTranscriptRef}>
+              {voicePreview?.transcript?.length ? voicePreview.transcript.map((turn, index) => <p key={`${turn.english_text || turn.source_text || 'turn'}-${index}`}>{turn.english_text || turn.source_text || 'Transcribing…'}</p>) : <p>Waiting for the translated conversation…</p>}
+            </div>
             {voicePreview?.fields && Object.keys(voicePreview.fields).length > 0 && <small>Form fields are being filled from the English translation as answers arrive.</small>}
           </div>}
           <div className="walkin-form-grid">
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={!!voiceId || voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('customerName', value)} /></div></Field>
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Phone No.' : 'Customer Phone No.'} <RotatingPrompt prompt="phone" /></>} name="mobileNumber" required error={errors.mobileNumber}><div className="walkin-phone-input"><select aria-label="Country code" value={form.phoneCountryCode} onChange={(event) => update('phoneCountryCode', event.target.value as FormValues['phoneCountryCode'])}>{countryCodes.map(([code, country], index) => <option key={`${code}-${country}-${index}`} value={code}>{code} {country}</option>)}</select><div className="walkin-voice-input"><input disabled={!!voiceId || voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /><VoiceFieldMic field="phone" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('mobileNumber', value.replace(/\D/g, '').slice(-15))} /></div></div></Field>
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Email Address' : 'Customer Email Address'} <RotatingPrompt prompt="email" /></>} name="email" required error={errors.email}><div className="walkin-voice-input"><input disabled={!!voiceId || voiceBusy} id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder={form.customerType === 'vendor' ? 'vendor@example.com' : 'customer@example.com'} required /><VoiceFieldMic field="email" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('email', value)} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={voiceBusy} id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerName', value)} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Phone No.' : 'Customer Phone No.'} <RotatingPrompt prompt="phone" /></>} name="mobileNumber" required error={errors.mobileNumber}><div className="walkin-phone-input"><select aria-label="Country code" value={form.phoneCountryCode} onChange={(event) => update('phoneCountryCode', event.target.value as FormValues['phoneCountryCode'])}>{countryCodes.map(([code, country], index) => <option key={`${code}-${country}-${index}`} value={code}>{code} {country}</option>)}</select><div className="walkin-voice-input"><input disabled={voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="Phone number" /><VoiceFieldMic field="phone" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('mobileNumber', value.replace(/\D/g, '').slice(-15))} /></div></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Email Address' : 'Customer Email Address'} <RotatingPrompt prompt="email" /></>} name="email" required error={errors.email}><div className="walkin-voice-input"><input disabled={voiceBusy} id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder={form.customerType === 'vendor' ? 'vendor@example.com' : 'customer@example.com'} required /><VoiceFieldMic field="email" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('email', value)} /></div></Field>
             <Field label={form.customerType === 'vendor' ? 'Vendor Source type' : 'Customer Source type'} name="source"><div className="walkin-source-input" aria-disabled="true"><input id="source" value="Retail walk-in" disabled readOnly tabIndex={-1} aria-readonly="true" /></div></Field>
-            <Field label="Assign executive" name="assignedExecutive" hint={enquiryMode ? 'Assigned to the salesperson who opened this enquiry.' : 'Handled automatically based on availability and current workload. The list is for visibility only.'}>{enquiryMode ? <input id="assignedExecutive" value={user?.user_metadata?.display_name || user?.email || 'Salesperson'} readOnly /> : <div className="walkin-agent-picker" ref={agentPickerRef}><button type="button" className="walkin-agent-picker-trigger" aria-haspopup="listbox" aria-expanded={agentMenuOpen} onClick={() => setAgentMenuOpen(open => !open)}><span>{selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name : 'Automatic assignment'}</span><span className={`walkin-agent-picker-chevron${agentMenuOpen ? ' is-open' : ''}`} aria-hidden="true" /></button>{agentMenuOpen && <div className="walkin-agent-picker-menu" role="listbox"><button type="button" className={`walkin-agent-option${selectedAgentId === '' ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(''); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>Automatic assignment</strong><small>Recommended · system chooses the best available executive</small></span><span className="walkin-agent-status recommended">Auto</span></button>{agents.map((agent) => <button type="button" role="option" aria-selected={selectedAgentId === agent.id} key={agent.id} className={`walkin-agent-option${selectedAgentId === agent.id ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(agent.id); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>{agent.name}</strong><small>{agent.availability} · {presenceLabel(agent.presenceStatus)} · {agent.openTickets ?? 0} open ticket{agent.openTickets === 1 ? '' : 's'}</small></span><span className={`walkin-agent-status ${agent.presenceStatus === 'active' ? 'active' : agent.presenceStatus === 'inactive' ? 'inactive' : 'away'}`}><i />{presenceLabel(agent.presenceStatus)}</span></button>)}</div>}</div>}</Field>
-            <Field label={<>Customer type <RotatingPrompt prompt="customerType" /></>} name="customerType"><div className="walkin-voice-input"><select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as FormValues['customerType'])}><option value="customer">Retail customer</option><option value="vendor">Vendor</option></select><VoiceFieldMic field="customerType" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('customerType', value === 'vendor' ? 'vendor' : 'customer')} /></div></Field>
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Organisation Name' : 'Customer Organisation Name'} <RotatingPrompt prompt="organisation" /></>} name="companyName" error={errors.companyName}><div className="walkin-voice-input"><input id="companyName" autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', event.target.value)} placeholder="Not provided" /><VoiceFieldMic field="organisation" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('companyName', value)} /></div></Field>
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Purchase Requirement' : 'Customer Project Requirement'} <RotatingPrompt prompt="requirement" /></>} name="projectName" error={errors.projectName}><div className="walkin-voice-input"><input id="projectName" value={form.projectName} onChange={(event) => update('projectName', event.target.value)} placeholder="Not provided" /><VoiceFieldMic field="requirement" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={!!voiceId || voiceBusy || !workspace} onValue={value => update('projectName', value)} /></div></Field>
+            <Field label="Assign executive" name="assignedExecutive" hint={selfAssignSalesperson ? 'Automatically assigned to the salesperson registering this visitor.' : selfAssignOwner ? 'Assigned to you by default. Choose another owner or salesperson when needed.' : enquiryMode ? 'Assigned to the salesperson who opened this enquiry.' : 'Handled automatically based on availability and current workload. The list is for visibility only.'}>{selfAssignSalesperson ? <input id="assignedExecutive" value={currentDisplayName} readOnly /> : <div className="walkin-agent-picker" ref={agentPickerRef}><button type="button" className="walkin-agent-picker-trigger" aria-haspopup="listbox" aria-expanded={agentMenuOpen} onClick={() => setAgentMenuOpen(open => !open)}><span>{selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name || (selectedAgentId === user?.id ? currentDisplayName : 'Selected executive') : 'Automatic assignment'}</span><span className={`walkin-agent-picker-chevron${agentMenuOpen ? ' is-open' : ''}`} aria-hidden="true" /></button>{agentMenuOpen && <div className="walkin-agent-picker-menu" role="listbox">{!selfAssignOwner && <button type="button" className={`walkin-agent-option${selectedAgentId === '' ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(''); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>Automatic assignment</strong><small>Recommended · system chooses the best available executive</small></span><span className="walkin-agent-status recommended">Auto</span></button>}{agents.map((agent) => <button type="button" role="option" aria-selected={selectedAgentId === agent.id} key={agent.id} className={`walkin-agent-option${selectedAgentId === agent.id ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(agent.id); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>{agent.name}</strong><small>{agent.availability} · {presenceLabel(agent.presenceStatus)} · {agent.openTickets ?? 0} open ticket{agent.openTickets === 1 ? '' : 's'}</small></span><span className={`walkin-agent-status ${agent.presenceStatus === 'active' ? 'active' : agent.presenceStatus === 'inactive' ? 'inactive' : 'away'}`}><i />{presenceLabel(agent.presenceStatus)}</span></button>)}</div>}</div>}</Field>
+            <Field label={<>Customer type <RotatingPrompt prompt="customerType" /></>} name="customerType"><div className="walkin-voice-input"><select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as FormValues['customerType'])}><option value="customer">Retail customer</option><option value="vendor">Vendor</option></select><VoiceFieldMic field="customerType" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerType', value === 'vendor' ? 'vendor' : 'customer')} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Organisation Name' : 'Customer Organisation Name'} <RotatingPrompt prompt="organisation" /></>} name="companyName" error={errors.companyName}><div className="walkin-voice-input"><input id="companyName" autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', event.target.value)} placeholder="Not provided" /><VoiceFieldMic field="organisation" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('companyName', value)} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Purchase Requirement' : 'Customer Project Requirement'} <RotatingPrompt prompt="requirement" /></>} name="projectName" error={errors.projectName}><div className="walkin-voice-input"><input id="projectName" value={form.projectName} onChange={(event) => update('projectName', event.target.value)} placeholder="Not provided" /><VoiceFieldMic field="requirement" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('projectName', value)} /></div></Field>
           </div>
         </section>
 
@@ -275,7 +269,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             <PreviewValue label="Customer type" value={pendingValues.customerType === 'vendor' ? 'Vendor' : 'Retail customer'} />
             <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Vendor organisation' : 'Customer organisation'} value={pendingValues.companyName || 'Not provided'} />
             <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Purchase requirement' : 'Project requirement'} value={pendingValues.projectName || 'Not provided'} />
-            <PreviewValue label="Assignment" value={selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name || 'Selected executive' : 'Automatic assignment'} />
+            <PreviewValue label="Assignment" value={selfAssignSalesperson ? currentDisplayName : selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name || 'Selected executive' : 'Automatic assignment'} />
             <PreviewValue label="Source" value="Retail walk-in" />
           </div>
           <div className="walkin-preview-actions"><button type="button" className="walkin-button secondary" disabled={saving} onClick={() => { setPreviewOpen(false); setPendingValues(null) }}>Back to form</button><button type="button" className="walkin-button primary" disabled={saving} onClick={() => void confirmRegistration()}>{saving ? 'Creating visitor…' : 'Confirm and register'}</button></div>

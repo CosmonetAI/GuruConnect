@@ -35,6 +35,21 @@ async def test_elevenlabs_real_request_contract_and_source_language(transport):
 
 
 @pytest.mark.asyncio
+async def test_elevenlabs_short_clip_sends_browser_audio_and_configured_model(transport):
+    def handler(request):
+        body = request.content.decode('latin1')
+        assert 'name="model_id"\r\n\r\nfield-model' in body
+        assert 'name="diarize"\r\n\r\nfalse' in body
+        assert 'filename="name.webm"' in body
+        return httpx.Response(200, json={'text': 'Akshat Saxena'})
+    transport(handler)
+    result = await ElevenLabsAdapter('test-only', model_id='field-model').transcribe_text(
+        b'webm-bytes', filename='name.webm', content_type='audio/webm;codecs=opus'
+    )
+    assert result == 'Akshat Saxena'
+
+
+@pytest.mark.asyncio
 async def test_timeout_preserves_uncertain_paid_execution(transport):
     def handler(request):raise httpx.ReadTimeout('test timeout',request=request)
     transport(handler)

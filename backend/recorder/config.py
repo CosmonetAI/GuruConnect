@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
     openai_translation_model: str = Field(default="gpt-5.4-mini-2026-03-17", validation_alias=AliasChoices("OPENAI_TRANSLATION_MODEL", "OPENAI_MODEL"))
+    # Speech-to-text provider/model for short individual-field clips. Keep the
+    # provider model in deployment configuration so it can be changed without
+    # editing application code.
+    elevenlabs_transcription_model: str = Field(default="", validation_alias=AliasChoices("ELEVENLABS_TRANSCRIPTION_MODEL"))
     embedded_processing_enabled: bool = True
     processing_shutdown_seconds: float = Field(default=15, gt=0, le=25)
     processing_concurrency: int = Field(default=4, ge=1, le=20)

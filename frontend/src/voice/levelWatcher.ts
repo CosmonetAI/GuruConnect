@@ -1,5 +1,5 @@
 export interface LevelSettings { thresholdPercent: number; seconds: number }
-export const defaultLevelSettings: LevelSettings = { thresholdPercent: 5, seconds: 5 }
+export const defaultLevelSettings: LevelSettings = { thresholdPercent: 10, seconds: 5 }
 
 // Matches the recorder's meter scale: RMS level * 6, clamped to 0-1.
 export const levelPercent = (rms: number) => Math.min(100, Math.max(0, rms * 6 * 100))

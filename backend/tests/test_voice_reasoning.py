@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.voice_ai.agents import (ConversationMonitorAgent, _Understanding, _bounded_dialogue, _number_supported,
-                                 _quantity_supported, _reference_schema, _resolve_evidence)
+                                 _phone_digits, _quantity_supported, _reference_schema, _resolve_evidence)
 from app.voice_ai.context import VoiceConversationContext
 from app.voice_ai.intents import classify_voice_intent
 from app.voice_ai.orchestrator import VoiceConversationOrchestrator
@@ -17,6 +17,12 @@ CONFIG = SimpleNamespace(openai_api_key='synthetic-provider-key', voice_extracti
 
 def fact(value, quote):
     return {'value': value, 'evidence': [quote]}
+
+
+def test_contact_phone_normalization_expands_double_and_triple_digits():
+    assert _phone_digits('nine eight seven double six triple five four three two one') == '987665554321'
+    assert _phone_digits('नौ आठ सात डबल छः पाँच चार तीन दो एक') == '9876654321'
+    assert _phone_digits('ಒಂಬತ್ತು ಎಂಟು ಏಳು ಡಬಲ್ ಆರು ಐದು ನಾಲ್ಕು ಮೂರು ಎರಡು ಒಂದು') == '9876654321'
 
 
 def understanding(text, intent='customer_requirements', **changes):

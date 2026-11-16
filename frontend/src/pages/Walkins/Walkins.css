@@ -294,7 +294,7 @@
 }
 
 .walkin-field-mic:hover:not(:disabled) { background: #e9f2ff; border-color: #8fb4e8; }
-.walkin-field-mic.is-recording { color: #b42318; background: #fff1ef; border-color: #efb4ad; box-shadow: 0 0 calc(7px + (var(--mic-level, 0) * 22px)) rgba(220, 38, 38, calc(.16 + (var(--mic-level, 0) * .42))); transition: box-shadow .08s linear; }
+.walkin-field-mic.is-recording { color: #b42318; background: #fff7f6; border-color: #efb4ad; box-shadow: 0 0 0 1px rgba(220, 38, 38, calc(.12 + (var(--mic-level, 0) * .28))), 0 0 calc(4px + (var(--mic-level, 0) * 12px)) rgba(220, 38, 38, calc(.08 + (var(--mic-level, 0) * .22))); transition: box-shadow .08s linear; }
 .walkin-field-mic:disabled { opacity: .55; cursor: not-allowed; }
 .walkin-mic-spin { animation: walkin-mic-spin .8s linear infinite; }
 @keyframes walkin-mic-spin { to { transform: rotate(360deg); } }
@@ -491,7 +491,7 @@
 
 .walkin-section-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: auto minmax(0, 1fr) minmax(460px, 560px);
   align-items: flex-start;
   gap: 11px;
   margin-bottom: 16px;
@@ -560,6 +560,13 @@
   width: 100%;
 }
 
+.registration-saved-audio { display: flex; flex: 1 1 0; align-items: center; gap: 8px; width: auto; min-width: 0; min-height: 42px; margin: 0; padding: 5px 8px; border: 1px solid #d4e9e1; border-radius: 10px; background: #f7fbf8; }
+.registration-saved-audio-title { display: inline-flex; flex: none; align-items: center; gap: 6px; color: #245b56; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.registration-saved-audio .progressive-playback { display: flex; flex: 1 1 auto; align-items: center; min-width: 0; gap: 6px; flex-wrap: nowrap; }
+.registration-saved-audio .progressive-playback > .button { min-height: 34px; padding: 6px 9px; white-space: nowrap; }
+.registration-saved-audio .progressive-playback audio { flex: 1 1 260px; width: min(320px, 100%); max-width: 320px; height: 32px; min-width: 160px; }
+.registration-saved-audio > .button { flex: none; min-height: 34px; padding: 6px 9px; white-space: nowrap; }
+
 .walkin-registration-recorder .voice-level-wave {
   display: flex;
   width: 108px;
@@ -583,7 +590,9 @@
 .walkin-live-results { grid-column: 1 / -1; margin: 0 0 4px; padding: 10px 14px; border: 1px solid #d9e8ff; border-radius: 10px; background: #f7fbff; color: #29466d; }
 .walkin-live-results-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
 .walkin-live-results-header span { color: #2563eb; font-size: 11px; }
-.walkin-live-results p { margin: 5px 0 0; color: #10294c; font-size: 13px; }
+.walkin-live-transcript { height: 116px; max-height: 116px; overflow-y: auto; overscroll-behavior: contain; margin-top: 5px; padding-right: 8px; scrollbar-width: thin; }
+.walkin-live-results p { margin: 0 0 5px; color: #10294c; font-size: 13px; line-height: 1.4; }
+.walkin-live-results p:last-child { margin-bottom: 0; }
 .walkin-live-results small { display: block; margin-top: 5px; color: #64748b; font-size: 11px; }
 .walkin-preview-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(15, 35, 65, .38); }
 .walkin-preview-modal { width: min(720px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: auto; border: 1px solid #d8e2ef; border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgba(15, 35, 65, .25); }

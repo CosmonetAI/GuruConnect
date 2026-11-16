@@ -77,6 +77,18 @@ def test_registration_retry_is_scoped_and_audited_without_pii(api):
         assert events[0][0].keys() == {"visit_id"}
 
 
+def test_owner_and_salesperson_can_create_walkin_recordings(api):
+    client, headers, ids, _, _ = api
+    owner = {**headers, "X-Test-User": "0"}
+    for actor in (headers, owner):
+        response = client.post(
+            "/api/v1/conversations",
+            headers=actor,
+            json={"customer_name": "Direct visitor", "phone": "+91 9000000000", "consent_confirmed": True, "audio_bucket": "walkin-audio"},
+        )
+        assert response.status_code == 201, response.text
+
+
 def test_workspace_and_salesperson_isolation_admin_assignment_and_revocation(api):
     client, headers, ids, _, _ = api
     key = str(uuid4())
@@ -238,6 +250,21 @@ def test_durable_recording_links_enforce_visit_owner_workspace_and_exact_convers
     converted = save(client, headers, enquiry(sourceEventId=f"walkin:{visit['id']}", conversationId=conv["id"]))
     assert converted.status_code == 201, converted.text
     assert client.post(path, headers=headers, json=fields).status_code == 200
+
+
+def test_owner_walkin_recording_is_attached_to_and_playable_by_assigned_salesperson(api):
+    client, headers, ids, blobs, _ = api
+    owner = {**headers, "X-Test-User": "0"}
+    assigned = {**headers, "X-Test-User": "1"}
+    conv = finalized_recording(client, owner, blobs)
+    visit = register(client, owner, assignedAgentId=str(ids[1]), conversationId=conv["id"]).json()
+
+    enquiry_id = visit["convertedEnquiryReference"]
+    detail = client.get(f"/api/v1/enquiries/{enquiry_id}", headers=assigned)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conversationId"] == conv["id"]
+    assert client.get(f"/api/v1/conversations/{conv['id']}/playback/stream", headers=assigned).status_code == 200
+    assert client.get(f"/api/v1/conversations/{conv['id']}/transcript", headers=assigned).status_code == 200
 
 
 def test_reception_registration_attaches_own_saved_audio_after_sales_assignment(api):

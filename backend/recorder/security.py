@@ -205,10 +205,25 @@ async def administrator(request: Request, context: Workspace = Depends(workspace
 
 
 async def conversation(connection, context: Workspace, conversation_id: UUID, *, lock: bool = False) -> dict:
-    row = await one(connection, "select * from conversations where id=%s and organisation_id=%s and deleted_at is null" + (" for update" if lock else ""), (conversation_id, context.id))
-    # A workspace owner may select another member through the verified workspace
-    # dependency, but ordinary agents never see a peer's recording by ID.
-    if not row or row["owner_id"] != context.member_id:
+    row = await one(connection, """
+        select c.*,
+               exists(
+                   select 1
+                     from public.guruconnect_enquiries e
+                     join public.guruconnect_walkin_recordings wr
+                       on wr.organisation_id=e.organisation_id
+                      and wr.conversation_id=e.conversation_id
+                    where e.organisation_id=c.organisation_id
+                      and e.conversation_id=c.id
+                      and e.assigned_to=%s
+                      and c.audio_bucket='walkin-audio'
+               ) as assigned_walkin_access
+          from conversations c
+         where c.id=%s and c.organisation_id=%s and c.deleted_at is null
+        """ + (" for update" if lock else ""), (context.member_id, conversation_id, context.id))
+    # An assigned owner/salesperson may review the main walk-in recording
+    # attached to their enquiry. All other recordings remain owner-scoped.
+    if not row or (row["owner_id"] != context.member_id and not row.get("assigned_walkin_access")):
         fail("conversation_not_found", 404)
     return row
 

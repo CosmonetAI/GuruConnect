@@ -153,8 +153,9 @@ def checked_response(response: httpx.Response, *, metadata: bool = False) -> dic
 class ElevenLabsAdapter:
     capabilities = REGISTRY["elevenlabs"]
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, model_id: str | None = None):
         self.key = _credential(key, "engine_unconfigured")
+        self.model_id = _credential(model_id or REGISTRY["elevenlabs"].model, "model_unconfigured")
 
     async def test(self, functional: bool = False) -> dict:
         if functional:
@@ -174,7 +175,7 @@ class ElevenLabsAdapter:
         return {"connected": True, "functional": False, "accuracy_tested": False}
 
     async def process(self, audio, language_hint: str | None = None, scope: str = "") -> dict:
-        fields = {"model_id": "scribe_v2", "diarize": "true", "timestamps_granularity": "word", "use_multi_channel": "false", "tag_audio_events": "false", "use_speaker_library": "false", "detect_speaker_roles": "false", "no_verbatim": "false"}
+        fields = {"model_id": self.model_id, "diarize": "true", "timestamps_granularity": "word", "use_multi_channel": "false", "tag_audio_events": "false", "use_speaker_library": "false", "detect_speaker_roles": "false", "no_verbatim": "false"}
         if hint := language_code(language_hint):
             fields["language_code"] = hint
         try:
@@ -231,7 +232,34 @@ class ElevenLabsAdapter:
                 segments.append({"start": float(start), "end": float(end), "text": word["text"], "speaker": speaker, "words": [normalized]})
         if not segments and result["text"].strip():
             segments = [{"start": 0.0, "end": duration, "text": result["text"], "speaker": None, "words": None}]
-        return {"language": language_code(result.get("language_code")), "language_probability": result.get("language_probability"), "source_segments": segments, "english_segments": None, "diarization_status": "completed", "provenance": {"engine": "elevenlabs", "model": "scribe_v2", "request_id": response.headers.get("request-id") or response.headers.get("x-request-id"), "speaker_scope": scope}, "raw": result}
+        return {"language": language_code(result.get("language_code")), "language_probability": result.get("language_probability"), "source_segments": segments, "english_segments": None, "diarization_status": "completed", "provenance": {"engine": "elevenlabs", "model": self.model_id, "request_id": response.headers.get("request-id") or response.headers.get("x-request-id"), "speaker_scope": scope}, "raw": result}
+
+    async def transcribe_text(self, audio: bytes, *, filename: str = "recording.webm", content_type: str = "audio/webm", language_hint: str | None = None) -> str:
+        """Transcribe a short browser clip without requiring WAV timestamps."""
+        if not isinstance(audio, bytes) or not audio:
+            raise ProviderError("provider_invalid_audio")
+        fields = {"model_id": self.model_id, "diarize": "false", "tag_audio_events": "false", "no_verbatim": "false"}
+        if hint := language_code(language_hint):
+            fields["language_code"] = hint
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15), follow_redirects=False, trust_env=False) as client:
+                response = await bounded_request(
+                    client,
+                    "POST",
+                    "https://api.elevenlabs.io/v1/speech-to-text",
+                    paid=True,
+                    headers={"xi-api-key": self.key},
+                    data=fields,
+                    files={"file": (filename, audio, content_type or "application/octet-stream")},
+                )
+                result = checked_response(response)
+        except (httpx.TimeoutException, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as exc:
+            raise ProviderError("external_execution_uncertain", uncertain=True) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError("provider_connection_failed", retryable=True) from exc
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str) or len(result["text"]) > MAX_TRANSCRIPT_CHARS:
+            raise ProviderError("provider_invalid_response", uncertain=True)
+        return result["text"].strip()
 
 
 _TERMS = re.compile(r"(?<!\w)(?:(?=[A-Za-z0-9._/-]*\d)[A-Za-z][A-Za-z0-9._/-]*|\d+(?:[.,]\d+)*(?:[A-Za-z_/-][A-Za-z0-9._/-]*)?(?:\s?(?:kg|cm|mm|km|m|L|ml|%|₹|Rs))?)(?!\w)")

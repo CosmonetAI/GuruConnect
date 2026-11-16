@@ -1,11 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { AlertTriangle, Check, FileAudio2, Mic2, Pause, Play, RotateCcw, Square, Upload, Volume2 } from 'lucide-react'
+import { AlertTriangle, Check, FileAudio2, LoaderCircle, Mic2, Pause, Play, RotateCcw, Square, Trash2, Upload, Volume2 } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
 import { duration, json, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
 import { discardRecovery, listRecoveries, recoverRecording, RecorderSession, type CaptureState } from '../../recording/session'
 import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
+import ProgressivePlayback from '../../components/ProgressivePlayback'
 import '../../styles/recording.css'
 
 export interface ConversationRecorderProps {
@@ -100,7 +101,9 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
       return
     }
     const now = Date.now()
-    if (capture.level < 0.3) {
+    // The visible recorder meter is normalized as RMS * 8. Warn only when
+    // sustained input is below 10% of that meter.
+    if (meterLevel < 0.1) {
       audibleSince.current = null
       if (quietSince.current === null) quietSince.current = now
       if (now - quietSince.current >= 5000) setLowVolumeWarning(true)
@@ -289,7 +292,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   }
   async function resetRecording(discard = false, id = idRef.current) {
     if (anotherMemberView || operationRef.current || captureActive || capture.saving || !user || !workspace) return
-    if (discard && !window.confirm('Permanently discard this pending recording and its local audio?')) return
+    if (discard && !window.confirm('Permanently delete this recording, transcript, and extracted visitor data?')) return
     const { controller, epoch } = begin()
     try {
       const session = active.current; active.current = null; await session?.dispose()
@@ -300,7 +303,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
       if (!isCurrent(epoch, controller)) return
       if (id === idRef.current || !idRef.current) {
         idRef.current = null; creation.current = null; notifiedSaved.current = null
-        setConversationId(null); setSaved(false); setFile(null); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setConsent(false); setPhase('idle')
+        setConversationId(null); setSaved(false); setFile(null); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setConsent(registrationOnly); setPhase('idle')
         await notify(null)
       }
     } catch (reason) { if (isCurrent(epoch, controller)) setError(message(reason)) }
@@ -317,7 +320,7 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
   const flowName = registrationOnly ? 'registration' : 'session'
   const status = saved ? (singleAction ? `${flowName.toUpperCase()} ENDED` : 'AUDIO SAVED') : phase === 'preparing' ? `PREPARING ${flowName.toUpperCase()}` : capture.capture === 'paused' ? `${flowName.toUpperCase()} PAUSED` : captureActive ? `${flowName.toUpperCase()} RECORDING` : operation ? `ENDING ${flowName.toUpperCase()}` : singleAction ? 'READY TO START' : 'READY TO ADD AUDIO'
   return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}${sessionOnly ? ' session-recorder' : ''}`}>
-    {lowVolumeWarning && <div className="low-volume-banner" role="status"><AlertTriangle size={17} /><span><strong>Your microphone sounds quiet.</strong> Please speak a little louder or move closer to the microphone.</span><Volume2 size={17} /></div>}
+    {lowVolumeWarning && <div className="low-volume-banner" role="status"><AlertTriangle size={17} /><span><strong>Please speak up.</strong> Microphone input is below 10%; move closer if needed.</span><Volume2 size={17} /></div>}
     <div className={grouped ? 'session-recording-container' : undefined}>
       <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
         {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
@@ -330,11 +333,17 @@ const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecord
           {!singleAction && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}>{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
           {!singleAction && file && !operation && !unfinished && <button type="button" className="button button-quiet" onClick={() => { setFile(null); setError(''); setProgress(null) }}>Remove selected file</button>}
           {captureActive && <><div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div>{!registrationOnly && <button type="button" className="button button-secondary session-pause-button" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={14} /> : <Pause size={14} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>}<button type="button" className={`button button-stop${singleAction ? ' session-action-button' : ''}`} disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />{registrationOnly ? 'End registration' : sessionOnly ? 'End session' : 'Stop & save'}</button></>}
+          {registrationOnly && saved && conversationId && workspace && <section className="registration-saved-audio" aria-label="Saved visitor recording">
+            <span className="registration-saved-audio-title"><FileAudio2 size={15} /> Visitor recording</span>
+            <ProgressivePlayback conversationId={conversationId} workspaceId={workspace.id} memberId={workspace.member_id} compact />
+            <button type="button" className="button button-danger-quiet recorder-trash-button" disabled={operation} onClick={() => void resetRecording(true)}><Trash2 size={14} /> Delete</button>
+          </section>}
           {sessionOnly && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary" onClick={() => void resetRecording()}><RotateCcw size={14} />Record again</button>}
+          {registrationOnly && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary session-action-button" onClick={() => void resetRecording()}><RotateCcw size={14} />Record again</button>}
           {!singleAction && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary" onClick={() => void resetRecording()}>Record another conversation</button>}
           {!singleAction && conversationId && !anotherMemberView && !captureActive && !operation && !capture.saving && <button type="button" className="button button-quiet" onClick={() => void resetRecording()}>Detach audio</button>}
           {!singleAction && unfinished && !anotherMemberView && !captureActive && !operation && <button type="button" className="button button-danger-quiet" onClick={() => void resetRecording(true)}>Discard recording</button>}
-          {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
+          {operation && <span className="recorder-operation-status" role="status"><LoaderCircle size={14} />{phase === 'preparing' ? 'Preparing audio' : phase === 'saving' ? 'Saving audio' : 'Uploading audio'}</span>}
         </div>
       </div>
       {!registrationOnly && <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => { setConsent(event.target.checked); onConsentChange?.(event.target.checked) }} /><span>I have permission from all intended participants to record and process this conversation.</span></label></div>}

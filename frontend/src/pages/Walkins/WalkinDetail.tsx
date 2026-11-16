@@ -73,6 +73,7 @@ export default function WalkinDetail() {
   const allowedTransitions = useMemo(() => visit ? getAllowedWalkinTransitions(visit.status) : [], [visit])
   const closed = visit && ['Completed', 'Cancelled', 'Converted to Enquiry'].includes(visit.status)
   const canConvert = isWalkinDemoMode() || visit?.assignedAgentId === user?.id
+  const canRecordWalkinAudio = isWalkinDemoMode() || visit?.assignedAgentId === user?.id || (workspace?.role === 'owner' && visit?.registeredBy === user?.id)
   const updateRequirement = <K extends keyof WalkinRequirement>(field: K, value: WalkinRequirement[K]) => {
     setRequirements((previous) => ({ ...previous, [field]: value }))
     setMessage('')
@@ -236,7 +237,7 @@ export default function WalkinDetail() {
             customerPhone={visit.mobileNumber}
             customerEmail={visit.email}
             disabled={!!closed}
-            canRecord={canConvert}
+            canRecord={canRecordWalkinAudio}
           />
 
           <section className="walkin-card">

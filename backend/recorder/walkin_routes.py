@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -22,6 +22,8 @@ from .security import Workspace, administrator, owned_conversation, workspace
 from .assignment import current_ticket_day, format_ticket_number, least_loaded_salesperson, next_daily_ticket
 from app.zoho import set_member_id, set_organisation_id, zoho
 from app.crm_provisioning import provision_enquiry_lead
+from app.crm_lead import normalize_email, normalize_phone
+from .providers import ElevenLabsAdapter
 
 router = APIRouter(prefix="/api/v1/walkins", tags=["walkins"])
 log = logging.getLogger(__name__)
@@ -50,10 +52,79 @@ VOICE_FIELD_PROMPTS = {
     "customerType": "whether the person is here to buy/customer or sell/vendor",
 }
 
-PHONE_WORDS = {
-    "zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+VOICE_FIELD_QUESTION_HINTS = {
+    "name": "What is your name? / May I have the visitor's full name?",
+    "phone": "What is your phone number? / Please share your mobile number.",
+    "email": "What is your email address?",
+    "organisation": "What is your organisation or company name? / Which company are you from?",
+    "requirement": "What do you need? / What is your project or purchase requirement?",
+    "customerType": "Are you here to buy or sell? / Are you a customer or vendor?",
 }
+
+VOICE_FIELD_EXTRACTION_PROMPT = """Extract only the requested field from a short multilingual speech-to-text transcript.
+The transcript may contain just the answer or a short question followed by the answer. Ignore
+the question, greetings, filler, and phrases such as "my name is"; return only the answer.
+Understand English, Hindi, Kannada, and common Latin transliterations, but return the
+final value in English/Latin text only. For names, keep the complete first-and-last name.
+For phone numbers, preserve digit order: zero/oh/o are
+0, double eight is 88, triple five is 555, Hindi सात/saat is 7, Hindi आठ/aath is 8,
+Kannada ಏಳು/elu is 7, and Kannada ಎಂಟು/entu is 8. Do not invent missing information.
+Return JSON only with exactly one string key: value."""
+
+VOICE_FIELD_EXTRACTION_FIELD_RULES = {
+    "name": "For CRM search, return the complete name using Latin/English letters. If the transcript is in Hindi or Kannada script, transliterate it without translating or inventing. Example: अक्षत सक्सेना -> Akshat Saxena.",
+    "phone": "Return ASCII digits only, preserving the exact digit sequence represented by the transcript. Never add, remove, reorder, or guess digits.",
+    "email": "Return an ASCII Latin email address with exact spelling. Convert spoken at/dot/underscore/hyphen words, but never autocorrect, add, or remove characters.",
+    "organisation": "Return the complete organisation name in English/Latin text. Transliterate a proper name when needed; do not add details.",
+    "requirement": "Return the complete requirement in English. Translate faithfully when needed; do not summarize or invent details.",
+    "customerType": "Return exactly customer or vendor based on the answer; do not infer from unrelated words.",
+}
+
+VOICE_FIELD_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "walkin_voice_field_answer",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+# The prompt asks the model to return ``value``, but older/fallback models may
+# use the field name instead. Accept those equivalent keys so a valid answer
+# is not discarded just because the JSON envelope differs.
+VOICE_FIELD_VALUE_KEYS = {
+    "name": ("value", "name", "full_name", "fullName", "customer_name", "customerName", "answer"),
+    "phone": ("value", "phone", "phone_number", "phoneNumber", "mobile", "mobile_number", "mobileNumber", "number", "answer"),
+    "email": ("value", "email", "email_address", "emailAddress", "answer"),
+    "organisation": ("value", "organisation", "organization", "company", "company_name", "companyName", "answer"),
+    "requirement": ("value", "requirement", "project", "project_name", "projectName", "answer"),
+    "customerType": ("value", "customerType", "customer_type", "type", "answer"),
+}
+
+PHONE_WORDS = {
+    "zero": "0", "oh": "0", "o": "0", "nought": "0", "nil": "0", "one": "1", "two": "2", "to": "2", "too": "2", "three": "3", "tree": "3", "four": "4", "for": "4", "fore": "4",
+    "five": "5", "six": "6", "sics": "6", "seven": "7", "saven": "7", "eight": "8", "ate": "8", "ait": "8", "nine": "9", "niner": "9",
+    # Hindi, including common Latin transliterations used by speech-to-text.
+    "शून्य": "0", "जीरो": "0", "एक": "1", "इक": "1", "दो": "2", "तीन": "3", "चार": "4",
+    "पांच": "5", "पाँच": "5", "छह": "6", "छः": "6", "छ": "6", "छे": "6", "सात": "7", "सत": "7",
+    "आठ": "8", "अठ": "8", "नौ": "9", "नव": "9",
+    "shunya": "0", "shoonya": "0", "ek": "1", "ik": "1", "do": "2", "teen": "3",
+    "char": "4", "chaar": "4", "panch": "5", "paanch": "5", "chhe": "6", "cheh": "6",
+    "saat": "7", "sat": "7", "aath": "8", "ath": "8", "nau": "9", "nav": "9",
+    # Kannada, including common Latin transliterations.
+    "ಶೂನ್ಯ": "0", "ಸೊನ್ನೆ": "0", "ಒಂದು": "1", "ಎರಡು": "2", "ಮೂರು": "3", "ನಾಲ್ಕು": "4",
+    "ಐದು": "5", "ಆರು": "6", "ಏಳು": "7", "ಎಂಟು": "8", "ಒಂಬತ್ತು": "9",
+    "sonne": "0", "ondu": "1", "eradu": "2", "mooru": "3", "naalku": "4",
+    "aidu": "5", "aaru": "6", "elu": "7", "yelu": "7", "entu": "8", "ombattu": "9",
+}
+PHONE_REPEAT_WORDS = {"double", "triple", "डबल", "ट्रिपल", "ಡಬಲ್", "ಟ್ರಿಪಲ್"}
+PHONE_REPEAT_MULTIPLIERS = {"double": 2, "डबल": 2, "ಡಬಲ್": 2, "triple": 3, "ट्रिपल": 3, "ಟ್ರಿಪಲ್": 3}
+EMAIL_LITERAL = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.IGNORECASE)
 
 
 def _phone_digits(value: object) -> str:
@@ -62,9 +133,120 @@ def _phone_digits(value: object) -> str:
     direct = re.sub(r"\D", "", text)
     if len(direct) >= 7:
         return direct[-15:]
-    tokens = re.findall(r"[a-z]+", text)
-    spoken = "".join(PHONE_WORDS[token] for token in tokens if token in PHONE_WORDS)
+    tokens = [token.strip(".,;:!?।؟") for token in re.findall(r"\S+", text, flags=re.UNICODE)]
+    spoken_parts = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in PHONE_REPEAT_WORDS and index + 1 < len(tokens):
+            next_token = tokens[index + 1]
+            digit = PHONE_WORDS.get(next_token, next_token if next_token.isdigit() and len(next_token) == 1 else "")
+            if digit:
+                spoken_parts.append(digit * PHONE_REPEAT_MULTIPLIERS[token])
+                index += 2
+                continue
+        digit = PHONE_WORDS.get(token, token if token.isdigit() and len(token) == 1 else "")
+        if digit:
+            spoken_parts.append(digit)
+        index += 1
+    spoken = "".join(spoken_parts)
     return spoken[-15:] if len(spoken) >= 7 else ""
+
+
+def _phone_from_dialogue(value: object) -> str:
+    """Find a phone answer in a translated dialogue without using other numbers."""
+    text = str(value or "")
+    patterns = (
+        r"(?:phone|mobile|contact)\s*(?:number|no\.?|is|:)?\s*([^.!?\n]{7,100})",
+        r"(?:number|नंबर|ಸಂಖ್ಯೆ)\s*(?:is|है|:)?\s*([^.!?\n]{7,100})",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.UNICODE):
+            digits = _phone_digits(match.group(1))
+            if digits:
+                return digits
+    return ""
+
+
+def _explicit_dialogue_value(value: object, labels: str, *, prefer_last: bool = False) -> str:
+    """Read a value only when the translated dialogue labels that field."""
+    text = str(value or "")
+    # A fixed question and its answer can arrive in one translated turn,
+    # e.g. ``What is your name? Saumishri Patil``. Keep the question mark as
+    # a separator, but never treat a question-only turn as an answer.
+    pattern = rf"(?:{labels})\s*(?:name\s*)?(?:is|:|है|\?)?\s*([^.!?\n]{{2,140}})"
+    candidate = ""
+    for match in re.finditer(pattern, text, flags=re.IGNORECASE | re.UNICODE):
+        # Do not let the generic ``name`` label match the ``name`` inside
+        # ``organisation name`` or ``company name``.
+        prefix = text[max(0, match.start() - 32):match.start()]
+        if re.search(r"(?:organisation|organization|company)\s+$", prefix, flags=re.IGNORECASE):
+            continue
+        answer = re.split(r"\s+(?:(?:(?:and|with)\s+)?(?:my|मेरा|मेरी|ನನ್ನ)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:uh+|um+|erm+|hmm+)\s*[,;:-]?)", match.group(1), maxsplit=1, flags=re.IGNORECASE)[0]
+        answer = answer.strip(" \t,;:-")
+        # An organisation answer may follow a broken turn boundary as
+        # ``organization\nMy name is Groove``. Remove the nested field label
+        # before extracting the actual value.
+        answer = re.sub(r"^(?:my|your)\s+(?:name|email|phone|mobile|company|organisation|organization|number)\s*(?:is|:|है|\?)?\s*", "", answer, flags=re.IGNORECASE)
+        # Speech-to-text commonly inserts hesitation words between a field
+        # label and the actual answer: ``organisation name is, uh, Groove``.
+        answer = re.sub(r"^(?:uh+|um+|erm+|hmm+)\s*[,;:-]?\s*", "", answer, flags=re.IGNORECASE)
+        answer = re.sub(r"\s+(?:and|with)\s*$", "", answer, flags=re.IGNORECASE).strip(" \t,;:-")
+        if answer:
+            candidate = answer
+            if not prefer_last:
+                return candidate
+    return candidate
+
+
+def _email_value(value: object) -> str:
+    """Extract an email without allowing the model to alter a literal address."""
+    text = str(value or "").strip()
+    literal = EMAIL_LITERAL.search(text)
+    if literal:
+        return literal.group(0).rstrip(".,;:!?：")
+    spoken = text.casefold()
+    spoken = re.sub(r"\b(?:at the rate of|at the rate|at sign|at)\b", "@", spoken)
+    spoken = re.sub(r"\b(?:dot|period)\b", ".", spoken)
+    spoken = re.sub(r"\b(?:underscore)\b", "_", spoken)
+    spoken = re.sub(r"\b(?:dash|hyphen)\b", "-", spoken)
+    spoken = re.sub(r"\s*([@._-])\s*", r"\1", spoken)
+    literal = EMAIL_LITERAL.search(spoken)
+    return literal.group(0).rstrip(".,;:!?：") if literal else ""
+
+
+def _completion_text(message: object) -> str:
+    """Read text from both legacy string and newer content-part messages."""
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+def _voice_value(field: str, raw: str, spoken: str) -> str:
+    """Extract a field answer while tolerating equivalent JSON key names."""
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    value = next((parsed.get(key) for key in VOICE_FIELD_VALUE_KEYS[field] if parsed.get(key) not in (None, "")), "")
+    if field == "phone":
+        return _phone_digits(spoken) or _phone_digits(value)
+    if field == "email":
+        return _email_value(spoken) or _email_value(value)
+    if field == "customerType":
+        normalized = str(value).strip().lower()
+        return normalized if normalized in {"customer", "vendor"} else ""
+    return str(value).strip()
 
 class VoiceFieldCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -94,8 +276,13 @@ async def extract_voice_field(
     if field not in VOICE_FIELD_PROMPTS:
         fail("voice_field_invalid", 422, "This registration field cannot be extracted from voice")
     settings = request.app.state.settings
+    if not settings.elevenlabs_api_key:
+        fail("voice_extraction_unconfigured", 503, "ElevenLabs voice transcription is not configured")
     if not settings.openai_api_key:
         fail("voice_extraction_unconfigured", 503, "OpenAI voice extraction is not configured")
+    elevenlabs_model = (settings.elevenlabs_transcription_model or "").strip()
+    if not elevenlabs_model:
+        fail("voice_extraction_unconfigured", 503, "ELEVENLABS_TRANSCRIPTION_MODEL is not configured")
     try:
         content = base64.b64decode(body.audioBase64, validate=True)
     except ValueError:
@@ -103,47 +290,33 @@ async def extract_voice_field(
     if not content or len(content) > 6_000_000:
         fail("voice_field_audio_invalid", 422, "Record a short voice answer and try again")
     try:
+        speech = ElevenLabsAdapter(settings.elevenlabs_api_key.get_secret_value(), model_id=elevenlabs_model)
+        spoken = await speech.transcribe_text(
+            content,
+            filename=f"walkin-{field}.webm",
+            content_type=body.contentType or "audio/webm",
+        )
+        if not spoken:
+            fail("voice_field_empty", 422, "No speech was detected. Try again")
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value(), max_retries=1)
-        transcript = await client.audio.transcriptions.create(
-            model="whisper-1",
-            file=(f"walkin-{field}.webm", content, body.contentType or "audio/webm"),
-            response_format="text",
-        )
-        spoken = str(getattr(transcript, "text", transcript) or "").strip()
-        if not spoken:
-            fail("voice_field_empty", 422, "No speech was detected. Try again")
         extraction = await client.chat.completions.create(
             model=settings.openai_translation_model,
             temperature=0,
-            response_format={"type": "json_object"},
+            response_format=VOICE_FIELD_RESPONSE_FORMAT,
             messages=[
-                {"role": "system", "content": "Extract exactly one registration answer. Return only JSON with a string key value. For customerType, value must be exactly customer or vendor. Never invent missing details."},
-                {"role": "user", "content": f"Field: {VOICE_FIELD_PROMPTS[field]}\nSpoken answer: {spoken}"},
+                {"role": "system", "content": f"{VOICE_FIELD_EXTRACTION_PROMPT}\n\nField-specific rule: {VOICE_FIELD_EXTRACTION_FIELD_RULES[field]}\nField question hint: {VOICE_FIELD_QUESTION_HINTS[field]}"},
+                {"role": "user", "content": f"Target field: {VOICE_FIELD_PROMPTS[field]}\nTranscript: {spoken}"},
             ],
         )
-        raw = extraction.choices[0].message.content or "{}"
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            parsed = {}
-        if not isinstance(parsed, dict):
-            parsed = {}
-        value = parsed.get("value")
-        if value in (None, ""):
-            value = next((parsed.get(key) for key in ("phone", "phone_number", "mobile", "number", "answer") if parsed.get(key) not in (None, "")), "")
-        if field == "phone":
-            value = _phone_digits(value) or _phone_digits(spoken)
-        if field == "customerType":
-            value = "vendor" if str(value).strip().lower() == "vendor" else "customer"
-        else:
-            value = str(value).strip()
+        raw = _completion_text(extraction.choices[0].message)
+        value = _voice_value(field, raw, spoken)
         if not value:
             fail("voice_field_unresolved", 422, "The answer could not be understood. Try again")
         return {"field": field, "value": value, "transcript": spoken}
     except Exception as error:
-        if getattr(error, "status_code", None):
+        if isinstance(error, HTTPException):
             raise
         log.warning("walkin_voice_field_failed field=%s exception_type=%s", field, type(error).__name__)
         fail("voice_field_failed", 502, "Voice extraction failed. Try again")
@@ -153,12 +326,12 @@ def _walkin_extracted_fields(extractions, context):
     """Flatten only grounded registration fields for the live form preview."""
     fields = {}
     aliases = {
-        "name": "customerName", "contact_name": "customerName", "full_name": "customerName",
-        "phone": "mobileNumber", "contact_phone": "mobileNumber", "mobile": "mobileNumber",
-        "email": "email", "contact_email": "email", "company": "companyName",
-        "contact_company": "companyName", "organisation": "companyName", "organization": "companyName",
-        "project": "projectName", "requirement": "projectName", "active_topic": "projectName",
-        "customer_type": "customerType", "contact_type": "customerType",
+        "name": "customerName", "customername": "customerName", "customer_name": "customerName", "contact_name": "customerName", "full_name": "customerName",
+        "phone": "mobileNumber", "phonenumber": "mobileNumber", "phone_number": "mobileNumber", "contact_phone": "mobileNumber", "mobile": "mobileNumber", "mobilenumber": "mobileNumber", "mobile_number": "mobileNumber",
+        "email": "email", "customeremail": "email", "customer_email": "email", "email_address": "email", "contact_email": "email", "company": "companyName",
+        "companyname": "companyName", "company_name": "companyName", "contact_company": "companyName", "organisation": "companyName", "organization": "companyName", "organization_name": "companyName",
+        "project": "projectName", "projectname": "projectName", "project_name": "projectName", "requirement": "projectName", "active_topic": "projectName",
+        "customer_type": "customerType", "customertype": "customerType", "contact_type": "customerType",
     }
 
     def visit(value):
@@ -173,10 +346,164 @@ def _walkin_extracted_fields(extractions, context):
             for item in value:
                 visit(item)
 
-    for row in extractions:
+    # walkin_preview reads rows newest-first. Apply them oldest-first so a
+    # later correction (for example a corrected name or phone number) wins.
+    for row in reversed(extractions or []):
         if row.get("status") == "complete":
             visit(row.get("data") or {})
     visit(context or {})
+
+    # The live model can return a literal phone/email or a spoken rendering.
+    # Normalize here as well as in the offline fallback so the browser never
+    # receives ``nine three...`` or ``+91 ...`` where it expects CRM values.
+    if "mobileNumber" in fields:
+        phone = _phone_digits(fields["mobileNumber"])
+        if phone:
+            fields["mobileNumber"] = phone
+        else:
+            fields.pop("mobileNumber", None)
+    if "email" in fields:
+        email = _email_value(fields["email"])
+        if email:
+            fields["email"] = email
+        else:
+            fields.pop("email", None)
+    return fields
+
+
+def _walkin_dialogue_fields(dialogue: object) -> dict[str, str]:
+    """Extract high-confidence registration values directly from ordered text."""
+    text = str(dialogue or "")
+    if not text.strip():
+        return {}
+    name = _explicit_dialogue_value(text, r"my\s+name|name|नाम|ಹೆಸರು")
+    if not name:
+        # Individual answers may arrive without a label. A short first line
+        # before phone/email/company language is the visitor's name.
+        first_line = re.split(r"[.!?\n]", text.strip(), maxsplit=1)[0].strip()
+        first_line = re.sub(r"^(?:hi|hello|hey)\s*[,:-]?\s*", "", first_line, flags=re.IGNORECASE).strip()
+        first_line = re.sub(r"^(?:this is|i am|i'm)\s+", "", first_line, flags=re.IGNORECASE).strip()
+        if (2 <= len(first_line.split()) <= 5
+                and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,120}", first_line)
+                and not re.search(r"\b(?:phone|mobile|email|company|organisation|organization|project|requirement)\b", first_line, flags=re.IGNORECASE)):
+            name = first_line
+    company = _explicit_dialogue_value(text, r"company|organisation|organization|firm|संस्था|ಸಂಸ್ಥೆ", prefer_last=True)
+    # Some translations put the company before the word ``Company``:
+    # ``I am from Groove Company, and ...``.
+    before_company = list(re.finditer(
+        r"\b(?:from|at|of)\s+([A-Za-z][A-Za-z0-9& .'-]{1,100}?\s+(?:company|organisation|organization|firm))\b",
+        text, flags=re.IGNORECASE,
+    ))
+    if before_company:
+        company = before_company[-1].group(1).strip(" \t,;:-")
+    fields = {
+        "customerName": name,
+        "mobileNumber": _phone_from_dialogue(text),
+        "email": _email_value(text),
+        "companyName": company,
+        "projectName": _explicit_dialogue_value(text, r"project(?:\s+requirement)?|requirement|need|looking\s+for|want", prefer_last=True),
+    }
+    return {key: value for key, value in fields.items() if value}
+
+
+WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "walkin_registration_fields",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "customerName": {"type": "string"},
+                "mobileNumber": {"type": "string"},
+                "email": {"type": "string"},
+                "companyName": {"type": "string"},
+                "projectName": {"type": "string"},
+                "customerType": {"type": "string", "enum": ["customer", "vendor", ""]},
+            },
+            "required": ["customerName", "mobileNumber", "email", "companyName", "projectName", "customerType"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+WALKIN_FULL_EXTRACTION_PROMPT = """Use the cumulative English translation available so far as chronological visitor dialogue.
+This is a progressive prefix, not necessarily the end of the recording. Preserve facts already stated,
+and extract newly stated facts from the latest part without waiting for the recording to finish.
+Return only facts explicitly spoken by the visitor. Map a bare answer to the nearest unanswered fixed
+question. A question and answer can be in one turn: `What is your name? Saumishri Patil` means the
+name is `Saumishri Patil`; a question-only turn such as `Your phone number?` has no phone value.
+Ignore receptionist questions, greetings, acknowledgements, and hesitation words such as uh or um.
+If one sentence contains multiple answers, split them independently: `my name is Akshat Saxena and
+my phone number is nine three double one...` supplies both name and phone. Never use an email username,
+email domain, or phone digits as a name; never use an email domain as a company. Keep names and company
+names in English/Latin letters for CRM search. Return phone as ASCII digits, preserving order and
+expanding zero/oh, double/triple, Hindi/Kannada number words, and common transliterations. Return email
+exactly after converting spoken at, dot, underscore, and hyphen words; never autocorrect. Return customerType
+as customer for buying/customer or vendor for selling/vendor, otherwise empty. Do not invent missing values."""
+
+
+async def _extract_walkin_registration_fields(request: Request, context: Workspace, conversation_id: UUID, turns: list[dict]) -> dict[str, str]:
+    """Extract the current cumulative registration prefix as it grows.
+
+    ElevenLabs owns speech recognition and translation in the normal worker
+    pipeline. OpenAI receives the translated prefix at each poll and runs once
+    per transcript fingerprint, so the first chunk can fill fields while later
+    chunks refine the same context.
+    """
+    english = [str(turn.get("english_text") or "").strip() for turn in turns]
+    dialogue = "\n".join(text for text in english if text)
+    settings = request.app.state.settings
+    if not dialogue or not settings.openai_api_key:
+        return {}
+    fingerprint = "walkin-fields:" + hashlib.sha256(dialogue.encode("utf-8")).hexdigest()
+    async with request.app.state.db.connection() as connection:
+        await owned_conversation(connection, context, conversation_id)
+        claimed = await one(connection, """
+            insert into public.conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
+            values(%s,%s,%s,'running','{}'::jsonb)
+            on conflict(conversation_id,fingerprint) do nothing
+            returning id
+        """, (conversation_id, context.id, fingerprint))
+    # Another preview request or the Supabase webhook already owns this exact
+    # fingerprint. It will publish the result; do not pay for a duplicate call.
+    if not claimed:
+        return {}
+    try:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value(), max_retries=1)
+        completion = await client.chat.completions.create(
+            model=settings.openai_translation_model,
+            temperature=0,
+            response_format=WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT,
+            messages=[
+                {"role": "system", "content": WALKIN_FULL_EXTRACTION_PROMPT},
+                {"role": "system", "content": "Extract visitor registration details from the cumulative English translation available so far. Map each answer to the nearby question or explicit label. Never use an email username, email domain, or phone digit as a person's name. Never use an email domain as a company. Only fill customerName when the visitor explicitly gives a name (for example, 'my name is Akshat Saxena'); only fill companyName when the visitor explicitly gives a company or organisation; only fill mobileNumber from a phone/mobile answer. Ignore questions, greetings, and filler. Return only facts explicitly spoken by the visitor. Keep names and company names in English/Latin letters for CRM search. Return phone as ASCII digits only, preserving every spoken digit including double/triple words. Return email exactly as spoken after converting at/dot/underscore/hyphen words; never autocorrect. Return customerType as customer for buying/customer or vendor for selling/vendor; otherwise empty. Do not wait for the recording to finish and do not clear a fact just because it is absent from this prefix."},
+                {"role": "user", "content": f"Transcript:\n{dialogue[:30000]}"},
+            ],
+        )
+        raw = _completion_text(completion.choices[0].message)
+        parsed = json.loads(raw)
+        fields = {key: str(parsed.get(key) or "").strip() for key in ("customerName", "mobileNumber", "email", "companyName", "projectName", "customerType")}
+        # Prefer values grounded in the complete dialogue over a model-only
+        # guess. This is especially important for exact phone/email fields.
+        fields.update(_walkin_dialogue_fields(dialogue))
+        fields["mobileNumber"] = _phone_digits(fields["mobileNumber"])
+        fields["email"] = _email_value(fields["email"])
+        email_local = fields["email"].split("@", 1)[0].casefold() if "@" in fields["email"] else ""
+        if email_local and re.sub(r"[^a-z0-9]", "", fields["customerName"].casefold()) == re.sub(r"[^a-z0-9]", "", email_local):
+            fields["customerName"] = ""
+        if fields["customerType"] not in {"customer", "vendor"}:
+            fields["customerType"] = ""
+    except Exception as error:
+        log.warning("walkin_registration_extraction_failed exception_type=%s", type(error).__name__)
+        async with request.app.state.db.connection() as connection:
+            await connection.execute("update public.conversation_extractions set status='failed',error_message=%s,updated_at=now() where conversation_id=%s and fingerprint=%s", (type(error).__name__, conversation_id, fingerprint))
+        return {}
+    async with request.app.state.db.connection() as connection:
+        await connection.execute("update public.conversation_extractions set status='complete',data=%s,updated_at=now() where conversation_id=%s and fingerprint=%s", (Jsonb(fields), conversation_id, fingerprint))
     return fields
 
 
@@ -190,11 +517,46 @@ async def walkin_preview(conversation_id: UUID, request: Request, context: Works
         if recording.get("active_version_id"):
             version = await one(connection, "select id,english_state,state,coverage_samples from public.transcript_versions where id=%s and conversation_id=%s", (recording["active_version_id"], conversation_id))
             if version:
-                turns = await many(connection, "select ordinal,start_seconds,end_seconds,source_text,english_text,source_language,speaker_ref from public.transcript_turns where version_id=%s order by ordinal", (version["id"],))
+                turns = await many(connection, """
+                    select t.ordinal,t.start_seconds,t.end_seconds,t.source_text,
+                           coalesce(t.english_text,tr.english_text) as english_text,
+                           t.source_language,t.speaker_ref
+                      from public.transcript_turns t
+                      left join lateral (
+                          select english_text
+                            from public.translations
+                           where source_turn_id=t.id and state='complete'
+                           order by created_at desc limit 1
+                      ) tr on true
+                     where t.version_id=%s
+                     order by t.ordinal
+                """, (version["id"],))
         extractions = await many(connection, "select status,data,created_at from public.conversation_extractions where conversation_id=%s order by created_at desc limit 20", (conversation_id,))
         context_row = await one(connection, "select context from public.voice_ai_contexts where conversation_id=%s", (conversation_id,))
     public_extractions = [{"status": row.get("status"), "data": row.get("data") or {}, "created_at": row.get("created_at")} for row in extractions]
     fields = _walkin_extracted_fields(extractions, (context_row or {}).get("context") if context_row else {})
+    # Apply deterministic values from the ordered transcript available so far last so
+    # a partial live extraction cannot leave a wrong name, phone, or company
+    # in the form while the fallback/model catches up.
+    dialogue = "\n".join(str(turn.get("english_text") or "").strip() for turn in turns if turn.get("english_text"))
+    fields.update(_walkin_dialogue_fields(dialogue))
+    email_local = str(fields.get("email") or "").split("@", 1)[0].casefold() if "@" in str(fields.get("email") or "") else ""
+    email_domain = str(fields.get("email") or "").split("@", 1)[1].casefold() if "@" in str(fields.get("email") or "") else ""
+    if email_local and re.sub(r"[^a-z0-9]", "", str(fields.get("customerName") or "").casefold()) == re.sub(r"[^a-z0-9]", "", email_local):
+        fields.pop("customerName", None)
+    if email_domain and str(fields.get("companyName") or "").casefold().strip(" .") == email_domain:
+        fields.pop("companyName", None)
+    # Run on every new translated prefix, not only while required fields are
+    # missing. The fingerprint prevents duplicate model calls for the same
+    # prefix, while later chunks add/refine fields using the full context.
+    if turns:
+        fallback = await _extract_walkin_registration_fields(request, context, conversation_id, turns)
+        if fallback:
+            # The fallback sees the whole ordered prefix, so a non-empty
+            # fallback value is more trustworthy than an earlier partial/live
+            # extraction. Keep the earlier value only when fallback is blank.
+            fields = {key: value or fields.get(key, "") for key, value in fallback.items()}
+            public_extractions.append({"status": "complete", "data": fallback, "created_at": datetime.now().isoformat()})
     return {
         "conversation": {key: recording.get(key) for key in ("id", "capture_state", "upload_state", "transcription_state", "english_state", "final_state", "duration_seconds", "active_version_id")},
         "version": version,
@@ -213,6 +575,9 @@ class WalkinCreate(BaseModel):
     projectName: Annotated[str, Field(max_length=150)] = ""
     customerType: Literal["customer", "vendor"] = "customer"
     assignedAgentId: UUID | None = None
+    # Only the completed main registration recording uses this. Individual
+    # field-mic clips remain transient and are never attached to a visitor.
+    conversationId: UUID | None = None
     purpose: Purpose = "Other"
     purposeDescription: Annotated[str, Field(max_length=2000)] = ""
     productOrService: Text200 = ""
@@ -345,31 +710,98 @@ async def ensure_walkin_books_contact(body: WalkinCreate, context: Workspace):
         email=body.email,
         phone=body.mobileNumber,
         contact_type=body.customerType,
+        company=body.companyName,
+        notes=body.purposeDescription or body.internalNotes,
     )
     if not isinstance(contact, dict):
         return None
-    return contact.get("contact_id") or contact.get("id")
+    return contact
 
 
-async def provision_walkin_crm(connection, context, enquiry_id, body):
-    """Create/link the visitor in Bigin after the local registration is saved."""
+async def fetch_walkin_crm(body: WalkinCreate, books_contact=None):
+    """Call external CRM providers without holding a database transaction open."""
     try:
         result = await provision_enquiry_lead(
             zoho, name=body.customerName, phone=body.mobileNumber, email=body.email or "", contact_type=body.customerType,
-            details={"description": body.purposeDescription or body.internalNotes or "Created from ConnectCosmos visitor registration"},
+            details={
+                "company": body.companyName,
+                "description": body.purposeDescription or body.internalNotes or "Created from ConnectCosmos visitor registration",
+                "requirement": body.projectName,
+            },
+            books_contact=books_contact,
         )
+        return result, None
+    except Exception as error:
+        log.warning("walkin_crm_provision_failed exception_type=%s", type(error).__name__)
+        return None, type(error).__name__
+
+
+async def persist_walkin_crm(connection, context, enquiry_id, body, crm_result):
+    """Persist provider identity after the local visitor/enquiry transaction committed."""
+    if not isinstance(crm_result, dict):
+        return None
+    try:
+        result = crm_result
         contact, record = result["contact"], result["record"]
         books_contact = result.get("books_contact") or {}
+        identity = result.get("identity") or {}
+        bigin_contact_id = str(contact.get("id")) if contact.get("id") else None
         books_contact_id = books_contact.get("contact_id") or books_contact.get("id")
+        canonical_name = identity.get("name") or body.customerName
+        canonical_phone = identity.get("phone") or body.mobileNumber
+        canonical_email = identity.get("email") or body.email or ""
+        canonical_company = identity.get("company") or body.companyName or ""
+        canonical_description = identity.get("description") or body.purposeDescription or body.internalNotes or ""
+        existing = await one(connection, "select conversation_id,payload from public.guruconnect_enquiries where id=%s and organisation_id=%s", (enquiry_id, context.id))
+        payload = dict(existing.get("payload") or {}) if existing else {}
+        payload.update({
+            "customerName": canonical_name,
+            "phone": canonical_phone,
+            "email": canonical_email,
+            "company": canonical_company,
+            "companyName": canonical_company,
+        })
+        if canonical_description:
+            payload["customerNotes"] = canonical_description
         await connection.execute("""update public.guruconnect_enquiries
-            set bigin_contact_id=%s,bigin_pipeline_id=%s,bigin_deal_id=%s,books_contact_id=coalesce(%s,books_contact_id),crm_sync_error=null
+            set bigin_contact_id=%s,bigin_pipeline_id=%s,bigin_deal_id=%s,books_contact_id=coalesce(%s,books_contact_id),
+                customer_name=%s,phone=%s,payload=%s,crm_sync_error=null
             where id=%s and organisation_id=%s""",
-            (str(contact.get("id")), result["pipeline_id"], str(record.get("id")), books_contact_id, enquiry_id, context.id))
+            (bigin_contact_id, result["pipeline_id"], str(record.get("id")), books_contact_id,
+             canonical_name, canonical_phone, Jsonb(payload), enquiry_id, context.id))
+        await connection.execute("""update public.guruconnect_walkin_visits
+            set customer_name=%s,mobile_number=%s,payload=%s,updated_at=clock_timestamp()
+            where organisation_id=%s and converted_enquiry_id=%s""",
+            (canonical_name, canonical_phone, Jsonb({**payload, "mobileNumber": canonical_phone, "customerName": canonical_name,
+                                                      "email": canonical_email}), context.id, enquiry_id))
+        conversation_id = existing.get("conversation_id") if existing else None
+        if conversation_id:
+            customer = await one(connection, "select customer_id from public.conversations where id=%s and organisation_id=%s", (conversation_id, context.id))
+            if customer and customer.get("customer_id"):
+                customer_id = customer["customer_id"]
+                await connection.execute("""
+                    update public.customers
+                       set name=%s,email=%s,phone=%s,normalized_email=%s,normalized_phone=%s,
+                           bigin_contact_id=coalesce(%s,bigin_contact_id),
+                           books_contact_id=coalesce(%s,books_contact_id),updated_at=now()
+                     where id=%s and organisation_id=%s
+                """, (canonical_name, canonical_email or None, canonical_phone or None,
+                       normalize_email(canonical_email) or None, normalize_phone(canonical_phone) or None,
+                       bigin_contact_id, str(books_contact_id) if books_contact_id else None, customer_id, context.id))
+                await connection.execute("""
+                    update public.chat_sessions
+                       set bigin_contact_id=coalesce(%s,bigin_contact_id),
+                           books_contact_id=coalesce(%s,books_contact_id),updated_at=now()
+                     where organisation_id=%s and customer_id=%s
+                """, (bigin_contact_id, str(books_contact_id) if books_contact_id else None, context.id, customer_id))
         return result
     except Exception as error:
-        log.warning("walkin_bigin_provision_failed enquiry_id=%s exception_type=%s", enquiry_id, type(error).__name__)
-        await connection.execute("update public.guruconnect_enquiries set crm_sync_error=%s where id=%s and organisation_id=%s", (type(error).__name__, enquiry_id, context.id))
-        return None
+        # CRM sync must never undo a successfully committed local registration.
+        # The provider result is still returned to the caller only when its local
+        # identity update succeeds; a failed persistence transaction is retried
+        # by the normal CRM reconciliation path.
+        log.warning("walkin_crm_identity_persist_failed enquiry_id=%s exception_type=%s", enquiry_id, type(error).__name__)
+        return None, "identity_persist_failed"
 
 
 SELECT_VISIT = """select v.*,p.display_name as assigned_agent_name,
@@ -588,8 +1020,10 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
                          idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128)):
     if not idempotency_key or not re.fullmatch(r"[A-Za-z0-9_.:-]{8,128}", idempotency_key):
         fail("idempotency_key_required", 400)
-    payload = body.model_dump(mode="json")
+    payload = body.model_dump(mode="json", exclude={"conversationId"})
     payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    crm_result = None
+    crm_error = None
     async with request.app.state.db.connection() as connection:
         await active_context(connection, context)
         await connection.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"walkin:{context.id}:{context.user.id}:{idempotency_key}",))
@@ -601,11 +1035,19 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
             visible = await visit(connection, context, prior["id"])
             response.status_code = 200
             return serialize_visit(visible)
+        recording = None
+        if body.conversationId:
+            recording = await owned_conversation(connection, context, body.conversationId)
+            if recording["audio_bucket"] != "walkin-audio":
+                fail("walkin_recording_bucket_invalid", 422, "Only the main walk-in recording can be attached here.")
+            if recording["upload_state"] != "saved" or recording["total_samples"] <= 0 or recording["capture_state"] not in {"stopped", "interrupted"}:
+                fail("recording_not_saved", 409, "Finish saving the visitor recording before registering the visitor.")
+            linked = await one(connection, "select visit_id from public.guruconnect_walkin_recordings where organisation_id=%s and conversation_id=%s", (context.id, body.conversationId))
+            if linked:
+                fail("recording_already_linked", 409)
         ticket_day = current_ticket_day(request.app.state.settings.app_timezone)
         salesperson = None
-        if body.assignedAgentId:
-            if context.role != "receptionist":
-                fail("walkin_assignment_not_allowed", 403)
+        if context.role == "owner" and not body.assignedAgentId:
             salesperson = await one(connection, """
                 select m.user_id,coalesce(p.display_name,'') as display_name,coalesce(u.email,'') as email,m.role
                 from public.members m
@@ -613,9 +1055,36 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
                 join auth.users u on u.id=m.user_id
                 where m.organisation_id=%s and m.user_id=%s and m.role='owner' and m.status='active'
                 for share of m
+            """, (context.id, context.user.id))
+            if not salesperson:
+                fail("walkin_assignment_not_allowed", 403)
+        elif context.role == "salesperson":
+            if body.assignedAgentId and body.assignedAgentId != context.user.id:
+                fail("walkin_assignment_not_allowed", 403)
+            salesperson = await one(connection, """
+                select m.user_id,coalesce(p.display_name,'') as display_name,coalesce(u.email,'') as email,m.role
+                from public.members m
+                join public.profiles p on p.id=m.user_id
+                join auth.users u on u.id=m.user_id
+                where m.organisation_id=%s and m.user_id=%s and m.role='salesperson' and m.status='active'
+                for share of m
+            """, (context.id, context.user.id))
+            if not salesperson:
+                fail("walkin_assignment_not_allowed", 403)
+        elif body.assignedAgentId:
+            if context.role not in {"receptionist", "owner"}:
+                fail("walkin_assignment_not_allowed", 403)
+            allowed_roles = "('owner')" if context.role == "receptionist" else "('owner','salesperson')"
+            salesperson = await one(connection, """
+                select m.user_id,coalesce(p.display_name,'') as display_name,coalesce(u.email,'') as email,m.role
+                from public.members m
+                join public.profiles p on p.id=m.user_id
+                join auth.users u on u.id=m.user_id
+                where m.organisation_id=%s and m.user_id=%s and m.role in """ + allowed_roles + """ and m.status='active'
+                for share of m
             """, (context.id, body.assignedAgentId))
             if not salesperson:
-                fail("walkin_assignment_not_allowed", 422, "Reception can assign a visitor to Automatic assignment or an owner.")
+                fail("walkin_assignment_not_allowed", 422, "The selected executive is not active in this workspace.")
         else:
             salesperson = await least_loaded_salesperson(connection, context.id, ticket_day)
         assigned = salesperson["user_id"] if salesperson else None
@@ -638,24 +1107,50 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         }
         ticket_payload["ticketNumber"] = daily_sequence
         ticket_hash = hashlib.sha256(json.dumps(ticket_payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        books_contact_id = None
-        try:
-            books_contact_id = await ensure_walkin_books_contact(body, context)
-        except Exception as error:
-            # Visitor registration remains available when Books is disconnected or temporarily unavailable.
-            log.warning("walkin_books_contact_unavailable visit_id=%s exception_type=%s", row["id"], type(error).__name__)
         enquiry = await one(connection, """insert into public.guruconnect_enquiries
-            (organisation_id,owner_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
-            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
-            (context.id, context.user.id, f"walkin-enquiry:{row['id']}", ticket_hash, Jsonb(ticket_payload), body.customerName, body.mobileNumber, "Retail walk-in", body.department or "Walk-in", salesperson["user_id"] if salesperson else None, ticket_day, daily_sequence, tracking_hash, books_contact_id))
+            (organisation_id,owner_id,conversation_id,idempotency_key,payload_hash,payload,customer_name,phone,channel,branch,assigned_to,stage,unread,ticket_day,daily_sequence,public_token_hash,books_contact_id)
+            values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'new',true,%s,%s,%s,%s) returning id""",
+            (context.id, context.user.id, body.conversationId, f"walkin-enquiry:{row['id']}", ticket_hash, Jsonb(ticket_payload), body.customerName, body.mobileNumber, "Retail walk-in", body.department or "Walk-in", salesperson["user_id"] if salesperson else None, ticket_day, daily_sequence, tracking_hash, None))
+        if recording:
+            await connection.execute("insert into public.guruconnect_walkin_recordings(organisation_id,visit_id,conversation_id,owner_id) values(%s,%s,%s,%s)", (context.id, row["id"], body.conversationId, context.user.id))
         await connection.execute("update public.guruconnect_walkin_visits set converted_enquiry_id=%s where id=%s and organisation_id=%s", (enquiry["id"], row["id"], context.id))
         await history(connection, context, row, "Registered", new_value=status)
         saved = await visit(connection, context, row["id"])
-        crm_result = await provision_walkin_crm(connection, context, enquiry["id"], body)
+        enquiry_id = enquiry["id"]
+
+    # Do not hold the local transaction open while Books/Bigin respond. The
+    # database uses an idle-in-transaction timeout, while CRM calls can take
+    # longer during token refreshes or provider latency.
+    books_contact = None
+    try:
+        books_contact = await ensure_walkin_books_contact(body, context)
+    except Exception as error:
+        # Visitor registration remains available when Books is disconnected or temporarily unavailable.
+        log.warning("walkin_books_contact_unavailable visit_id=%s exception_type=%s", saved["id"], type(error).__name__)
+    books_contact_id = (books_contact or {}).get("contact_id") or (books_contact or {}).get("id")
+    if books_contact_id:
+        async with request.app.state.db.connection() as connection:
+            await connection.execute("update public.guruconnect_enquiries set books_contact_id=%s where id=%s and organisation_id=%s", (str(books_contact_id), enquiry_id, context.id))
+    crm_result, crm_error = await fetch_walkin_crm(body, books_contact=books_contact)
+    crm_persisted = False
+    if crm_result:
+        async with request.app.state.db.connection() as connection:
+            if isinstance(await persist_walkin_crm(connection, context, enquiry_id, body, crm_result), dict):
+                crm_persisted = True
+                saved = await visit(connection, context, saved["id"])
+        if not crm_persisted:
+            crm_error = crm_error or "identity_persist_failed"
+    if crm_error:
+        async with request.app.state.db.connection() as connection:
+            await connection.execute("update public.guruconnect_enquiries set crm_sync_error=%s where id=%s and organisation_id=%s", (crm_error, enquiry_id, context.id))
     result = serialize_visit(saved)
     result["ticket"] = {"number": format_ticket_number(ticket_day, daily_sequence), "token": tracking_token, "stage": "new"}
     if crm_result:
-        result["crm"] = {"contactId": str(crm_result["contact"].get("id")), "leadId": str(crm_result["record"].get("id"))}
+        result["crm"] = {"status": "synced" if crm_persisted else "failed",
+                          "contactId": str(crm_result["contact"].get("id")) if crm_persisted else None,
+                          "leadId": str(crm_result["record"].get("id")) if crm_persisted else None}
+    elif crm_error:
+        result["crm"] = {"status": "failed"}
     return result
 
 
@@ -906,8 +1401,8 @@ async def link_recording(visit_id: UUID, body: RecordingLink, request: Request, 
     async with request.app.state.db.connection() as connection:
         row = await visit(connection, context, visit_id, lock=True)
         recording = await owned_conversation(connection, context, body.conversationId)
-        reception_capture = context.role == "receptionist" and row["registered_by"] == context.user.id and recording["audio_bucket"] == "walkin-audio"
-        if row["assigned_agent_id"] != context.user.id and not reception_capture:
+        creator_capture = context.role in {"receptionist", "owner"} and row["registered_by"] == context.user.id and recording["audio_bucket"] == "walkin-audio"
+        if row["assigned_agent_id"] != context.user.id and not creator_capture:
             fail("walkin_assigned_agent_required", 403)
         if recording["upload_state"] != "saved" or recording["total_samples"] <= 0:
             fail("recording_not_saved", 409)
@@ -922,6 +1417,19 @@ async def link_recording(visit_id: UUID, body: RecordingLink, request: Request, 
         if already_enquiry:
             fail("recording_already_linked", 409)
         await connection.execute("insert into public.guruconnect_walkin_recordings(organisation_id,visit_id,conversation_id,owner_id) values(%s,%s,%s,%s)", (context.id, visit_id, body.conversationId, context.user.id))
+        # Registration creates the walk-in enquiry before the browser can
+        # upload/link the finished main recording. Complete that relationship
+        # here so the assigned user's enquiry detail receives the playable
+        # conversation id as soon as the recording is saved.
+        await connection.execute("""
+            update public.guruconnect_enquiries
+               set conversation_id=%s
+             where organisation_id=%s
+               and id=(select converted_enquiry_id
+                        from public.guruconnect_walkin_visits
+                       where id=%s and organisation_id=%s)
+               and (conversation_id is null or conversation_id=%s)
+        """, (body.conversationId, context.id, visit_id, context.id, body.conversationId))
         await history(connection, context, row, "Recording attached", new_value=str(body.conversationId))
     return {"ok": True}
 

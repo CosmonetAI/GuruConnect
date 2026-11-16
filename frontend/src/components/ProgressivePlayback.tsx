@@ -55,7 +55,7 @@ const ProgressivePlayback = forwardRef<PlaybackHandle, Props>(function Progressi
     setStatus(objectUrl.current ? 'paused' : 'idle'); callback.current?.(-1)
   }
   return <div className={`progressive-playback${compact ? ' is-compact' : ''}`}>
-    <button type="button" className="button button-secondary" onClick={() => status === 'loading' || status === 'playing' ? stop() : void playAt(audio.current?.currentTime || startSeconds)}>{status === 'loading' || status === 'playing' ? <Square size={15} /> : <Play size={15} />}{status === 'loading' ? 'Cancel playback' : status === 'playing' ? 'Stop playback' : 'Play recording'}</button>
+    {(!url || status === 'loading') && <button type="button" className="button button-secondary" onClick={() => status === 'loading' || status === 'playing' ? stop() : void playAt(audio.current?.currentTime || startSeconds)}>{status === 'loading' || status === 'playing' ? <Square size={15} /> : <Play size={15} />}{status === 'loading' ? 'Cancel playback' : status === 'playing' ? 'Stop playback' : 'Play recording'}</button>}
     {url && <audio ref={audio} controls preload="metadata" src={url} aria-label="Conversation source audio" onLoadedMetadata={() => {
       if (!audio.current) return
       audio.current.currentTime = Math.min(target.current, Number.isFinite(audio.current.duration) ? audio.current.duration : target.current)

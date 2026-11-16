@@ -8,8 +8,8 @@ from backend.recorder.audio import ownership_segments
 from backend.recorder.processing import processing_window_seconds
 
 
-def test_walkin_processing_uses_eight_second_window():
-    assert processing_window_seconds("walkin-audio", 180) == 8
+def test_walkin_processing_uses_four_second_window():
+    assert processing_window_seconds("walkin-audio", 180) == 4
 
 
 def test_sessions_process_live_instead_of_waiting_for_legacy_three_minute_window():

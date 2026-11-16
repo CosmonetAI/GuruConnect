@@ -3,6 +3,7 @@ import { LoaderCircle, Mic2, Square } from 'lucide-react'
 import { request } from '../../services/officeApi'
 
 type VoiceField = 'name' | 'phone' | 'email' | 'organisation' | 'requirement' | 'customerType'
+const MIN_FIELD_CAPTURE_MS = 1200
 
 async function blobToBase64(blob: Blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer())
@@ -24,6 +25,8 @@ export default function VoiceFieldMic({ field, workspaceId, memberId, onValue, d
   const audioContext = useRef<AudioContext | null>(null)
   const animationFrame = useRef<number | null>(null)
   const chunks = useRef<Blob[]>([])
+  const startedAt = useRef(0)
+  const stopRequested = useRef(false)
   const [recording, setRecording] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -63,9 +66,15 @@ export default function VoiceFieldMic({ field, workspaceId, memberId, onValue, d
 
   const finish = async () => {
     const current = recorder.current
-    if (!current || current.state === 'inactive') return
-    current.stop()
+    if (!current || current.state === 'inactive' || stopRequested.current) return
+    stopRequested.current = true
+    const remaining = Math.max(0, MIN_FIELD_CAPTURE_MS - (Date.now() - startedAt.current))
+    current.requestData()
+    window.setTimeout(() => {
+      if (current.state !== 'inactive') current.stop()
+    }, remaining)
     setRecording(false)
+    setBusy(true)
   }
 
   const start = async () => {
@@ -82,6 +91,8 @@ export default function VoiceFieldMic({ field, workspaceId, memberId, onValue, d
       const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type)) || ''
       const current = new MediaRecorder(captured, mimeType ? { mimeType } : undefined)
       recorder.current = current
+      startedAt.current = Date.now()
+      stopRequested.current = false
       startMeter(captured)
       current.ondataavailable = event => { if (event.data.size) chunks.current.push(event.data) }
       current.onerror = () => { setError('The microphone could not be read. Try again.'); stopStream(); setRecording(false) }

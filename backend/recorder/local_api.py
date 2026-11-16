@@ -220,7 +220,7 @@ def create_local_app(settings) -> FastAPI:
         error_code, smoke = None, None
         try:
             key = store.secrets(engine).get("api_key", "")
-            provider = ElevenLabsAdapter(key) if engine == "elevenlabs" else OpenAITranslator(key)
+            provider = ElevenLabsAdapter(key, model_id=settings.elevenlabs_transcription_model) if engine == "elevenlabs" else OpenAITranslator(key)
             smoke = await provider.test(functional=body.functional)
         except ProviderError as error:
             error_code = error.code
@@ -313,7 +313,7 @@ def create_local_app(settings) -> FastAPI:
             row = {"id": conversation_id, "organisation_id": LOCAL_WORKSPACE_ID, "owner_id": LOCAL_USER_ID, "customer_name_snapshot": body.customer_name or "Name not provided", "phone": body.phone, "email": body.email, "audio_bucket": body.audio_bucket, "salesperson_name_snapshot": "Local user", "title": body.title or "", "location": body.location or "", "created_at": now(), "capture_state": "idle", "upload_state": "pending", "transcription_state": "pending", "english_state": "pending", "speaker_state": "pending", "final_state": "pending", "total_samples": 0, "duration_seconds": 0, "consent_confirmed": True, "engine_id": "elevenlabs", "language_hint": body.language_hint, "audio_only": body.audio_only, "run_id": run_id, "active_version_id": None}
             db.execute("insert into records values('conversations',?,?)", (conversation_id, encoded(row)))
             db.execute("insert into records values('conversation_keys',?,?)", (idempotency_key, encoded({"id": conversation_id, "request_hash": digest})))
-            db.execute("insert into records values('runs',?,?)", (run_id, encoded({"id": run_id, "conversation_id": conversation_id, "kind": "production", "engine_id": "elevenlabs", "model_version": "scribe_v2", "state": "pending", "created_at": now(), "coverage_samples": 0})))
+            db.execute("insert into records values('runs',?,?)", (run_id, encoded({"id": run_id, "conversation_id": conversation_id, "kind": "production", "engine_id": "elevenlabs", "model_version": settings.elevenlabs_transcription_model, "state": "pending", "created_at": now(), "coverage_samples": 0})))
         return public_conversation(row)
 
     @app.get("/api/v1/conversations")

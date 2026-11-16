@@ -25,6 +25,7 @@ describe('authenticated source playback', () => {
     await act(async () => ref.current!.playAt(30)); expect(audio.currentTime).toBe(30)
     expect(mocks.stream).toHaveBeenCalledOnce()
     expect(audio.controls).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Play recording' })).not.toBeInTheDocument()
   })
   it('cancels a previous workspace fetch and never publishes its late audio', async () => {
     let finish!: (response: Response) => void

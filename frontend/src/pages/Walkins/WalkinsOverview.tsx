@@ -21,7 +21,7 @@ function waitingTime(value: string) {
 
 export default function WalkinsOverview() {
   const { workspace } = useOffice()
-  const canRegisterVisitor = workspace?.role === 'receptionist'
+  const canRegisterVisitor = ['owner', 'salesperson', 'receptionist'].includes(workspace?.role || '')
   const [visits, setVisits] = useState<WalkinVisit[]>([])
   const [query, setQuery] = useState('')
   const [purpose, setPurpose] = useState('')

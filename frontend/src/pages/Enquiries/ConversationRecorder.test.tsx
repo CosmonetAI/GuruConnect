@@ -67,7 +67,6 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 describe('authenticated conversation audio', () => {
   it('creates a processing run for walk-in registration recordings', async () => {
     render(<ConversationRecorder customerName="Walk-in visitor" customerPhone="9876543210" customerEmail="visitor@example.com" audioBucket="walkin-audio" registrationOnly onConversationChange={vi.fn()} />)
-    consent()
     fireEvent.click(screen.getByRole('button', { name: 'Start registration' }))
     await screen.findByRole('button', { name: 'End registration' })
     expect(JSON.parse(mocks.request.mock.calls.find(([path]) => path === '/conversations')![2].body)).toMatchObject({
@@ -266,7 +265,20 @@ describe('recording identity and consent boundaries', () => {
     consent(); fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
     await screen.findByRole('button', { name: 'Stop & save' })
     expect(JSON.parse(mocks.request.mock.calls.find(([path]) => path === '/conversations')![2].body)).toMatchObject({ consent_confirmed: true, audio_only: false })
-    expect(mocks.options?.chunkSeconds).toBe(10)
+    expect(mocks.options?.chunkSeconds).toBe(15)
+  })
+  it('shows saved walk-in playback and deletes the recording data', async () => {
+    const onConversationChange = vi.fn()
+    render(<ConversationRecorder customerName="Walk-in visitor" customerPhone="9876543210" customerEmail="visitor@example.com" audioBucket="walkin-audio" registrationOnly onConversationChange={onConversationChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Start registration' }))
+    await screen.findByRole('button', { name: 'End registration' })
+    fireEvent.click(screen.getByRole('button', { name: 'End registration' }))
+    await screen.findByRole('region', { name: 'Saved visitor recording' })
+    expect(screen.getByRole('button', { name: 'Play recording' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Saved visitor recording' })).not.toBeInTheDocument())
+    expect(onConversationChange).toHaveBeenLastCalledWith(null)
+    expect(mocks.request.mock.calls.some(([path, , options]) => path === '/conversations/conversation-1' && options?.method === 'DELETE')).toBe(true)
   })
   it('starts a fresh separately saved clip only after resetting the saved recorder', async () => {
     const callbacks = setup(); consent(); await ready()

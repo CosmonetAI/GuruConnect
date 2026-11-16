@@ -10,7 +10,15 @@ export const normalizeConfidencePercent = (value: number) => (confidenceOptions 
 // Auto-fill needs a Visitor-labelled segment: unlabelled or Receptionist speech may be someone else's details.
 export const canAutoFill = (item: FieldSuggestion, thresholdPercent: number) => item.speaker === 'Visitor' && !item.conflict && item.score * 100 >= normalizeConfidencePercent(thresholdPercent)
 
-const digitWords: Record<string, string> = { zero: '0', oh: '0', o: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9' }
+const digitWords: Record<string, string> = {
+  zero: '0', oh: '0', o: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+  शून्य: '0', जीरो: '0', एक: '1', इक: '1', दो: '2', तीन: '3', चार: '4', पांच: '5', पाँच: '5', छह: '6', छ: '6', छे: '6', सात: '7', सत: '7', आठ: '8', अठ: '8', नौ: '9', नव: '9',
+  shunya: '0', shoonya: '0', ek: '1', ik: '1', do: '2', teen: '3', char: '4', chaar: '4', panch: '5', paanch: '5', chhe: '6', cheh: '6', saat: '7', sat: '7', aath: '8', ath: '8', nau: '9', nav: '9',
+  ಶೂನ್ಯ: '0', ಸೊನ್ನೆ: '0', ಒಂದು: '1', ಎರಡು: '2', ಮೂರು: '3', ನಾಲ್ಕು: '4', ಐದು: '5', ಆರು: '6', ಏಳು: '7', ಎಂಟು: '8', ಒಂಬತ್ತು: '9',
+  sonne: '0', ondu: '1', eradu: '2', mooru: '3', naalku: '4', aidu: '5', aaru: '6', elu: '7', yelu: '7', entu: '8', ombattu: '9',
+}
+const repeatWords = new Set(['double', 'triple', 'डबल', 'ट्रिपल', 'ಡಬಲ್', 'ಟ್ರಿಪಲ್'])
+const repeatMultipliers: Record<string, number> = { double: 2, डबल: 2, ಡಬಲ್: 2, triple: 3, ट्रिपल: 3, ಟ್ರಿಪಲ್: 3 }
 const nameStop = new Set(['and', 'from', 'i', 'my', 'calling', 'here', 'is', 'am', 'looking', 'want', 'wanted', 'need', 'working', 'work', 'at', 'for', 'the', 'a', 'an', 'to', 'in', 'of', 'email', 'phone', 'mobile', 'number', 'company'])
 const companyStop = new Set(['and', 'my', 'i', 'email', 'phone', 'mobile', 'number', 'contact', 'we', 'is', 'looking', 'want', 'wanted', 'need', 'because', 'but', 'so'])
 const companySuffix = /^(pvt|private|ltd|limited|llp|inc|corp|corporation|technologies|technology|solutions|systems|industries|enterprises|traders|services|group|labs|associates|consulting)\.?$/i
@@ -30,11 +38,15 @@ function takeWords(source: string, stop: Set<string>, max: number) {
 
 export function spokenDigits(source: string): string {
   let out = ''
-  const tokens = words(source.replace(/[()-]/g, ' '))
+  const tokens = words(source.replace(/[()\-]/g, ' ').replace(/[।؟]/g, ' '))
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index].toLowerCase()
     if (/^\+?\d+$/.test(token)) out += token
-    else if ((token === 'double' || token === 'triple') && digitWords[tokens[index + 1]?.toLowerCase()]) { out += digitWords[tokens[++index].toLowerCase()].repeat(token === 'double' ? 2 : 3) }
+    else if (repeatWords.has(token)) {
+      const next = tokens[index + 1]?.toLowerCase()
+      const digit = /^\d$/.test(next ?? '') ? next : digitWords[next]
+      if (digit !== undefined) { out += digit.repeat(repeatMultipliers[token]); index++ }
+    }
     else if (digitWords[token] !== undefined) out += digitWords[token]
     else break
   }
@@ -66,7 +78,7 @@ export function extractFromSegment(segment: LiveSegment): FieldSuggestion[] {
     if (spoken) add('email', spoken, 0.8, cue![0])
   }
 
-  const phone = text.match(/\b(?:mobile|phone|contact|whats ?app|cell)(?: number| no\.?)?\s+(?:is|:)\s*(.+)$/i)
+  const phone = text.match(/(?:\b(?:mobile|phone|contact|whats ?app|cell)(?: number| no\.?)?\s+(?:is|:)\s*|\bnumber\s+(?:is|:)\s*|(?:फोन नंबर|मोबाइल नंबर|फो़न नंबर|फोन|फ़ोन|मोबाइल|नंबर|ಫೋನ್ ನಂಬರ್|ಮೊಬೈಲ್ ನಂಬರ್|ಫೋನ್|ಮೊಬೈಲ್|ನಂಬರ್)\s*(?:क्या है|बताइए|बताइये|है|ಹೇಳಿ|ಏನು|:)?\s*)(.+)$/iu)
   if (phone) {
     const digits = spokenDigits(phone[1])
     if (digits.replace(/\D/g, '').length >= 7 && digits.replace(/\D/g, '').length <= 15) add('mobileNumber', digits, digits.replace(/\D/g, '').length === 10 ? 0.9 : 0.7, phone[0])
@@ -102,7 +114,7 @@ export function extractSuggestions(segments: LiveSegment[]): FieldSuggestion[] {
     const segment = segments[index]
     const extracted = extractFromSegment(segment)
     const previous = segments[index - 1]
-    if (!extracted.some(item => item.field === 'mobileNumber') && segment.final && segment.speaker === 'Visitor' && previous?.speaker === 'Receptionist' && /\b(?:phone|mobile|contact|whats ?app|cell|number)\b/i.test(previous.text)) {
+    if (!extracted.some(item => item.field === 'mobileNumber') && segment.final && segment.speaker === 'Visitor' && previous?.speaker === 'Receptionist' && /(?:\b(?:phone|mobile|contact|whats ?app|cell|number)\b|फोन|फ़ोन|मोबाइल|नंबर|ಫೋನ್|ಮೊಬೈಲ್|ನಂಬರ್)/iu.test(previous.text)) {
       const digits = spokenDigits(segment.text)
       if (digits.replace(/\D/g, '').length >= 7 && digits.replace(/\D/g, '').length <= 15) {
         extracted.push({ field: 'mobileNumber', value: digits, score: digits.replace(/\D/g, '').length === 10 ? 0.9 : 0.7, speaker: segment.speaker, evidence: `${previous.text} ${segment.text}`, segmentId: segment.id })

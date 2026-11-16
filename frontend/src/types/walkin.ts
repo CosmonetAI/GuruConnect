@@ -108,7 +108,7 @@ export type RegisterWalkinInput = Pick<
   | 'appointmentStatus'
   | 'appointmentReference'
   | 'internalNotes'
-> & Partial<Pick<WalkinVisit, 'customerType' | 'projectName' | 'assignedAgentId'>>
+> & Partial<Pick<WalkinVisit, 'customerType' | 'projectName' | 'assignedAgentId'>> & { conversationId?: string }
 
 export type WalkinFilters = {
   query?: string

@@ -11,7 +11,7 @@ export default function Topbar() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const current = navigationItems.find(item => location.pathname.startsWith(item.to))
-  const visibleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems.filter(item => !item.to.startsWith('/walkins'))
+  const visibleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems
   async function signOut() {
     if (!supabase || captureBusy || busy) return
     setBusy(true); setError('')

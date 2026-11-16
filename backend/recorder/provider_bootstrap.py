@@ -26,7 +26,7 @@ def server_credentials(settings, engine: str) -> dict:
 def managed_provider_specs(settings):
     for engine in ("elevenlabs", "openai-translator"):
         credentials = server_credentials(settings, engine)
-        model = getattr(settings, "openai_translation_model", OPENAI_TRANSLATION_MODEL) if engine == "openai-translator" else "scribe_v2"
+        model = getattr(settings, "openai_translation_model", OPENAI_TRANSLATION_MODEL) if engine == "openai-translator" else getattr(settings, "elevenlabs_transcription_model", "")
         yield engine, credentials, {"platform_managed": True, "model": model}
 
 

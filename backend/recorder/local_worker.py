@@ -275,7 +275,8 @@ class LocalWorker:
         credentials = self.credentials("elevenlabs")
         with self.live_audio(job) as audio:
             self.mutate(job, "mark_job_accepted", str(job["id"]))
-            result = await ElevenLabsAdapter(credentials["api_key"]).process(audio, conversation.get("language_hint", "auto"), str(job["id"]))
+            adapter = ElevenLabsAdapter(credentials["api_key"], model_id=self.settings.elevenlabs_transcription_model) if self.settings.elevenlabs_transcription_model else ElevenLabsAdapter(credentials["api_key"])
+            result = await adapter.process(audio, conversation.get("language_hint", "auto"), str(job["id"]))
         duration = (payload["sample_end"] - payload["sample_start"]) / SAMPLE_RATE
         relative, _, english = self.normalize_result(result, f"{conversation_id}:window-{payload['ownership_start']}", duration)
         segments = [{"start": turn["start_seconds"], "end": turn["end_seconds"], "text": turn["source_text"],
@@ -353,7 +354,8 @@ class LocalWorker:
                 raise ProviderError("input_hash_mismatch")
             audio.seek(0)
             self.mutate(job, "mark_job_accepted", str(job["id"]))
-            result = await ElevenLabsAdapter(credentials["api_key"]).process(
+            adapter = ElevenLabsAdapter(credentials["api_key"], model_id=self.settings.elevenlabs_transcription_model) if self.settings.elevenlabs_transcription_model else ElevenLabsAdapter(credentials["api_key"])
+            result = await adapter.process(
                 audio, conversation.get("language_hint", "auto"), str(job["id"])
             )
         turns, speakers, english_complete = self.normalize_result(
@@ -390,7 +392,7 @@ class LocalWorker:
             job,
             state="succeeded" if english_complete else "running",
             coverage_samples=conversation["total_samples"],
-            model_version="scribe_v2",
+            model_version=self.settings.elevenlabs_transcription_model or None,
             provenance=provenance,
             processed_audio_seconds=conversation["total_samples"] / SAMPLE_RATE,
         )

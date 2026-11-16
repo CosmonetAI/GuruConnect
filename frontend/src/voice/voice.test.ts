@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { canAutoFill, defaultConfidencePercent, extractSuggestions, normalizeConfidencePercent, spokenDigits } from './extract'
-import { createLevelWatcher, levelPercent } from './levelWatcher'
+import { createLevelWatcher, defaultLevelSettings, levelPercent } from './levelWatcher'
 import { classifySpeechError, liveSpeechSupported, startLiveSpeech } from './liveSpeech'
 import type { LiveSegment } from './liveSpeech'
 
@@ -50,16 +50,27 @@ describe('extractSuggestions', () => {
   })
   it('converts spoken digits', () => {
     expect(spokenDigits('double nine eight')).toBe('998')
+    expect(spokenDigits('double 8 triple 5')).toBe('88555')
+    expect(spokenDigits('सात आठ double नौ')).toBe('7899')
+    expect(spokenDigits('ಏಳು ಎಂಟು ಡಬಲ್ ಐದು')).toBe('7855')
   })
   it('captures a number spoken after a receptionist phone prompt', () => {
     expect(extractSuggestions([
       seg('your phone number please', 'Receptionist'),
       seg('81971718724', 'Visitor'),
     ])).toContainEqual(expect.objectContaining({ field: 'mobileNumber', value: '81971718724' }))
+    expect(extractSuggestions([
+      seg('आपका फोन नंबर क्या है?', 'Receptionist'),
+      seg('नौ आठ सात छह पाँच चार तीन दो एक सात', 'Visitor'),
+    ])).toContainEqual(expect.objectContaining({ field: 'mobileNumber', value: '9876543217' }))
   })
 })
 
 describe('createLevelWatcher', () => {
+  it('uses a 10 percent default low-volume threshold', () => {
+    expect(defaultLevelSettings.thresholdPercent).toBe(10)
+  })
+
   it('alerts only after the configured quiet period and resets on speech', () => {
     const watcher = createLevelWatcher(() => ({ thresholdPercent: 5, seconds: 3 }))
     expect(levelPercent(0.5)).toBe(100)

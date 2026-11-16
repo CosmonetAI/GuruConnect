@@ -366,6 +366,10 @@ async def delete(conversation_id: UUID, request: Request, context: Workspace = D
         await connection.execute("delete from recording_leases where conversation_id=%s", (conversation_id,))
         await connection.execute("update processing_jobs set state='cancelled',cancelled_at=now(),finish_in_flight=false where conversation_id=%s and state<>'succeeded'", (conversation_id,))
         await connection.execute("update processing_runs set state='cancelled',cancelled_at=now() where conversation_id=%s", (conversation_id,))
+        # Live walk-in extraction is separate from transcript versions; delete
+        # it with the recording so removed audio leaves no visitor data behind.
+        await connection.execute("delete from conversation_extractions where conversation_id=%s", (conversation_id,))
+        await connection.execute("delete from voice_ai_contexts where conversation_id=%s", (conversation_id,))
         for table in ("transcript_revisions", "speaker_assignments", "diarization_intervals", "translations"):
             await connection.execute(f"delete from {table} where conversation_id=%s", (conversation_id,))
         await connection.execute("delete from transcript_words where version_id in (select id from transcript_versions where conversation_id=%s)", (conversation_id,))
