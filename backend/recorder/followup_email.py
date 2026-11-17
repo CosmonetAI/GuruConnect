@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .db import many, one
 from .errors import fail
 from .security import Workspace, workspace
+from .activity_log import external_completed, external_failed, external_started, update_context
 
 router = APIRouter(prefix="/api/v1", tags=["follow-up-email"])
 internal_router = APIRouter(tags=["internal-follow-up-email"])
@@ -97,6 +98,24 @@ def _provider_detail(response: httpx.Response) -> str:
     return text[:300] if text else f"HTTP {response.status_code}"
 
 
+def _record_zoho_response(operation: str, started_at: float, response: httpx.Response) -> None:
+    external_completed(
+        "zoho", operation, started_at,
+        status=response.status_code,
+        external_request_id=response.headers.get("x-request-id"),
+        metadata={
+            "response_bytes": len(response.content),
+            "content_type": response.headers.get("content-type", "").split(";", 1)[0],
+        },
+    )
+    if response.status_code >= 400:
+        external_failed(
+            "zoho", operation, started_at,
+            RuntimeError(f"zoho_http_{response.status_code}"),
+            status=response.status_code,
+        )
+
+
 def _render_email_html(content: str) -> str:
     """Render editable template text as safe HTML for Zoho Mail."""
     paragraphs = re.split(r"\n{2,}", str(content or "").strip())
@@ -155,6 +174,7 @@ def _connection_row(row: dict) -> dict:
 
 
 async def _refresh_token(database, row: dict, settings) -> str:
+    update_context(organisation_id=row.get("organisation_id"), member_id=row.get("member_id"))
     refresh_token = str(row.get("refresh_token") or "")
     client_id = str(row.get("client_id") or "")
     client_secret = str(row.get("client_secret") or "")
@@ -162,15 +182,21 @@ async def _refresh_token(database, row: dict, settings) -> str:
         fail("zoho_not_connected", 409, "Reconnect Zoho with ZohoMail.accounts.READ and ZohoMail.messages.CREATE")
     try:
         accounts_url, _ = _zoho_region_urls(row, settings)
+        operation = "POST /oauth/v2/token"
+        started_at = external_started("zoho", operation)
         async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
             response = await client.post(
                 f"{accounts_url}/oauth/v2/token",
                 data={"grant_type": "refresh_token", "client_id": client_id,
                       "client_secret": client_secret, "refresh_token": refresh_token},
             )
-            response.raise_for_status()
-            payload = response.json()
-    except (httpx.HTTPError, ValueError, TypeError):
+        _record_zoho_response(operation, started_at, response)
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError) as error:
+        if "response" not in locals() or response.status_code < 400:
+            external_failed("zoho", "POST /oauth/v2/token", locals().get("started_at", 0), error,
+                            status=getattr(locals().get("response"), "status_code", None))
         fail("zoho_authentication_failed", 502, "Zoho authentication failed")
     token = str(payload.get("access_token") or "")
     if not token:
@@ -193,6 +219,7 @@ async def send_zoho_mail(database, settings, row: dict, *, to_address: str,
                          cc_addresses: list[str], subject: str, content: str) -> dict:
     """Look up the Mail account and submit one message using one OAuth token."""
     row = _connection_row(row)
+    update_context(organisation_id=row.get("organisation_id"), member_id=row.get("member_id"))
     token = str(row["access_token"])
     expires_at = row.get("expires_at")
     if expires_at and expires_at <= datetime.now(timezone.utc) + timedelta(minutes=5):
@@ -202,9 +229,12 @@ async def send_zoho_mail(database, settings, row: dict, *, to_address: str,
     async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         for attempt in range(2):
             try:
+                account_operation = "GET /api/accounts"
+                account_started_at = external_started("zoho", account_operation)
                 account_response = await client.get(
                     f"{mail_api_domain}/api/accounts", headers=headers,
                 )
+                _record_zoho_response(account_operation, account_started_at, account_response)
                 if account_response.status_code == 401 and attempt == 0:
                     token = await _refresh_token(database, row, settings)
                     headers["Authorization"] = f"Zoho-oauthtoken {token}"
@@ -227,10 +257,14 @@ async def send_zoho_mail(database, settings, row: dict, *, to_address: str,
                 }
                 if cc_addresses:
                     payload["ccAddress"] = ",".join(cc_addresses)
+                send_operation = "POST /api/accounts/{account_id}/messages"
+                send_started_at = external_started("zoho", send_operation)
                 send_response = await client.post(
                     f"{mail_api_domain}/api/accounts/{account_id}/messages",
                     headers={**headers, "Content-Type": "application/json"}, json=payload,
                 )
+                # Keep the account ID out of the searchable operation label.
+                _record_zoho_response(send_operation, send_started_at, send_response)
                 if send_response.status_code == 401 and attempt == 0:
                     token = await _refresh_token(database, row, settings)
                     headers["Authorization"] = f"Zoho-oauthtoken {token}"
@@ -238,7 +272,13 @@ async def send_zoho_mail(database, settings, row: dict, *, to_address: str,
                 if send_response.is_error:
                     fail("zoho_mail_delivery_failed", 502, f"Zoho Mail rejected the message: {_provider_detail(send_response)}")
                 return {"accountId": str(account_id), "status": "accepted"}
-            except (httpx.HTTPError, ValueError, TypeError):
+            except (httpx.HTTPError, ValueError, TypeError) as error:
+                if "send_started_at" in locals() and ("send_response" not in locals() or send_response.status_code < 400):
+                    external_failed("zoho", "POST /api/accounts/{account_id}/messages", send_started_at, error,
+                                    status=getattr(locals().get("send_response"), "status_code", None))
+                elif "account_started_at" in locals() and ("account_response" not in locals() or account_response.status_code < 400):
+                    external_failed("zoho", "GET /api/accounts", account_started_at, error,
+                                    status=getattr(locals().get("account_response"), "status_code", None))
                 fail("zoho_mail_delivery_failed", 502, "Zoho Mail could not accept the message")
     fail("zoho_mail_delivery_failed", 502, "Zoho Mail could not accept the message")
 

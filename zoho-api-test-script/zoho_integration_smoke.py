@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -34,6 +35,35 @@ ZOHO_REGIONS = {
     "us": {"accounts": "https://accounts.zoho.com", "api": "https://www.zohoapis.com", "mail": "https://mail.zoho.com"},
     "in": {"accounts": "https://accounts.zoho.in", "api": "https://www.zohoapis.in", "mail": "https://mail.zoho.in"},
 }
+
+
+SENSITIVE_REPORT_KEY = re.compile(
+    r"(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|password|"
+    r"secret|api[_-]?key|email|phone|mobile|address|description|notes?|content|body|"
+    r"message|subject|first[_-]?name|last[_-]?name|full[_-]?name|account[_-]?name|"
+    r"contact[_-]?name|company[_-]?name|mailbox|username|incoming)", re.I
+)
+
+
+def redact_report_value(value: Any, key: str = "", depth: int = 0) -> Any:
+    """Preserve smoke-test evidence without exporting customer/message data."""
+    if SENSITIVE_REPORT_KEY.search(key):
+        return "<redacted>"
+    if depth > 5:
+        return "<truncated>"
+    if isinstance(value, dict):
+        return {str(k): redact_report_value(v, str(k), depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        # ``zoho.trace`` is the evidence index; keep every call entry while
+        # still bounding provider response arrays inside each entry.
+        if depth == 0 and key == "":
+            return [redact_report_value(v, key, depth + 1) for v in value]
+        if len(value) > 5:
+            return [redact_report_value(v, key, depth + 1) for v in value[:5]] + [f"<redacted {len(value) - 5} more>"]
+        return [redact_report_value(v, key, depth + 1) for v in value]
+    if isinstance(value, str) and len(value) > 240:
+        return value[:80] + "<truncated>"
+    return value
 
 
 def region_endpoints() -> dict[str, str]:
@@ -521,7 +551,14 @@ def run() -> int:
     quote_id = order_id = invoice_id = ""
     if customer_id and item_id:
         if vendor_id:
-            purchase_order = check("Purchase order create", lambda: zoho.call("POST", "/books/v3/purchaseorders", params={"organization_id": zoho.organization_id}, payload={"vendor_id": vendor_id, "line_items": line_items, "notes": f"{prefix} purchase order"}), required=False)
+            purchase_payload = {"vendor_id": vendor_id, "line_items": line_items, "notes": f"{prefix} purchase order"}
+            # Zoho Books requires this flag for the synthetic unregistered
+            # vendor used by the India smoke test. The product code does not
+            # guess this value; production callers must provide the business
+            # rule explicitly for a real vendor.
+            if os.environ.get("ZOHO_REGION", "us").strip().lower() == "in":
+                purchase_payload["is_reverse_charge_applied"] = True
+            purchase_order = check("Purchase order create", lambda: zoho.call("POST", "/books/v3/purchaseorders", params={"organization_id": zoho.organization_id}, payload=purchase_payload), required=False)
             purchase_order_id = identifier(first(purchase_order, "purchaseorder"), "purchaseorder_id", "id") if purchase_order else ""
             if purchase_order_id:
                 created["purchase_orders"].append(purchase_order_id)
@@ -646,7 +683,7 @@ def run() -> int:
             "api_calls": zoho.calls,
             "rate_headers": zoho.rate_headers,
             "required_failures": failures,
-            "trace": zoho.trace,
+            "trace": redact_report_value(zoho.trace),
         }, report_file, ensure_ascii=False, indent=2, default=str)
     print(f"Response report: {report_path}")
     return 0 if failures == 0 else 1
