@@ -27,6 +27,7 @@ import type { Enquiry } from '../../types/enquiry'
 import { useScopedResource } from '../../hooks/useScopedResource'
 import { message } from '../../services/officeApi'
 import { useOffice } from '../../contexts/OfficeContext'
+import { sanitizePhoneNumber, validateEmail, validatePhoneNumber, validateText } from '../../utils/formValidation'
 import ConversationRecorder from './ConversationRecorder'
 import './NewEnquiry.css'
 
@@ -253,9 +254,22 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
 
   const update = <K extends EnquiryField>(field: K, value: NewEnquiryForm[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
+    const textValue = String(value)
+    const validation = field === 'customerName'
+      ? validateText(textValue, 'Customer name', { required: true, minLength: 2, maxLength: 200 })
+      : field === 'phone'
+        ? validatePhoneNumber(textValue)
+        : field === 'email'
+          ? validateEmail(textValue)
+          : field === 'branch'
+            ? validateText(textValue, 'Branch / showroom', { required: true, maxLength: 160 })
+            : field === 'assignedExecutive'
+              ? validateText(textValue, 'Assigned sales executive', { required: true, maxLength: 160 })
+              : undefined
     setErrors((previous) => {
       const next = { ...previous }
-      delete next[field]
+      if (validation) next[field] = validation
+      else delete next[field]
       return next
     })
     setIsDraftSaved(false)
@@ -435,7 +449,7 @@ function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: st
                 <input id="customerName" maxLength={200} disabled={!!conversationId} aria-describedby={conversationId ? 'customerName-hint' : errors.customerName ? 'customerName-error' : undefined} aria-invalid={!!errors.customerName} autoComplete="name" placeholder="e.g. Priya Sharma" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} />
               </Field>
               <Field label="Phone number" htmlFor="phone" required error={errors.phone}>
-                <input disabled={!!conversationId} id="phone" type="tel" maxLength={20} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+                <input disabled={!!conversationId} id="phone" type="tel" maxLength={14} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="numeric" placeholder="+919876543210" value={form.phone} onChange={(event) => update('phone', sanitizePhoneNumber(event.target.value, 13))} />
               </Field>
               <Field label="Email address" htmlFor="email" error={errors.email}>
                 <input disabled={!!conversationId} id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
