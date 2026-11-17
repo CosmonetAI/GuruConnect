@@ -174,7 +174,7 @@ describe('live session integration', () => {
     installLiveApi(path => path === '/voice-sessions/A/live' ? { ...liveData(), analysis_status: 'unavailable', recommendations: [], notices: [{ code: 'voice_ai_provider_error', message: 'The AI provider is unavailable. Existing requirements are preserved.' }] } : undefined)
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
-    expect(await screen.findByText('Product analysis temporarily unavailable')).toBeVisible()
+    expect(await screen.findByText('Analysis unavailable')).toBeVisible()
     expect(screen.getByRole('region', { name: 'Live conversation' })).toHaveTextContent(liveTurn.english_text)
     expect(screen.getByText('The AI provider is unavailable. Existing requirements are preserved.', { exact: false })).toBeVisible()
   })

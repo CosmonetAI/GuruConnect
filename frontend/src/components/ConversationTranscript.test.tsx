@@ -44,11 +44,11 @@ describe('actual source and English processing results', () => {
     calls.jobs = [{ id: 'job-a', run_id: 'run-a', job_type: 'translate', status: 'blocked', error_code: 'translator_unconfigured' }]
     calls.request.mockResolvedValue({ resumed_job_ids: ['job-a'], uncertain_job_ids: [] })
     render(page())
-    await user.click(screen.getAllByRole('button', { name: 'Retry English translation' })[0])
-    const dialog = within(screen.getByRole('dialog', { name: 'Retry English translation?' }))
-    expect(dialog.getByText(/Speech audio is not submitted again/)).toBeVisible()
+    await user.click(screen.getAllByRole('button', { name: 'Retry translation' })[0])
+    const dialog = within(screen.getByRole('dialog', { name: 'Retry the English transcript?' }))
+    expect(dialog.getByText(/original audio is not uploaded again/)).toBeVisible()
     expect(calls.request).not.toHaveBeenCalled()
-    await user.dblClick(dialog.getByRole('button', { name: 'Confirm retry and provider usage' }))
+    await user.dblClick(dialog.getByRole('button', { name: 'Confirm and continue' }))
     expect(calls.request).toHaveBeenCalledTimes(1)
     const [path, workspace, options] = calls.request.mock.calls[0]
     expect(path).toBe('/conversations/conversation-a/retry'); expect(workspace).toBe('workspace-a')
@@ -59,10 +59,11 @@ describe('actual source and English processing results', () => {
 
   it('does not claim a resumed job when provider submission outcomes are uncertain', async () => {
     const user = userEvent.setup()
+    calls.jobs = [{ id: 'job-a', run_id: 'run-a', job_type: 'translate', status: 'blocked', error_code: 'translator_unconfigured' }]
     calls.request.mockResolvedValue({ resumed_job_ids: [], uncertain_job_ids: ['uncertain-a'] })
     render(page())
-    await user.click(screen.getByRole('button', { name: 'Retry English translation' }))
-    await user.click(screen.getByRole('button', { name: 'Confirm retry and provider usage' }))
+    await user.click(screen.getAllByRole('button', { name: 'Retry translation' })[0])
+    await user.click(screen.getByRole('button', { name: 'Confirm and continue' }))
     expect(await screen.findByText(/They were not resubmitted/)).toBeVisible()
     expect(screen.queryByText(/eligible processing job\(s\) resumed/)).not.toBeInTheDocument()
   })
@@ -75,30 +76,36 @@ describe('actual source and English processing results', () => {
       { id: 'other-failure', run_id: 'run-a', job_type: 'transcribe', status: 'blocked', error_code: 'provider_quota_exceeded' },
     ]
     render(page())
-    const banner = within(screen.getByText('Speech transcription needs attention').parentElement!)
+    const banner = within(screen.getByText('We couldn’t finish the recording').parentElement!)
     expect(banner.getAllByText(/Recording storage is unavailable/)).toHaveLength(1)
     expect(banner.getByText(/check storage access and connectivity/)).toBeVisible()
     expect(banner.getByText(/reached its credit limit/)).toBeVisible()
-    const recovery = within(screen.getByRole('heading', { name: 'Processing recovery' }).parentElement!)
-    expect(recovery.getAllByRole('listitem')).toHaveLength(4)
+    const recovery = within(screen.getByRole('region', { name: 'Fix this recording' }))
+    expect(recovery.getByRole('button', { name: 'Retry audio processing' })).toBeVisible()
     expect(calls.request).not.toHaveBeenCalled()
   })
 
   it('uses processing guidance for an unrecognized stage error', () => {
     calls.jobs = [{ id: 'unknown-failure', run_id: 'run-a', job_type: 'transcribe', status: 'failed', error_code: 'unknown_stage_failure' }]
     render(page())
-    expect(screen.getByText(/Check processing, provider connection and usage limits/)).toBeVisible()
+    expect(screen.getByText(/The saved audio is safe/)).toBeVisible()
     expect(screen.queryByText(/Check the worker/)).not.toBeInTheDocument()
   })
 
   it('starts the actual source player only after intent and seeks source turns', async () => {
     const user = userEvent.setup(); render(page())
     expect(calls.playAt).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Load playback' }))
+    await user.click(screen.getByRole('button', { name: 'Play recording' }))
     expect(calls.playAt).toHaveBeenLastCalledWith(0)
     await user.click(screen.getByRole('button', { name: /Play source audio at/ }))
     expect(calls.playAt).toHaveBeenLastCalledWith(1)
     expect(calls.request).not.toHaveBeenCalled()
+  })
+  it('keeps recovery controls out of a completed transcript', () => {
+    calls.complete = true
+    render(page())
+    expect(screen.queryByRole('heading', { name: 'Fix this recording' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Retry audio processing')).not.toBeInTheDocument()
   })
   it('disposes the previous source player after workspace change', () => {
     const view = render(page()); calls.workspace = 'workspace-b'; view.rerender(page())
@@ -110,7 +117,7 @@ describe('actual source and English processing results', () => {
     calls.jobs = [{ id: 'comparison-failure', run_id: 'old-run', job_type: 'translate', status: 'blocked', error_code: 'invalid_credentials' }]
     render(page())
     expect(screen.getByText('Please send model SKU-42.')).toBeVisible()
-    expect(screen.queryByText('English translation needs attention')).not.toBeInTheDocument()
+    expect(screen.queryByText('English transcript needs attention')).not.toBeInTheDocument()
   })
 
   it('clears superseded progressive translation warnings only after the active final English covers the recording', () => {
@@ -121,10 +128,8 @@ describe('actual source and English processing results', () => {
     ]
     render(page())
     expect(screen.getByText('Please send model SKU-42.')).toBeVisible()
-    expect(screen.queryByText('English translation needs attention')).not.toBeInTheDocument()
-    const recovery = within(screen.getByRole('heading', { name: 'Processing recovery' }).parentElement!)
-    expect(recovery.getAllByRole('listitem')).toHaveLength(2)
-    expect(recovery.getByText(/managed English translation service is unavailable/)).toBeVisible()
+    expect(screen.queryByText('English transcript needs attention')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Fix this recording' })).not.toBeInTheDocument()
     expect(calls.request).not.toHaveBeenCalled()
   })
 
@@ -143,14 +148,14 @@ describe('actual source and English processing results', () => {
     calls.conversation = conversation; calls.transcript = transcript
     calls.jobs = [{ id: 'old-window', run_id: 'run-a', window_id: 'window-a', job_type: 'translate', status: 'blocked', error_code: 'translator_unconfigured' }]
     render(page())
-    expect(screen.getByText('English translation needs attention')).toBeVisible()
+    expect(screen.getByText('English transcript needs attention')).toBeVisible()
   })
 
   it.each([null, undefined])('retains a failed final or unclassified translation job after completion (window %s)', window_id => {
     calls.complete = true
     calls.jobs = [{ id: 'final-failure', run_id: 'run-a', window_id, job_type: 'translate', status: 'failed', error_code: 'translator_unconfigured' }]
     render(page())
-    expect(screen.getByText('English translation needs attention')).toBeVisible()
+    expect(screen.getByText('English transcript needs attention')).toBeVisible()
   })
 
   it('retains uncertain progressive provider warnings and explicit paid retry protections after final completion', async () => {
@@ -159,11 +164,11 @@ describe('actual source and English processing results', () => {
     calls.jobs = [{ id: 'uncertain-window', run_id: 'run-a', window_id: 'window-a', job_type: 'translate', status: 'uncertain', error_code: 'external_translation_uncertain' }]
     calls.request.mockResolvedValue({ resumed_job_ids: [], uncertain_job_ids: ['uncertain-window'] })
     render(page())
-    expect(screen.getByText('English translation needs attention')).toBeVisible()
-    await user.click(screen.getAllByRole('button', { name: 'Retry English translation' })[0])
-    expect(screen.getByText(/Submissions with an uncertain outcome require administrator reconciliation/)).toBeVisible()
+    expect(screen.getByText('English transcript needs attention')).toBeVisible()
+    await user.click(screen.getAllByRole('button', { name: 'Retry translation' })[0])
+    expect(screen.getByText(/administrator must reconcile it before another attempt/)).toBeVisible()
     expect(calls.request).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Confirm retry and provider usage' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm and continue' }))
     expect(await screen.findByText(/They were not resubmitted/)).toBeVisible()
     expect(calls.request).toHaveBeenCalledOnce()
     expect(calls.request.mock.calls[0][0]).toBe('/conversations/conversation-a/retry')
@@ -173,6 +178,6 @@ describe('actual source and English processing results', () => {
   it('does not expose a new paid speech replay control to a salesperson', () => {
     calls.role = 'salesperson'
     render(page())
-    expect(screen.queryByRole('button', { name: 'Create another speech pass' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reprocess recording' })).not.toBeInTheDocument()
   })
 })

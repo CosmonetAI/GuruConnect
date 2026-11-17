@@ -91,7 +91,7 @@ services:
       - key: MANAGED_PROVIDER_CONCURRENCY
         value: "4"
       - key: LIVE_WINDOW_SECONDS
-        value: "10"
+        value: "5"
       - key: PROCESSING_SHUTDOWN_SECONDS
         value: "15"
       - key: ELEVENLABS_API_KEY

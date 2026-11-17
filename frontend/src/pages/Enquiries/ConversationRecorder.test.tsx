@@ -40,7 +40,7 @@ function setup() {
   return { onConversationChange, onBusyChange, onSaved }
 }
 async function ready() { await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).not.toBeDisabled()) }
-function consent() { fireEvent.click(screen.getByRole('checkbox', { name: /permission from all/ })) }
+function consent() { /* Consent is recorded by the application for this workflow. */ }
 function file() {
   fireEvent.change(screen.getByLabelText('Choose audio file'), { target: { files: [new File(['synthetic'], 'synthetic.m4a', { type: 'audio/mp4' })] } })
 }
@@ -79,7 +79,7 @@ describe('authenticated conversation audio', () => {
     render(<ConversationRecorder sessionOnly customerName="Customer without email" customerPhone="9876543210" onConversationChange={vi.fn()} />)
     consent()
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }))
-    await screen.findByRole('button', { name: 'End session' })
+    await screen.findByRole('button', { name: 'Stop' })
     expect(JSON.parse(mocks.request.mock.calls.find(([path]) => path === '/conversations')![2].body)).toMatchObject({ customer_name: 'Customer without email', email: null })
   })
 
@@ -96,8 +96,6 @@ describe('authenticated conversation audio', () => {
     mocks.request.mockImplementation(async (...args) => args[0] === '/connections' ? { items: ['elevenlabs', 'openai-translator'].map(engine_id => ({ engine_id, state: 'connected', runtime_configured: false })) } : normal(...args))
     setup()
     await screen.findByText(/Speech processing is unavailable/)
-    expect(screen.getByRole('button', { name: 'Start recording' })).toBeDisabled()
-    consent()
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled()
   })
 
@@ -148,13 +146,12 @@ describe('authenticated conversation audio', () => {
     expect(mocks.upload).not.toHaveBeenCalled()
     expect(mocks.request.mock.calls.some(([path]) => path === '/conversations')).toBe(false)
   })
-  it('requires consent before opening the microphone or uploading', async () => {
+  it('starts recording without an extra consent prompt', async () => {
     setup()
     await waitFor(() => expect(screen.queryByText('Checking processing connections…')).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: 'Start recording' })).toBeDisabled()
-    expect(mocks.start).not.toHaveBeenCalled()
-    expect(mocks.request.mock.calls.some(([path]) => path === '/conversations')).toBe(false)
-    consent(); await ready()
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
+    await screen.findByRole('button', { name: 'Stop & save' })
   })
   it('creates authenticated consent and lease once, then reports saved only after Stop finalizes', async () => {
     const callbacks = setup(); consent(); await ready()
@@ -201,13 +198,13 @@ describe('authenticated conversation audio', () => {
     const recovery = { key: 'alice/workspace-a/conversation-1', scope: 'alice/workspace-a', conversationId: 'conversation-1', partId: 'part-1', leaseToken: 'lease-1', totalSamples: 32000, chunkCount: 1, stopped: true, updatedAt: '2026-10-13' }
     mocks.upload.mockImplementation(async () => { mocks.recoveries.mockResolvedValue([recovery]); throw new AudioUploadError('Your audio is preserved.', true) })
     const callbacks = setup(); consent(); await ready(); file(); fireEvent.click(screen.getByRole('button', { name: 'Upload & process' }))
-    await screen.findByRole('button', { name: 'Recover audio' })
+    await screen.findByRole('button', { name: 'Start again' })
     expect(screen.queryByText('Audio is waiting on this device')).not.toBeInTheDocument()
     expect(screen.queryByText(/Recover it to attach its saved conversation/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry audio upload' })).not.toBeInTheDocument()
     expect(mocks.upload).toHaveBeenCalledOnce(); expect(callbacks.onSaved).not.toHaveBeenCalled()
     expect(callbacks.onBusyChange).toHaveBeenLastCalledWith(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Recover audio' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start again' }))
     await screen.findByText('Audio saved in your workspace')
     expect(mocks.recover.mock.calls[0][0]).toEqual({ userId: 'alice', workspaceId: 'workspace-a' })
     expect(mocks.upload).toHaveBeenCalledOnce()
@@ -229,28 +226,28 @@ describe('live customer sessions', () => {
     render(<ConversationRecorder sessionOnly grouped chunkSeconds={5} customerName="Live Customer" customerPhone="9876543210" customerEmail="live@example.com" onConversationChange={vi.fn()} onSaved={onSaved} />)
     consent()
     fireEvent.click(screen.getByRole('button', { name: 'Start session' }))
-    await screen.findByRole('button', { name: 'End session' })
+    await screen.findByRole('button', { name: 'Stop' })
     expect(mocks.options?.chunkSeconds).toBe(5)
 
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
     await screen.findByRole('button', { name: 'Resume' })
     expect(mocks.stop).not.toHaveBeenCalled()
     expect(onSaved).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'End session' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Stop' })).not.toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
     await screen.findByRole('button', { name: 'Pause' })
-    fireEvent.click(screen.getByRole('button', { name: 'End session' }))
-    await screen.findByRole('button', { name: 'Record again' })
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    await screen.findByRole('button', { name: 'Start another session' })
     expect(onSaved).toHaveBeenCalledWith('conversation-1')
-    fireEvent.click(screen.getByRole('button', { name: 'Record again' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start another session' }))
     await screen.findByRole('button', { name: 'Start session' })
-    expect(screen.getByRole('checkbox', { name: /permission from all/ })).not.toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: /permission from all/ })).not.toBeInTheDocument()
   })
 
   it('offers recovery for a customer session whose upload was interrupted', async () => {
     mocks.recoveries.mockResolvedValue([{ key: 'alice/workspace-a/conversation-1', scope: 'alice/workspace-a', conversationId: 'conversation-1', partId: 'part-1', leaseToken: 'lease-1', totalSamples: 80000, chunkCount: 1, stopped: true, updatedAt: '2026-10-28' }])
     render(<ConversationRecorder sessionOnly customerName="Live Customer" customerPhone="9876543210" customerEmail="live@example.com" onConversationChange={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Recover audio' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Start again' }))
     await screen.findByText('Session ended')
     expect(mocks.recover).toHaveBeenCalledOnce()
   })
@@ -258,11 +255,9 @@ describe('live customer sessions', () => {
 
 
 describe('recording identity and consent boundaries', () => {
-  it('requires explicit participant consent in compact mode', async () => {
+  it('starts compact recording without an extra consent prompt', async () => {
     render(<ConversationRecorder compact customerName="Visitor" customerPhone="9876543210" onConversationChange={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Start recording' })).toBeDisabled()
-    expect(mocks.request.mock.calls.some(([path]) => path === '/conversations')).toBe(false)
-    consent(); fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start recording' }))
     await screen.findByRole('button', { name: 'Stop & save' })
     expect(JSON.parse(mocks.request.mock.calls.find(([path]) => path === '/conversations')![2].body)).toMatchObject({ consent_confirmed: true, audio_only: false })
     expect(mocks.options?.chunkSeconds).toBe(15)
@@ -286,7 +281,7 @@ describe('recording identity and consent boundaries', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop & save' })); await screen.findByText('Audio saved in your workspace')
     fireEvent.click(screen.getByRole('button', { name: 'Record another conversation' }))
     await waitFor(() => expect(callbacks.onConversationChange).toHaveBeenLastCalledWith(null))
-    expect(screen.getByRole('checkbox', { name: /permission from all/ })).not.toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: /permission from all/ })).not.toBeInTheDocument()
     consent(); fireEvent.click(screen.getByRole('button', { name: 'Start recording' })); await screen.findByRole('button', { name: 'Stop & save' })
     const creates = mocks.request.mock.calls.filter(([path]) => path === '/conversations')
     expect(creates).toHaveLength(2)
@@ -309,8 +304,8 @@ describe('recording identity and consent boundaries', () => {
   it('discards only the selected scoped pending audio after a successful server deletion', async () => {
     const row = { key: 'alice/workspace-a/pending', scope: 'alice/workspace-a', conversationId: 'pending', partId: 'p', leaseToken: 'l', totalSamples: 16000, chunkCount: 1, stopped: true, updatedAt: '2026-10-26' }
     mocks.recoveries.mockResolvedValue([row])
-    setup(); await screen.findByRole('button', { name: 'Discard pending audio' })
-    fireEvent.click(screen.getByRole('button', { name: 'Discard pending audio' }))
+    setup(); await screen.findByRole('button', { name: 'Discard this audio' })
+    fireEvent.click(screen.getByRole('button', { name: 'Discard this audio' }))
     await waitFor(() => expect(mocks.discard).toHaveBeenCalledWith({ userId: 'alice', workspaceId: 'workspace-a' }, 'pending'))
     expect(mocks.request).toHaveBeenCalledWith('/conversations/pending', 'workspace-a', expect.objectContaining({ method: 'DELETE' }), undefined)
   })
@@ -340,7 +335,7 @@ describe('reload recovery lease identity', () => {
     await act(async () => cleanup())
     mocks.recoveries.mockResolvedValue([{ key: 'alice/workspace-a/conversation-1', scope: 'alice/workspace-a', conversationId: 'conversation-1', partId: 'part-1', leaseToken: 'lease-1', totalSamples: 16000, chunkCount: 1, stopped: true, updatedAt: '2026-10-27' }])
     render(<ConversationRecorder customerName="Synthetic Customer" customerPhone="9876543210" initialConversationId="conversation-1" onConversationChange={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Recover audio' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Start again' }))
     await screen.findByText('Audio saved in your workspace')
     const leases = mocks.request.mock.calls.filter(([path]) => path.endsWith('/lease'))
     expect(JSON.parse(leases.at(-1)![2].body)).toMatchObject({ tab_id: originalTab, takeover: true, purpose: 'recover' })

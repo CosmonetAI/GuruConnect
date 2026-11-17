@@ -480,7 +480,7 @@ async def sync_catalogue(client, scope, lease, *, store=None, embedding_client=N
                            'has_more_page': len(seen_items) + len(rows) < source_snapshot['item_count']}}
             else:
                 payload = await asyncio.wait_for(client.search_books_items(scope.books_org_id, '', None, page), timeout=45)
-            rows = payload.get('items', payload.get('products', payload.get('data'))) if isinstance(payload, dict) else None
+            rows = payload.get('items', payload.get('item_variants', payload.get('products', payload.get('data')))) if isinstance(payload, dict) else None
             if not isinstance(rows, list) or payload.get('code') not in (None, 0, '0'):
                 raise ValueError('Invalid catalogue page')
             page_context = payload.get('page_context') or {}
@@ -656,7 +656,7 @@ async def retrieve_catalogue(client, context, embedding_client=None, *, store=No
                     known.add(item['item_id'])
         notices = []
         if stale:
-            notices.append({'code': 'catalogue_stale', 'message': 'Inventory is refreshing. Confirm current prices and availability before completing the cart.'})
+            notices.append({'code': 'catalogue_stale', 'message': 'Inventory is refreshing. Confirm stock availability before completing the cart.'})
         if embedding_client and semantic_status != 'ready':
             notices.append({'code': 'catalogue_semantic_unavailable', 'message': 'Semantic search is temporarily unavailable; catalogue text search remains available.'})
         if deferred:

@@ -68,14 +68,13 @@
 .live-session-workspace .lws-transcript-lines strong { color: #2a3d5a; font-size: inherit; }
 .live-session-workspace .lws-transcript-lines p.lws-transcript-empty { display: block; margin-top: 14px; color: var(--lws-muted); }
 .live-session-workspace .lws-transcript.is-collapsed .lws-panel-heading { border-bottom: 0; }
-.live-session-workspace .lws-suggestions { flex: 0 0 auto; padding-bottom: 10px; overflow: hidden; }
+.live-session-workspace .lws-suggestions { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; padding-bottom: 10px; overflow: hidden; }
 .live-session-workspace .lws-suggestions .lws-panel-heading { min-height: 39px; padding-bottom: 7px; }
 .live-session-workspace .lws-intents { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 0 13px 9px; }
 .live-session-workspace .lws-intent { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 5px 6px; border-radius: 5px; background: #eaf2ff; color: #285b9f; font-size: 9px; overflow-wrap: anywhere; animation: lws-message-enter .25s ease; }
 .live-session-workspace .lws-intent > svg { color: #6b94cd; }
 .live-session-workspace .lws-intent button { display: inline-grid; width: 15px; height: 15px; place-items: center; padding: 0; border: 0; border-radius: 3px; color: #4375b5; background: transparent; }
 .live-session-workspace .lws-intent button:hover { background: #d4e5ff; }
-.live-session-workspace .lws-add-intent { display: inline-flex; align-items: center; gap: 3px; min-height: 24px; padding: 4px 6px; border: 1px solid #d8e5ff; border-radius: 5px; background: #fff; color: var(--lws-blue); font-size: 9px; }
 .live-session-workspace .lws-product-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(178px, 1fr); gap: 9px; padding: 2px 12px 3px; overflow-x: auto; scrollbar-width: thin; }
 .live-session-workspace .lws-product-card { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 143px; padding: 9px; border: 1px solid #e3ebf5; border-radius: 10px; background: #fff; animation: lws-message-enter .3s ease-out; }
 .live-session-workspace .lws-product-image { display: grid; flex: 0 0 auto; width: 62px; height: 85px; place-items: center; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, #f5f7fa, #eef3f8); color: #a0b1c6; }
@@ -112,6 +111,7 @@
 .live-session-workspace .lws-agent-guidance li small { display: block; margin-top: 2px; color: #7a8da5; font-size: 9px; overflow-wrap: anywhere; }
 .live-session-workspace .lws-agent-guidance .lws-requirement-review { color: #8e651b; }
 .live-session-workspace .lws-requirement-assessments { max-height: 180px; overflow-y: auto; scrollbar-width: thin; }
+.live-session-workspace .lws-guidance-scroll { flex: 1 1 120px; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #cbd8e9 transparent; }
 .live-session-workspace .lws-cart-review-note { margin: 0; color: #91641d; font-size: 11px; line-height: 1.5; }
 .live-session-workspace .lws-product-copy ul { margin: 3px 0 4px; padding-left: 15px; color: #5f7593; font-size: 10px; line-height: 1.55; }
 .lws-stock { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 3px 5px; border-radius: 5px; background: #e6f8ec; color: #078c4d; font-size: 9px; font-weight: 600; white-space: nowrap; }
@@ -235,6 +235,19 @@
 .live-session-workspace .lws-line-total { font-size: 12px; }
 @keyframes lws-message-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes lws-cart-item-enter { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
+@container (min-width: 861px) {
+  .live-session-workspace:not(.is-cart-view) .lws-conversation-lane { height: 100%; }
+  /* Keep enough room for the selling panel. Previously the transcript's
+     46vh cap consumed the available lane height and the suggestions panel
+     was clipped below the workspace footer. */
+  .live-session-workspace:not(.is-cart-view) .lws-conversation { flex: 1 1 0; max-height: 24vh; min-height: 200px; }
+  .live-session-workspace:not(.is-cart-view) .lws-suggestions { flex: 1 1 280px; min-height: 280px; }
+  .live-session-workspace:not(.is-cart-view) .lws-suggestions .lws-panel-heading { position: sticky; top: 0; z-index: 1; background: #fff; }
+  .live-session-workspace:not(.is-cart-view) .lws-suggestions .lws-product-list { flex: 0 0 auto; min-height: 143px; align-content: start; }
+  .live-session-workspace:not(.is-cart-view) .lws-suggestions .lws-guidance-scroll { flex: 1 1 90px; }
+  .live-session-workspace:not(.is-cart-view) .lws-products-empty { min-height: 143px; }
+  .live-session-workspace:not(.is-cart-view) .lws-notes { height: 100%; min-height: 0; }
+}
 @container (max-width: 1180px) {
   .live-session-workspace.is-cart-view .lws-work-grid { grid-template-columns: minmax(195px, .8fr) minmax(0, 2fr); grid-template-rows: max-content max-content; grid-auto-rows: max-content; align-content: start; gap: 12px; }
   .live-session-workspace.is-cart-view .lws-conversation-lane,

@@ -12,6 +12,12 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Keep the API-side limit large enough for one complete mono 16 kHz PCM WAV
+# chunk (44-byte header plus 15 seconds of 16-bit samples). This leaves room
+# for older clients while current customer sessions use 5-second chunks.
+MIN_RECORDING_CHUNK_BYTES = 44 + (15 * 16000 * 2)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True, populate_by_name=True)
     environment: Literal["development", "local", "test", "staging", "production"] = "development"
@@ -44,11 +50,14 @@ class Settings(BaseSettings):
     storage_bucket: str = "session-audio"
     pool_min_size: int = Field(default=1, ge=1, le=10)
     pool_max_size: int = Field(default=10, ge=1, le=50)
-    upload_max_bytes: int = Field(default=6_000_000, ge=32044, le=10_000_000)
+    upload_max_bytes: int = Field(default=6_000_000, ge=MIN_RECORDING_CHUNK_BYTES, le=10_000_000)
     recording_max_seconds: int = Field(default=7200, ge=30, le=7200)
     # Durable browser chunks and provider windows are independent. Customer
     # Sessions publish short progressive windows while recording continues.
     window_seconds: int = Field(default=180, ge=5, le=180)
+    # Session audio arrives from the browser in 15-second chunks. Align the
+    # provider window with that boundary so one upload does not fan out into
+    # three transcription/translation jobs.
     live_window_seconds: int = Field(default=15, ge=5, le=30)
     context_seconds: int = Field(default=2, ge=0, le=10)
     signed_url_seconds: int = Field(default=120, ge=30, le=600)

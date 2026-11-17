@@ -258,12 +258,12 @@ def test_explicit_category_conflict_cannot_be_overridden_by_keyword_similarity()
     assert result['items'] == []
 
 
-def test_stale_snapshot_preserves_values_but_requires_fresh_price_and_stock_confirmation():
+def test_stale_snapshot_preserves_cached_price_but_requires_fresh_stock_confirmation():
     canonical = normalize_item(item('Fan', rate=1500, stock_on_hand=10, category='fan'))
     result = match_catalogue([{**canonical, '_catalogue_stale': True}], requirement('fan'))
     candidate = result['items'][0]
     assert candidate['rate'] == 1500 and candidate['stock_on_hand'] == 10
-    assert candidate['price_status'] == 'confirmation_required'
+    assert candidate['price_status'] == 'known'
     assert candidate['availability_status'] == 'needs_review'
     assert candidate['match_status'] == 'needs_confirmation'
 
@@ -293,7 +293,7 @@ def test_explicit_untracked_service_and_goods_counters_are_not_stock_promises(me
     assert not {'out_of_stock', 'stock_confirmation', 'requested_quantity_confirmation'} & set(candidate['missing_specs'])
     normalized = normalize_item({**candidate, '_catalogue_stale': True})
     assert normalized['availability_status'] == 'not_tracked'
-    assert normalized['price_status'] == 'confirmation_required'
+    assert normalized['price_status'] == 'known'
 
 
 def test_untracked_item_immediate_availability_still_requires_human_confirmation():

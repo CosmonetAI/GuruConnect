@@ -339,9 +339,12 @@ async def test_live_analysis_persists_context_and_fingerprints_then_restart_poll
             if 'pg_try_advisory_xact_lock' in query:
                 assert params['key'] == f"voice-live:{current['conversation_id']}"
                 return Result([{'acquired': True}])
+            if query.startswith('select status,updated_at from conversation_extractions'):
+                return Result()
             if query.startswith('insert into conversation_extractions'):
                 current['insights'] = [{'id': 'analysis', 'fingerprint': params['fingerprint'], 'status': 'running',
                                         'data': {}, 'updated_at': datetime.now(UTC)}]
+                return Result([{'id': 'analysis'}])
             elif query.startswith('insert into voice_ai_contexts'):
                 current['context'] = json.loads(params['context'])
             elif query.startswith('update conversation_extractions'):
@@ -454,8 +457,11 @@ async def test_hosted_worker_does_not_complete_returned_model_failure(monkeypatc
             writes.append((query, params))
             if 'pg_try_advisory_xact_lock' in query:
                 return Result([{'acquired': True}])
+            if query.startswith('select status,updated_at from conversation_extractions'):
+                return Result()
             if query.startswith('insert into conversation_extractions'):
                 current['insights'] = [{'fingerprint': params['fingerprint'], 'status': 'running', 'updated_at': datetime.now(UTC), 'data': {}}]
+                return Result([{'id': 'analysis'}])
             elif query.startswith('update conversation_extractions'):
                 assert "status='failed'" in query
                 current['insights'][0].update(status='failed', data=json.loads(params['data']), updated_at=datetime.now(UTC))
@@ -575,8 +581,11 @@ async def test_hosted_catalogue_exception_keeps_successful_model_facts_and_finge
             query = ' '.join(str(statement).split())
             if 'pg_try_advisory_xact_lock' in query:
                 return Result([{'acquired': True}])
+            if query.startswith('select status,updated_at from conversation_extractions'):
+                return Result()
             if query.startswith('insert into conversation_extractions'):
                 current['insights'] = [{'fingerprint': params['fingerprint'], 'status': 'running', 'updated_at': datetime.now(UTC), 'data': {}}]
+                return Result([{'id': 'analysis'}])
             elif query.startswith('insert into voice_ai_contexts'):
                 current['context'] = json.loads(params['context'])
             elif query.startswith('update conversation_extractions'):

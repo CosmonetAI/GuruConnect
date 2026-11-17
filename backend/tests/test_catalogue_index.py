@@ -206,7 +206,7 @@ async def test_recording_turns_search_existing_snapshot_without_refetching_inven
 
 
 @pytest.mark.asyncio
-async def test_failed_refresh_keeps_previous_complete_snapshot_and_marks_prices_stale(scope, monkeypatch):
+async def test_failed_refresh_keeps_previous_complete_snapshot_and_marks_stock_stale(scope, monkeypatch):
     store, client = MemoryStore(), Books()
     await sync_catalogue(client, scope, store.claim(scope), store=store)
     previous = store.state(scope)['snapshot_id']
@@ -219,7 +219,7 @@ async def test_failed_refresh_keeps_previous_complete_snapshot_and_marks_prices_
     result = await retrieve_catalogue(client, {'customer_requirements': [{'product': 'motor'}]}, store=store)
     assert result['status'] == 'stale'
     assert result['items'][0]['item_id'] == 'motor-1'
-    assert result['items'][0]['rate'] == 1500 and result['items'][0]['price_status'] == 'confirmation_required'
+    assert result['items'][0]['rate'] == 1500 and result['items'][0]['price_status'] == 'known'
     assert result['items'][0]['availability_status'] == 'needs_review'
 
 

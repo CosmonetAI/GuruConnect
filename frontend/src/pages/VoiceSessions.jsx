@@ -144,6 +144,7 @@ export function liveProcessingStatus({ snapshot = null, captureState = {}, provi
   const capture = ["recording", "paused"].includes(captureState.capture) ? captureState.capture : snapshot?.capture_state;
   const capturing = ["recording", "paused"].includes(capture);
   const hasEnglish = turns.some((turn) => Boolean(turn.english_text?.trim()));
+  const hasTranscript = turns.some((turn) => Boolean(turn.source_text?.trim() || turn.english_text?.trim()));
   const status = (key, label, detail, available = hasEnglish) => ({ key, label, detail, available });
   if (finalState === "complete" && english === "complete") return status("complete", "Processing complete", "The recording transcript and English translation are available.", true);
 
@@ -153,9 +154,18 @@ export function liveProcessingStatus({ snapshot = null, captureState = {}, provi
   // not include, including a retry of a previously blocked window.
   if (stage === "transcribing") return status("transcribing", "Transcribing", "The speech service is processing an audio window.");
   if (stage === "translating") return status("translating", "Translating", "The English translation is being prepared; completed text remains visible.");
-  if (failed.includes(transcription)) return status("failed", transcription === "blocked" ? "Transcription unavailable" : "Transcription needs attention", snapshot?.processing_error_code || "Saved audio is retained. Retry transcription when the speech service is available.");
-  if (failed.includes(english)) return status("failed", english === "blocked" ? "Translation unavailable" : "Translation needs attention", snapshot?.processing_error_code || "The source transcript is retained. Retry translation when the service is available.");
-  if (failed.includes(stage)) return status("failed", "Speech processing needs attention", processingStatus.message || processingStatus.code || "Saved audio and completed text are retained.");
+  if (failed.includes(transcription)) {
+    if (hasTranscript) return status("transcribing", "Transcript partially ready", "Some audio is still being processed. The available conversation remains visible.", true);
+    return status("failed", transcription === "blocked" ? "Transcription unavailable" : "Transcription needs attention", snapshot?.processing_error_code || "Saved audio is retained. Retry transcription when the speech service is available.");
+  }
+  if (failed.includes(english)) {
+    if (hasTranscript) return status("translating", "Translation partially ready", "The source transcript is available while the remaining English translation is processed.", true);
+    return status("failed", english === "blocked" ? "Translation unavailable" : "Translation needs attention", snapshot?.processing_error_code || "The source transcript is retained. Retry translation when the service is available.");
+  }
+  if (failed.includes(stage)) {
+    if (hasTranscript) return status("transcribing", "Transcript partially ready", "Some audio is still being processed. The available conversation remains visible.", true);
+    return status("failed", "Speech processing needs attention", processingStatus.message || processingStatus.code || "Saved audio and completed text are retained.");
+  }
   if (providerReadiness?.speech_configured === false) return status("failed", "Transcription unavailable", "Audio capture and saving remain available. Configure the speech service to process saved audio.");
   if (providerReadiness?.translation_configured === false) return status("failed", "Translation unavailable", "Audio capture and saving remain available. Configure the translation service for English text.");
   if (stage === "up_to_date") return status("ready", "Live translation up to date", "Showing processed speech. New text follows as the next audio window is ready.");
@@ -365,12 +375,12 @@ function openCrmLeadDeal(navigate, deal) {
   navigate(`/pipelines?${params.toString()}`);
 }
 
-function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, sessionId, refreshToken = 0, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onOpenCrm }) {
+function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywords, recorderSessions, workspace, busy, transcriptAvailable, biginContactId, sessionId, refreshToken = 0, onClose, onDownloadTranscript, onOpenTranscript, onDeleteRecording, onUseRecording, replayingRecordingId, onOpenCrm }) {
   if (!view || typeof document === "undefined") return null;
   const isHistory = view === "history";
   const isContext = view === "context";
   const title = isHistory ? "Past recordings" : isContext ? "Enquiry context" : "CRM lead";
-  const contextTags = liveTags.length ? liveTags : liveKeywords;
+  const contextTags = liveTags.length ? liveTags : liveKeywords.length ? liveKeywords : selectedContact?.tags || [];
   return createPortal(
     <div className="session-modal-backdrop session-view-modal-backdrop" role="presentation" onClick={onClose}>
       <section className="session-view-modal" role="dialog" aria-modal="true" aria-labelledby="session-view-modal-title" onClick={(event) => event.stopPropagation()}>
@@ -386,7 +396,7 @@ function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywo
         </header>
         <div className="session-view-modal-body">
           {contextTags.length > 0 && <div className="session-view-modal-tags"><small>AI CONTEXT</small><BusinessTagPills tags={contextTags} compact /></div>}
-          {isContext ? <div className="session-context-summary"><strong>Customer requirements</strong><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : isHistory ? <div className="session-recordings-list">{recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => onOpenTranscript(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void onDeleteRecording(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}</div> : <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={sessionId} onOpen={onOpenCrm} />}
+          {isContext ? <div className="session-context-summary"><strong>Customer requirements</strong><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p>{contextTags.length ? <BusinessTagPills tags={contextTags} compact /> : <p>Product requirements will appear as the conversation is translated.</p>}</div> : isHistory ? <div className="session-recordings-list">{recorderSessions.length ? recorderSessions.map((recording) => { const canUseProducts = recording.tags?.some((tag) => String(tag).toLowerCase() === "product recommendation") || recording.recommendations?.length > 0; return <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small>{recording.tags?.length ? <BusinessTagPills tags={recording.tags} compact /> : null}</div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}{canUseProducts && <button type="button" className="button button-secondary" onClick={() => void onUseRecording(recording)} disabled={busy || replayingRecordingId === recording.id}><ShoppingCart size={14} />{replayingRecordingId === recording.id ? "Loading recommendations…" : "Review products"}</button>}<button type="button" className="button button-quiet" onClick={() => onOpenTranscript(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void onDeleteRecording(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>; }) : <p>No saved recordings for this customer yet.</p>}</div> : <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={sessionId} onOpen={onOpenCrm} />}
         </div>
       </section>
     </div>,
@@ -666,8 +676,8 @@ export default function VoiceSessions() {
   const [liveGuidance, setLiveGuidance] = useState({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
   const [catalogueNotices, setCatalogueNotices] = useState([]);
   const [liveNotice, setLiveNotice] = useState("");
-  const [customIntents, setCustomIntents] = useState([]);
   const [hiddenIntents, setHiddenIntents] = useState([]);
+  const intentSearch = false;
   const [activeTab, setActiveTab] = useState("conversation");
   const [sessionDocuments, setSessionDocuments] = useState([]);
   const [documentRefreshToken, setDocumentRefreshToken] = useState(0);
@@ -679,7 +689,11 @@ export default function VoiceSessions() {
   const [sessionDocumentDetailsBusy, setSessionDocumentDetailsBusy] = useState(false);
   const [sourceDocumentType, setSourceDocumentType] = useState(null), [sourceDocumentId, setSourceDocumentId] = useState(null), [sourceDocumentNumber, setSourceDocumentNumber] = useState(null);
   const [archivedConversationId, setArchivedConversationId] = useState(null);
+  const [replayingRecordingId, setReplayingRecordingId] = useState(null);
   const [viewProduct, setViewProduct] = useState(null);
+  useEffect(() => {
+    if (archivedConversationId) setActiveTab("conversation");
+  }, [archivedConversationId]);
   useEffect(() => {
     setViewProduct((current) => {
       if (!current) return current;
@@ -689,7 +703,6 @@ export default function VoiceSessions() {
   }, [recommendations]);
   const [cartSearchBusy, setCartSearchBusy] = useState(false);
   const [cartSearchError, setCartSearchError] = useState("");
-  const [intentSearch, setIntentSearch] = useState(false);
   const [contextHydrated, setContextHydrated] = useState(null);
   const [cartSaveError, setCartSaveError] = useState("");
   const [cartSaving, setCartSaving] = useState(false);
@@ -743,7 +756,9 @@ export default function VoiceSessions() {
   // Load once when a contact opens, then refresh once whenever Documents is
   // opened. Changing other tabs does not restart the Zoho searches.
   useEffect(() => {
-    if (!session) return undefined;
+    // Document search is intentionally lazy. The live conversation should not
+    // fan out into four Zoho Books list requests before the user asks for them.
+    if (!session || activeTab !== "documents") return undefined;
     const initialSearch = documentInitialSearchSession.current !== session;
     const refreshSearch = documentRefreshToken !== documentLastSearchToken.current;
     if (!initialSearch && !refreshSearch) return undefined;
@@ -809,7 +824,7 @@ export default function VoiceSessions() {
       if (currentSearch()) setSessionDocumentsBusy(false);
     }); }, 260);
     return () => { cancelled = true; window.clearTimeout(searchTimer); };
-  }, [session, identity.name, selectedContact?.name, sessionDocumentQuery, documentRefreshToken]);
+  }, [session, activeTab, identity.name, selectedContact?.name, sessionDocumentQuery, documentRefreshToken]);
   const openSessionDocument = async (record) => {
     const definition = sessionDocumentDefinitions.find((item) => item.type === record.__document_type);
     const id = definition && record[definition.idKey];
@@ -864,21 +879,19 @@ export default function VoiceSessions() {
     finally { if (alive.current && ticket === contactRequest.current) setContactBusy(false); }
   };
   const loadSessionExtras = async (id, ticket = selection.current) => {
-    const [noteData, contextData] = await Promise.all([sessionCall(`/voice-sessions/${id}/notes`), sessionCall(`/voice-sessions/${id}/context`)]);
+    const noteData = await sessionCall(`/voice-sessions/${id}/notes`);
     if (!alive.current || ticket !== selection.current) return;
     setNotes(noteData.notes || []);
-    const requirements = contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()];
-    const savedCart = contextData.cart || [];
-    contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: savedCart }), running: false, pending: null });
-    const savedTaxId = savedCart.find(line => line.tax_id)?.tax_id || "";
-    setProductRequirements(requirements); setCart(savedCart); setSelectedTaxId(savedTaxId); setCartOpen(savedCart.length > 0); setContextHydrated(id);
+    const requirements = [newProduct()];
+    contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: [] }), running: false, pending: null });
+    setProductRequirements(requirements); setCart([]); setSelectedTaxId(""); setCartOpen(false); setContextHydrated(id);
   };
   const clearLiveWorkspace = () => {
     documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentProgress(null); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
     setContextHydrated(null); setCartSaveError("");
     setNoteBusy(false);
     setTranscriptPreview([]); setInsights([]); setRecommendations([]); setProducts([]);
-    setLiveKeywords([]); setLiveTags([]); setCustomIntents([]); setHiddenIntents([]);
+    setLiveKeywords([]); setLiveTags([]); setHiddenIntents([]);
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
     setCart([]); setSelectedTaxId(""); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
@@ -909,10 +922,13 @@ export default function VoiceSessions() {
       clearLiveWorkspace();
       setSession(id); sessionRef.current = id;
       setMessages(data.messages || []); setRecorderSessions(data.recorder_sessions || []);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
+      setTranscriptPreview([]); setInsights([]);
       setNoteText(""); setNoteError("");
-      setConversationId(data.conversation_id || null);
-      setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
+      // The selected customer session is a container. Its last saved audio is
+      // history, not the next live recording to resume.
+      setConversationId(null);
+      conversationRef.current = null;
+      setRecordingSnapshot(null);
       setIdentity({ name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '' });
       setSelectedContact({ id: `session:${id}`, name: data.session?.name || '', phone: data.session?.phone || '', email: data.session?.email || '', tags: data.session?.tags || [], sources: ['Session'], enquiry_id: data.session?.enquiry_id, enquiry_stage: data.session?.enquiry_stage, records: { ...(data.session?.books_contact_id ? { books: data.session.books_contact_id } : {}), ...(data.session?.bigin_contact_id ? { bigin: data.session.bigin_contact_id } : {}) } });
       void loadSessionExtras(id, ticket).catch((e) => { if (alive.current && ticket === selection.current && e.name !== 'AbortError') setError(e.message); });
@@ -957,7 +973,7 @@ export default function VoiceSessions() {
         name: next.name,
         phone: next.phone,
         email: next.email,
-        tags: contact?.tags || [],
+        tags: contact?.tags || data.session?.tags || [],
         sources: contact?.sources || ["Session"],
         records: contact?.records || {},
       };
@@ -966,9 +982,9 @@ export default function VoiceSessions() {
       setSession(data.session.id); sessionRef.current = data.session.id;
       setMessages(data.messages || []);
       setRecorderSessions(data.recorder_sessions || []);
-      setTranscriptPreview(data.transcript_preview || []); setInsights(data.insights || []);
-      setConversationId(data.conversation_id || null);
-      setRecordingSnapshot((data.recorder_sessions || []).find((item) => item.id === data.conversation_id) || null);
+      setTranscriptPreview([]); setInsights([]);
+      setConversationId(null); conversationRef.current = null;
+      setRecordingSnapshot(null);
       setBusy(false); busyRef.current = false;
       void load();
       void loadContacts(contactSearch);
@@ -1039,8 +1055,50 @@ export default function VoiceSessions() {
     const id = sessionRef.current; const ticket = selection.current;
     try {
       const data = await sessionCall(`/voice-sessions/${id}/history`);
-      if (alive.current && ticket === selection.current && id === sessionRef.current) { setRecorderSessions(data.recorder_sessions || []); void refreshRecordingStatus(data.conversation_id || conversationId); void refreshLive.current?.(); }
+      if (alive.current && ticket === selection.current && id === sessionRef.current) {
+        setRecorderSessions(data.recorder_sessions || []);
+        setSelectedContact((current) => current ? { ...current, tags: data.session?.tags || current.tags || [] } : current);
+        void loadContacts(contactSearch);
+      }
     } catch (e) { if (alive.current && e.name !== 'AbortError') setError(e.message); }
+  };
+  const useRecordingProducts = async (recording) => {
+    if (!session || !recording?.id || replayingRecordingId || busyRef.current) return;
+    const selectedSession = session;
+    setReplayingRecordingId(recording.id); setError("");
+    try {
+      setActiveTab("conversation");
+      setLiveAnalysis("running");
+      const savedRecommendations = (recording.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku));
+      setRecommendations(savedRecommendations);
+      setProducts(savedRecommendations);
+      if (recording.tags?.length) setLiveTags(recording.tags);
+      if (workspace) {
+        try {
+          const transcript = await recorderRequest(`/conversations/${encodeURIComponent(recording.id)}/transcript`, workspace.id, {}, workspace.member_id);
+          if (alive.current && sessionRef.current === selectedSession) {
+            setTranscriptPreview(transcript.turns || []);
+            setInsights([]);
+          }
+        } catch (transcriptError) {
+          if (alive.current && sessionRef.current === selectedSession && transcriptError?.name !== "AbortError") setError(transcriptError?.message || "The saved transcript could not be opened.");
+        }
+      }
+      const data = await sessionCall(`/voice-sessions/${selectedSession}/recordings/${encodeURIComponent(recording.id)}/recommendations`, { method: "POST" });
+      if (!alive.current || sessionRef.current !== selectedSession) return;
+      const items = (data.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku));
+      const requirements = data.requirements?.length ? data.requirements : [newProduct()];
+      setRecommendations(items); setProducts(items); setProductRequirements(requirements);
+      setCartOpen(cart.length > 0); setContextHydrated(selectedSession);
+      setLiveKeywords(data.keywords || []); setLiveTags(data.tags || recording.tags || []);
+      setLiveGuidance((current) => ({ ...current, requirements, currentIntent: data.current_intent || current.currentIntent, catalogueStatus: data.catalogue_status || current.catalogueStatus }));
+      contextSaves.current.set(selectedSession, { saved: JSON.stringify({ product_requirements: requirements, cart }), running: false, pending: null });
+      setLiveAnalysis("complete");
+    } catch (e) {
+      if (alive.current && e?.name !== "AbortError") setError(e?.message || "Unable to build products from this recording.");
+    } finally {
+      if (alive.current && sessionRef.current === selectedSession) setReplayingRecordingId(null);
+    }
   };
   const deleteRecorderSession = async (id) => {
     if (!workspace || !window.confirm("Delete this recording and its transcript?")) return;
@@ -1091,10 +1149,6 @@ export default function VoiceSessions() {
       const data = await sessionCall(`/products?search=${encodeURIComponent(query)}`);
       if (!alive.current || ticket !== catalogueSearch.current || selected !== sessionRef.current) return;
       setCartSearchResults(data.items || []);
-      if (intentSearch) {
-        setCustomIntents((current) => [...new Set([...current, query])]);
-        setProducts((current) => [...new Map([...current, ...(data.items || [])].map((item) => [item.item_id || item.id, item])).values()]);
-      }
     } catch (e) {
       if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchError(e.message);
     } finally {
@@ -1171,8 +1225,12 @@ export default function VoiceSessions() {
           setLiveTags(data.tags);
           setSelectedContact((current) => current ? { ...current, tags: data.tags } : current);
           setContacts((current) => current.map((item) => item.session_id === session || item.id === `session:${session}` ? { ...item, tags: data.tags } : item));
+          setRecorderSessions((current) => current.map((item) => item.id === conversationId ? { ...item, tags: data.tags, ...(data.current_intent ? { intent: data.current_intent } : {}) } : item));
         }
-        if (Array.isArray(data.recommendations)) setRecommendations(data.recommendations);
+        if (Array.isArray(data.recommendations)) {
+          setRecommendations(data.recommendations);
+          setRecorderSessions((current) => current.map((item) => item.id === conversationId ? { ...item, recommendations: data.recommendations } : item));
+        }
         setLiveGuidance({ requirements: Array.isArray(data.requirements) ? data.requirements : [], clarificationSuggestions: Array.isArray(data.clarification_suggestions) ? data.clarification_suggestions : [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
         if (data.recording) setRecordingSnapshot(data.recording);
         setLiveProcessing({ providerReadiness: data.provider_readiness, processingStatus: data.processing_status, processingMode: data.processing_mode });
@@ -1184,8 +1242,11 @@ export default function VoiceSessions() {
         inFlight = false;
         if (isCurrent()) {
           const capturing = ["recording", "paused"].includes(captureRef.current.capture);
-          const processing = latest && (latest.recording?.final_state === "queued" || latest.recording?.final_state === "running" || ["pending", "running"].includes(latest.analysis_status) || latest.catalogue_status === "searching");
-          timer = window.setTimeout(refresh, capturing || processing ? 2000 : 8000);
+          const processing = latest && (latest.recording?.final_state === "queued" || latest.recording?.final_state === "running" || ["pending", "running", "retrying"].includes(latest.analysis_status) || latest.catalogue_status === "searching");
+          // Live state is durable and does not need a request every couple of
+          // seconds. Keep capture responsive while giving the API room to
+          // process audio and catalogue work between polls.
+          timer = window.setTimeout(refresh, capturing || processing ? 5000 : 15000);
         }
       }
     };
@@ -1575,7 +1636,7 @@ export default function VoiceSessions() {
                   </div>
                 </div>
                 <div className="live-header-status" aria-label="Conversation processing status">
-                  <span className={`live-header-pill status-${transcriptionUiStatus.key}`} title={transcriptionUiStatus.detail}>
+                  <span className={`live-header-pill session-processing-pill status-${transcriptionUiStatus.key}`} title={transcriptionUiStatus.detail}>
                     <i />{transcriptionUiStatus.label}
                   </span>
                   {documentProgress && <span className={`live-header-pill status-document-${documentProgress.state}`} role="status" aria-live="polite">
@@ -1613,14 +1674,14 @@ export default function VoiceSessions() {
           {session && <>
             {activeTab !== "conversation" && activeTab !== "documents" && <section className="session-view-drawer" aria-label={activeTab === "history" ? "Past recordings for this customer" : activeTab === "lead" ? "CRM lead details" : "Enquiry context"}>
               <div className="session-drawer-heading"><strong>{activeTab === "history" ? "Past recordings" : activeTab === "documents" ? "Documents" : activeTab === "lead" ? "CRM lead" : "Customer requirements"}</strong><button type="button" onClick={() => setActiveTab("conversation")} aria-label="Close session panel"><X size={16} /></button></div>
-              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p><div>{liveKeywords.length ? liveKeywords.map((keyword) => <span key={keyword}>{keyword}</span>) : <p>Product requirements will appear as the conversation is translated.</p>}</div></div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} permissions={documentPermissions} onRecordDelete={(record) => setSessionDocuments(current => current.filter(item => item !== record))} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small></div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
+              {activeTab === "context" ? <div className="session-context-summary"><p>{selectedContact?.enquiry_id ? `Linked enquiry · ${String(selectedContact.enquiry_stage || "new").replaceAll("_", " ")}` : "This conversation is linked to the customer’s session."}</p>{(liveTags.length || liveKeywords.length || selectedContact?.tags?.length) ? <BusinessTagPills tags={liveTags.length ? liveTags : liveKeywords.length ? liveKeywords : selectedContact.tags} compact /> : <p>Product requirements will appear as the conversation is translated.</p>}</div> : activeTab === "documents" ? <SessionDocumentsPanel cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} permissions={documentPermissions} onRecordDelete={(record) => setSessionDocuments(current => current.filter(item => item !== record))} /> : activeTab === "lead" ? <CrmLeadPanel contact={selectedContact} identity={identity} biginContactId={biginContactId} workspaceId={workspace?.id} sessionId={typeof session === "string" ? session : session?.id} onOpen={(deal) => openCrmLeadDeal(navigate, deal)} /> : recorderSessions.length ? recorderSessions.map((recording) => <article className="session-recording-history-row" key={recording.id}><div><strong>{new Date(recording.created_at).toLocaleString()}</strong><small>{Math.round(recording.duration_seconds || 0)} sec · {String(recording.final_state || "pending").replaceAll("_", " ")}</small>{recording.tags?.length ? <BusinessTagPills tags={recording.tags} compact /> : null}</div><div className="session-recording-history-actions">{recording.upload_state === "saved" && <ProgressivePlayback conversationId={recording.id} workspaceId={workspace.id} memberId={workspace.member_id} compact />}<button type="button" className="button button-quiet" onClick={() => setArchivedConversationId(recording.id)}>Open transcript</button><button type="button" className="button button-danger-quiet" onClick={() => void deleteRecorderSession(recording.id)} disabled={busy} aria-label="Delete recording"><Trash2 size={14} /></button></div></article>) : <p>No saved recordings for this customer yet.</p>}
             </section>}
             <LiveSessionWorkspace
               identity={identity}
               messages={messages}
               transcript={transcriptPreview}
               recommendations={[...new Map([...products, ...recommendations].map((item) => [item.item_id || item.id || item.sku, item])).values()]}
-              intents={[...new Set([...liveKeywords, ...customIntents])].filter((keyword) => !hiddenIntents.includes(keyword))}
+              intents={[...new Set(liveKeywords)].filter((keyword) => !hiddenIntents.includes(keyword))}
               {...liveGuidance}
               cart={cart}
               cartOpen={cartOpen}
@@ -1628,10 +1689,9 @@ export default function VoiceSessions() {
               onAddToCart={addToCart}
               onUpdateCart={updateCart}
               onRemoveCart={removeCartItem}
-              onSearchProducts={() => { setIntentSearch(false); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
+              onSearchProducts={() => { setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onCompleteCart={() => void openDocumentModal()}
               onViewProduct={setViewProduct}
-              onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
                taxTotal={cartTaxTotal}
                taxes={zohoTaxes}
@@ -1648,14 +1708,14 @@ export default function VoiceSessions() {
               noteError={noteError}
               recordingState={captureState}
               recordingStatus={transcriptionUiStatus}
-              insightsStatus={{ key: liveAnalysis, label: liveAnalysis === "running" || liveAnalysis === "pending" ? "Finding product matches…" : liveAnalysis === "unavailable" ? "Product analysis temporarily unavailable" : liveAnalysis === "failed" ? "Product analysis needs attention" : liveAnalysis === "complete" ? "Requirements updated" : "Listening for product requirements" }}
-              catalogueNotice={[liveNotice, cartSaveError, demoCatalogueNotice, ...catalogueNotices.filter((notice) => !demoCatalogue || notice.code !== "local_demo_catalogue").map((notice) => notice.message)].filter(Boolean).join(" ")}
+              insightsStatus={{ key: liveAnalysis, label: liveAnalysis === "running" || liveAnalysis === "pending" ? "Finding product matches…" : liveAnalysis === "retrying" ? "Updating product suggestions…" : liveAnalysis === "waiting_for_ai" ? "AI analysis waiting to start" : liveAnalysis === "unavailable" ? "Analysis unavailable" : liveAnalysis === "failed" ? "Product analysis needs attention" : liveAnalysis === "complete" ? "Requirements updated" : "Listening for product requirements" }}
+              catalogueNotice={[liveNotice, cartSaveError, demoCatalogueNotice, ...catalogueNotices.filter((notice) => (!demoCatalogue || notice.code !== "local_demo_catalogue") && notice.code !== "catalogue_stale").map((notice) => notice.message)].filter(Boolean).join(" ")}
               onDownloadConversation={downloadTranscript}
               sessionStartedAt={recordingSnapshot?.created_at}
             >
               <ConversationRecorder key={`${user?.id}:${workspace?.id}:${session}:${recorderGeneration}`} customerName={identity.name} customerPhone={identity.phone} customerEmail={identity.email} title="Voice session" initialConversationId={conversationId} processingStatus={transcriptionUiStatus} providerReadiness={liveProcessing?.providerReadiness} onConversationChange={linkConversation} onBusyChange={setRecorderBusy} onCaptureChange={setCaptureState} onSaved={() => void recordingSaved()} chunkSeconds={15} grouped sessionOnly />
             </LiveSessionWorkspace>
-            {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={setArchivedConversationId} onDeleteRecording={deleteRecorderSession} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
+            {activeTab !== "conversation" && activeTab !== "documents" && <SessionViewModal view={activeTab} identity={identity} selectedContact={selectedContact} liveTags={liveTags} liveKeywords={liveKeywords} recorderSessions={recorderSessions} workspace={workspace} busy={busy} transcriptAvailable={transcriptPreview.length > 0} biginContactId={biginContactId} sessionId={typeof session === "string" ? session : session?.id} onClose={() => setActiveTab("conversation")} onDownloadTranscript={downloadTranscript} onOpenTranscript={(recordingId) => { setActiveTab("conversation"); setArchivedConversationId(recordingId); }} onDeleteRecording={deleteRecorderSession} onUseRecording={useRecordingProducts} replayingRecordingId={replayingRecordingId} onOpenCrm={(deal) => openCrmLeadDeal(navigate, deal)} />}
             {activeTab === "documents" && <SessionDocumentsModal identity={identity} cart={cart} documentResult={documentResult} documents={sessionDocuments} documentSearchState={sessionDocumentSearchState} searchQuery={sessionDocumentQuery} onSearchQueryChange={setSessionDocumentQuery} documentsError={sessionDocumentsError} onOpenDocument={(record) => void openSessionDocument(record)} onCreate={() => void openDocumentModal()} onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }} onClose={() => setActiveTab("conversation")} permissions={documentPermissions} onRecordDelete={(record) => setSessionDocuments(current => current.filter(item => item !== record))} />}
           </>}
         </section>
@@ -1665,11 +1725,11 @@ export default function VoiceSessions() {
           const item = match ? { ...result, ...match } : result;
           return <article className="cart-product-result" key={item.item_id || item.id || item.sku}>
             <span className="cart-product-result-image"><ShoppingCart size={20} /></span>
-            <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(productRate(item)).toLocaleString("en-IN")}` : "Confirm price"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
+            <div className="lws-search-result-copy"><strong>{item.name || item.item_name}</strong><small>{item.sku || "No SKU"} · {productPriceAvailable(item) ? `₹${Number(productRate(item)).toLocaleString("en-IN")}` : "Price unavailable"}</small><ProductMatchDetails item={item} /><Stock item={item} /></div>
             <ProductCartAction item={item} onAddToCart={addToCart} />
           </article>;
         })}{!cartSearchBusy && cartSearch && !cartSearchResults.length && !cartSearchError && <p className="notes-empty">Search your connected catalogue to see matching inventory.</p>}</div></section></div>}
-      {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(productRate(viewProduct)).toLocaleString("en-IN")}` : "Confirm price"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
+      {viewProduct && <div className="session-modal-backdrop" onClick={() => setViewProduct(null)}><section className="customer-modal session-product-details" role="dialog" aria-modal="true" aria-labelledby="session-product-title" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2 id="session-product-title">{viewProduct.name || viewProduct.item_name}</h2><button type="button" onClick={() => setViewProduct(null)} aria-label="Close product details"><X size={20} /></button></div><div className="session-product-details-body"><p>{viewProduct.description || "No additional description in the connected catalogue."}</p><p>SKU: {viewProduct.sku || "Not provided"}</p><ProductMatchDetails item={viewProduct} showEvidence /><Stock item={viewProduct} /><strong>{productPriceAvailable(viewProduct) ? `₹${Number(productRate(viewProduct)).toLocaleString("en-IN")}` : "Price unavailable"}</strong><ProductCartAction item={viewProduct} className="primary" onAddToCart={(item) => { addToCart(item); setViewProduct(null); }} /></div></section></div>}
       {archivedConversationId && <div className="session-modal-backdrop" onClick={() => setArchivedConversationId(null)}><section className="session-archive-modal" role="dialog" aria-modal="true" aria-label="Saved conversation transcript" onClick={(event) => event.stopPropagation()}><div className="customer-modal-heading"><h2>Saved conversation</h2><button type="button" onClick={() => setArchivedConversationId(null)} aria-label="Close saved conversation"><X size={20} /></button></div><ConversationTranscript conversationId={archivedConversationId} /></section></div>}
       <CustomerModal
         contact={customerOpen ? selectedContact : null}

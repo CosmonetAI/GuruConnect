@@ -70,10 +70,14 @@ export const productRate = (item) =>
   item.selling_price ??
   item.selling_rate ??
   item.sales_rate ??
+  item.mrp ??
+  item.MRP ??
   item.unit_price ??
   item.price ??
   item.source_facts?.rate ??
-  item.source_facts?.Rate;
+  item.source_facts?.Rate ??
+  item.source_facts?.mrp ??
+  item.source_facts?.MRP;
 export const productPriceAvailable = (item) => {
   const value = productRate(item);
   return (
@@ -567,7 +571,6 @@ function Suggestions({
   intents,
   onAddToCart,
   onRemoveIntent,
-  onAddIntent,
   onViewProduct,
   onSearchProducts,
   money,
@@ -580,12 +583,14 @@ function Suggestions({
   agentGuidance,
   compact,
 }) {
+  const hasPricedRecommendations = recommendations.some(productPriceAvailable);
   const catalogueState = {
     syncing:
       "Catalogue sync in progress. Product details may still be incomplete.",
     searching: "Searching the connected catalogue.",
-    stale:
-      "Catalogue data needs a refresh. Confirm prices and stock before completing the order.",
+    stale: hasPricedRecommendations
+      ? ""
+      : "No price is available from Zoho or the cached catalogue for these items.",
     unavailable:
       "Catalogue unavailable. Reconnect the catalogue to verify products, prices and stock.",
     semantic_unavailable:
@@ -612,7 +617,7 @@ function Suggestions({
           </button>
         )}
       </div>
-      {(intents.length > 0 || onAddIntent) && (
+      {intents.length > 0 && (
         <div className="lws-intents" aria-label="Detected product requirements">
           {intents.map((intent, index) => (
             <span
@@ -632,16 +637,6 @@ function Suggestions({
               )}
             </span>
           ))}
-          {onAddIntent && (
-            <button
-              className="lws-add-intent"
-              type="button"
-              onClick={onAddIntent}
-            >
-              <Plus size={12} />
-              Add intent
-            </button>
-          )}
         </div>
       )}
       {catalogueNotice && (
@@ -666,18 +661,10 @@ function Suggestions({
             {insightsStatus.detail || insightsStatus.label}
           </p>
         )}
-      <AgentGuidance
-        {...{
-          clarificationSuggestions,
-          requirements,
-          currentIntent,
-          agentGuidance,
-        }}
-      />
       <div className="lws-product-list">
         {recommendations.length ? (
           recommendations.map((item, index) => {
-            const price = item.rate ?? item.price;
+            const price = productRate(item);
             const priceAvailable = productPriceAvailable(item);
             return (
               <article
@@ -694,7 +681,7 @@ function Suggestions({
                   </small>
                   <Stock item={item} />
                   <b className={priceAvailable ? "" : "lws-price-review"}>
-                    {priceAvailable ? money(price) : "Confirm price"}
+                    {priceAvailable ? money(price) : "Price unavailable"}
                   </b>
                   {onViewProduct && (
                     <button
@@ -702,7 +689,7 @@ function Suggestions({
                       type="button"
                       onClick={() => onViewProduct(item)}
                     >
-                      {priceAvailable ? "View details" : "Review price details"}
+                      {priceAvailable ? "View details" : "Price unavailable"}
                     </button>
                   )}
                   <ProductCartAction item={item} onAddToCart={onAddToCart} />
@@ -737,6 +724,16 @@ function Suggestions({
             )}
           </div>
         )}
+      </div>
+      <div className="lws-guidance-scroll">
+        <AgentGuidance
+          {...{
+            clarificationSuggestions,
+            requirements,
+            currentIntent,
+            agentGuidance,
+          }}
+        />
       </div>
     </section>
   );
@@ -1179,7 +1176,6 @@ function Notes({
  * @property {string} [sessionStartedAt]
  * @property {() => void} [onDownloadConversation]
  * @property {(intent: any, index: number) => void} [onRemoveIntent]
- * @property {() => void} [onAddIntent]
  * @property {(item: any) => void} [onViewProduct]
  * @property {number} [taxTotal]
  * @property {string} [currencyCode]
@@ -1219,7 +1215,6 @@ export default function LiveSessionWorkspace({
   agentGuidance = [],
   onDownloadConversation,
   onRemoveIntent,
-  onAddIntent,
   onViewProduct,
   taxTotal,
   taxes = [],
@@ -1250,7 +1245,6 @@ export default function LiveSessionWorkspace({
         intents,
         onAddToCart,
         onRemoveIntent,
-        onAddIntent,
         onViewProduct,
         onSearchProducts,
         money,

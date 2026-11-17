@@ -411,6 +411,14 @@ def _normalize_understanding(understanding: _Understanding, payload: dict[str, A
             fact = requirement[field]
             supported = _quantity_supported if field == 'quantity' else _number_supported
             if fact and not supported(fact['value'], fact['evidence']):
+                # The model occasionally maps phrases such as "in bulk" to
+                # quantity=0. Zero is not a usable order quantity, and keeping
+                # it would reject the whole otherwise-valid product request.
+                # Treat it as unspecified so the catalogue can still recommend
+                # products and the salesperson can enter the count.
+                if field == 'quantity' and fact['value'] == 0:
+                    requirement[field] = None
+                    continue
                 raise ValueError(f'unsupported_number:{field}')
         for fact in requirement['attributes']:
             if not _attribute_supported(fact):
@@ -606,6 +614,7 @@ Reason semantically about the NEW CHUNK in chronological order. Prior durable co
 references; the newest explicit customer correction wins. The supplied fallback route is only an offline hint;
 choose your own intent, confidence and exact verbatim evidence from the new chunk. Do not route by keywords.
 Never invent identities, specifications, SKUs, quantities, budgets, prices, stock, contact details or commitments.
+"In bulk" or "bulk" means quantity is unspecified; set quantity to null unless the customer gives a numeric count.
 Every fact needs exact quoted support. Values may normalize explicit written numbers and conventional units:
 one horsepower = 1 HP, ten amps = 10 A, double pole = DP/2 pole, single phase = 1 phase.
 For contact_phone only, normalize spoken digit sequences without guessing: zero/oh/o are 0,

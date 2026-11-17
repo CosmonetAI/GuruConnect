@@ -152,7 +152,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .nav-link { display: flex; gap: 12px; align-items: center; padding: 12px; color: #c4d1e4; border-radius: 9px; }
 .nav-link.active { background: #2563eb; color: white; box-shadow: none; }
 .nav-group { margin:0; }
-.nav-group-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:0; margin:0; padding:12px; border:0; border-radius:9px; color:#c4d1e4; background:transparent; font:inherit; text-align:left; }
+.nav-group-trigger { display:flex; align-items:center; justify-content:space-between; width:calc(100% + 12px); min-height:0; margin:0 0 0 -12px; padding:12px; border:0; border-radius:9px; color:#c4d1e4; background:transparent; font:inherit; text-align:left; }
 .nav-group-trigger:hover { transform:none; box-shadow:none; color:#c4d1e4; background:#ffffff0b; }
 .nav-group-trigger > span { display:flex; align-items:center; gap:12px; }
 .nav-group-trigger svg { flex:0 0 auto; }

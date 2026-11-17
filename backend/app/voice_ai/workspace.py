@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -93,7 +94,9 @@ def retain_catalogue_recommendations(context: dict[str, Any], catalogue: dict[st
     if catalogue.get('status') in {'ready', 'waiting'}:
         context['recent_recommendations'] = catalogue.get('items') or []
     elif catalogue.get('status') in {'syncing', 'stale'} and catalogue.get('items'):
-        context['recent_recommendations'] = [{**item, 'price_status': 'needs_review', 'availability_status': 'needs_review'}
+        # A stale snapshot still has a real cached Zoho selling rate. Keep that
+        # rate usable/displayable; only inventory freshness needs review.
+        context['recent_recommendations'] = [{**item, 'availability_status': 'needs_review'}
                                              for item in catalogue['items'] if isinstance(item, dict)]
     elif requirement_signature(context) != requirement_signature(previous):
         context['recent_recommendations'] = []
@@ -105,6 +108,31 @@ def retain_catalogue_recommendations(context: dict[str, Any], catalogue: dict[st
                                *([] if 'catalogue_confirmation' in (item.get('missing_specs') or []) else ['catalogue_confirmation'])]}
             for item in previous.get('recent_recommendations') or [] if isinstance(item, dict)
         ]
+
+
+def restore_cached_catalogue_prices(context: dict[str, Any], catalogue: dict[str, Any]) -> None:
+    """Repair older stale-session rows that hid a valid cached selling rate."""
+    if catalogue.get('status') not in {'syncing', 'stale'}:
+        return
+    for item in context.get('recent_recommendations') or []:
+        if not isinstance(item, dict) or item.get('price_status') != 'needs_review':
+            continue
+        source_facts = item.get('source_facts') if isinstance(item.get('source_facts'), dict) else {}
+        raw_rate = next((item.get(key) for key in (
+            'rate', 'Rate', 'mrp', 'MRP', 'selling_price', 'selling_rate',
+            'sales_rate', 'unit_price', 'price',
+        ) if item.get(key) not in (None, '')), None)
+        if raw_rate in (None, ''):
+            raw_rate = next((source_facts.get(key) for key in (
+                'rate', 'Rate', 'mrp', 'MRP', 'selling_price', 'selling_rate',
+                'sales_rate', 'unit_price', 'price',
+            ) if source_facts.get(key) not in (None, '')), None)
+        try:
+            rate = float(raw_rate)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(rate) and rate > 0:
+            item['price_status'] = 'known'
 
 
 def _identity_score(item: dict[str, Any], assessment: dict[str, Any]) -> int:

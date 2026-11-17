@@ -123,6 +123,21 @@ async def test_multiple_products_normalized_specs_sku_search_terms_and_followup_
     assert seen[0]['fallback_route_hint']['intent'] == 'customer_requirements'
 
 
+async def test_bulk_without_count_keeps_product_request_and_leaves_quantity_unspecified(monkeypatch):
+    text = 'We need fans and switches in bulk.'
+    value = understanding(text, requirements=[
+        requirement('fan', text, quantity=fact(0, 'in bulk')),
+        requirement('switch', text, quantity=fact(0, 'in bulk')),
+    ])
+    provider(monkeypatch, value)
+    orchestrator = VoiceConversationOrchestrator()
+    orchestrator.monitor = ConversationMonitorAgent(CONFIG)
+    result = await orchestrator.run(chunk={'english_text': text, 'fingerprint': 'bulk'}, durable_context={})
+    assert result['analysis_status'] == 'complete'
+    assert [row['product'] for row in result['context']['customer_requirements']] == ['fan', 'switch']
+    assert all('quantity' not in row for row in result['context']['customer_requirements'])
+
+
 @pytest.mark.parametrize('mutation', [
     lambda value: value.update(intent='invented_intent'),
     lambda value: value.update(intent_confidence='0.99'),

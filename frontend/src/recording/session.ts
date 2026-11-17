@@ -95,7 +95,9 @@ export async function recoverRecording(scope: Scope, conversationId: string, hoo
   if (!navigator.locks) throw new Error('This browser cannot safely recover recording tabs. Use a current browser.');
   await navigator.locks.request(`guruconnect-recording:${scope.userId}`,{ifAvailable:true},async lock=>{
     if (!lock) throw new Error('A recording is active in another tab. Stop it before recovering audio.');
-    const heartbeat=setInterval(()=>{void hooks.heartbeat().catch(()=>undefined);},15000);
+    // The lease lasts 90 seconds. A 30-second renewal keeps recovery safe
+    // while avoiding another request every few seconds during upload.
+    const heartbeat=setInterval(()=>{void hooks.heartbeat().catch(()=>undefined);},30000);
     try {
       if(leaseToken){recovery.leaseToken=leaseToken;await saveRecovery(recovery);}
       await uploadPending(scope, conversationId, hooks, leaseToken, undefined, { retry: true, signal });
@@ -161,7 +163,9 @@ export class RecorderSession {
       this.update({ capture: 'recording' });
       await this.options.hooks.event('started', 0);
       this.checkActive();
-      this.heartbeatTimer = setInterval(() => { void this.options.hooks.heartbeat().catch(() => this.interrupt('Recording authorization expired or access changed. Pending audio stays with this account.')); }, 15000);
+      // The server lease lasts 90 seconds; renew at 30 seconds so a slow
+      // database does not get hammered by overlapping heartbeats.
+      this.heartbeatTimer = setInterval(() => { void this.options.hooks.heartbeat().catch(() => this.interrupt('Recording authorization expired or access changed. Pending audio stays with this account.')); }, 30000);
     } catch (error) {
       await this.cleanup();
       if (!this.recovery.totalSamples && !(await pending(this.options.scope, this.options.conversationId).catch(() => [])).length) await finishRecovery(this.recovery.key).catch(() => undefined);

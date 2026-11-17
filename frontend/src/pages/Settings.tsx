@@ -111,9 +111,34 @@ export default function Settings() {
     DocumentType[]
   >([...DOCUMENT_TYPES]);
   const [zohoTaxes, setZohoTaxes] = useState<ZohoTaxResponse | null>(null);
+  const [zohoRegion, setZohoRegion] = useState<string | null>(null);
   const [taxesOpen, setTaxesOpen] = useState(false);
   const [taxesBusy, setTaxesBusy] = useState(false);
   const [taxesNotice, setTaxesNotice] = useState("");
+  useEffect(() => {
+    if (!workspace || localMode) {
+      setZohoRegion(null);
+      setTaxesOpen(false);
+      return undefined;
+    }
+    let alive = true;
+    setZohoRegion(null);
+    void zohoCall("/zoho/status", {
+      headers: {
+        "X-Workspace-ID": workspace.id,
+        "X-Workspace-Member-ID": workspace.member_id,
+      },
+    })
+      .then((status) => {
+        if (alive) setZohoRegion(status?.zoho_region || null);
+      })
+      .catch(() => {
+        if (alive) setZohoRegion(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [workspace?.id, workspace?.member_id, localMode]);
   useEffect(() => {
     if (profile.data) {
       const profileStatus =
@@ -478,6 +503,7 @@ export default function Settings() {
     : "";
   const canViewZohoTaxes =
     !localMode &&
+    zohoRegion === "in" &&
     (workspace?.role === "owner" || workspace?.role === "salesperson");
   return (
     <div>

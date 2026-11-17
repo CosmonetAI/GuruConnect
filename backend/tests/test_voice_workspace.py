@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.voice_ai.workspace import (analysis_outcome, catalogue_due, requirement_signature, retain_catalogue_recommendations,
-                                    retry_failure, workspace_fields)
+from app.voice_ai.workspace import (analysis_outcome, catalogue_due, requirement_signature, restore_cached_catalogue_prices,
+                                    retain_catalogue_recommendations, retry_failure, workspace_fields)
 
 
 def test_workspace_assessments_use_exact_sku_for_same_name_variants():
@@ -40,6 +40,16 @@ def test_catalogue_outage_keeps_same_constraints_with_visible_price_and_stock_re
     assert item['match_status'] == 'needs_confirmation'
     assert item['price_status'] == item['availability_status'] == 'needs_review'
     assert item['missing_specs'] == ['catalogue_confirmation']
+
+
+def test_stale_session_repairs_old_hidden_price_when_cached_rate_is_valid():
+    context = {'recent_recommendations': [
+        {'item_id': 'fan-1', 'rate': 3000, 'price_status': 'needs_review'},
+        {'item_id': 'fan-2', 'rate': 0, 'price_status': 'needs_review'},
+    ]}
+    restore_cached_catalogue_prices(context, {'status': 'stale'})
+    assert context['recent_recommendations'][0]['price_status'] == 'known'
+    assert context['recent_recommendations'][1]['price_status'] == 'needs_review'
 
 
 @pytest.mark.parametrize(('state', 'age', 'expected'), [

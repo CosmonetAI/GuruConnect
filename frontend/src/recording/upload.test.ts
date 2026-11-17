@@ -384,13 +384,13 @@ describe('durable audio file upload', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(59999);
     expect(upload.hooks.event).toHaveBeenCalledTimes(1);
-    expect(upload.hooks.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(upload.hooks.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
     await vi.advanceTimersByTimeAsync(1);
     await uploading;
     expect(upload.hooks.event.mock.calls).toEqual([['started', 0], ['started', 0], ['stopped', 3]]);
     expect(upload.hooks.finalize).toHaveBeenCalledOnce();
     const heartbeatCount = upload.hooks.heartbeat.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(15000);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(upload.hooks.heartbeat).toHaveBeenCalledTimes(heartbeatCount);
   });
 });

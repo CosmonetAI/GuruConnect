@@ -17,11 +17,29 @@ _DOCUMENT_TAGS = {
     "purchase_order": "Purchase order discussed",
 }
 _INTENT_TAGS = {
+    "customer_requirements": "Requirements discussed",
     "product_recommendation": "Product recommendation",
     "product_discovery": "Product recommendation",
     "recommendation": "Product recommendation",
+    "product_information": "Product information",
     "pricing": "Pricing discussed",
     "availability": "Availability discussed",
+    "discount": "Discount discussed",
+    "clarification": "Clarification needed",
+    "buying_signal": "Buying signal",
+    "follow_up": "Follow-up needed",
+    "cart_update": "Cart updated",
+    "quote_request": "Quote discussed",
+    "quote": "Quote discussed",
+    "quote_discussion": "Quote discussed",
+    "quotation": "Quote discussed",
+    "invoice_request": "Invoice discussed",
+    "invoice": "Invoice discussed",
+    "sales_order_request": "Sales order discussed",
+    "sales_order": "Sales order discussed",
+    "purchase_order_request": "Purchase order discussed",
+    "purchase_order": "Purchase order discussed",
+    "human_handoff": "Human handoff requested",
 }
 _ALIASES = {
     alias.casefold(): category

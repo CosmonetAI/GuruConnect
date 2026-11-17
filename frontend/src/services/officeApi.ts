@@ -16,6 +16,7 @@ const serviceErrorMessages: Record<string, string> = {
   engine_unconfigured: 'The managed speech service is unavailable. Contact your administrator, then retry the failed stage. Your saved audio is preserved.',
   database_schema_missing: 'ConnectCosmos setup is incomplete. Ask your administrator to apply all database migrations, then try again.',
   recording_not_saved: 'Stop recording and finish saving the audio before saving this enquiry.',
+  invalid_chunk_size: 'This recording chunk is larger than the API upload limit. Ask the administrator to align the recorder upload limit, then recover the saved audio.',
   stale_connection_generation: 'This connection changed while the form was open. Refresh its settings and try again.',
   database_unavailable: 'Workspace services cannot reach the database. Ask your administrator to check the database connection, then try again.',
   database_not_configured: 'Workspace services are not configured yet. Ask your administrator to finish the database setup, then try again.',

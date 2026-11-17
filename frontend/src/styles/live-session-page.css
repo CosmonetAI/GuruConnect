@@ -34,6 +34,11 @@
 .voice-sessions-page .live-header-pill.status-document-error { border: 1px solid #f0c9c9; background: #fff7f7; color: #b23e3e; }
 .voice-sessions-page .session-document-spinner { animation: session-document-spin .8s linear infinite; }
 @keyframes session-document-spin { to { transform: rotate(360deg); } }
+/* The platform bar is fixed above the session header. Keep only the session
+   processing state below those account/organisation pills. */
+@media (min-width: 769px) {
+  .voice-sessions-page .session-processing-pill { position: relative; top: 20px; }
+}
 .voice-sessions-page .session-stage-control { margin-left: 0; }
 .voice-sessions-page .session-stage-control span { color: #085ee6; font-size: 11px; }
 .voice-sessions-page .session-stage-control select { max-width: 160px; color: #183b61; font-size: 11px; }
@@ -206,3 +211,22 @@
 @media (max-width: 760px) { .app-content:has(.voice-sessions-page) { padding: 8px; }.voice-sessions-page { height: auto; min-height: calc(100dvh - 16px); overflow: visible; }.voice-sessions-page .voice-sessions-layout { display: flex; flex-direction: column; overflow: visible; }.voice-sessions-page .voice-sessions-layout > .chat-list { max-height: 245px; flex: 0 0 auto; }.voice-sessions-page .voice-sessions-layout > .conversation { height: auto; min-height: 680px; overflow: visible; }.voice-sessions-page .is-cart-focused > .chat-list { display: none; }.voice-sessions-page .live-session-header { flex-direction: row; }.voice-sessions-page .live-session-header .session-stage-control { margin: 0; }.voice-sessions-page .live-session-tabs { padding: 0 6px; gap: 0; }.voice-sessions-page .live-session-tabs button { padding: 0 9px; font-size: 10px; }.voice-sessions-page .session-welcome { padding: 25px 18px; }.voice-sessions-page .session-welcome h2 { font-size: 23px; }.voice-sessions-page .live-session-workspace .recording-consent { width: 100%; }.voice-sessions-page .session-documents-search-heading { grid-template-columns: 1fr; gap: 11px; align-items: stretch; }.voice-sessions-page .session-document-search-row { width: 100%; }.voice-sessions-page .session-document-search-input { flex: 1; min-width: 0; }.voice-sessions-page .session-documents-modal-title-row { flex-wrap: wrap; gap: 9px; }.voice-sessions-page .session-document-search-status { justify-content: flex-start; position: static !important; }.session-documents-modal { width: 96vw; max-height: 88vh; }.session-documents-modal > .session-documents-panel { padding: 14px; } }
 @media (max-width: 520px) { .voice-sessions-page .session-documents-results { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .voice-sessions-page .voice-sessions-layout, .voice-sessions-page .voice-sessions-layout > .chat-list { transition: none; } }
+
+/* Keep the simple session controls visible while the conversation scrolls. */
+.voice-sessions-page .lws-recording-footer { position: sticky; bottom: 0; z-index: 20; padding: 6px 10px; border-top: 1px solid #dfe8f3; background: rgba(255, 255, 255, .98); box-shadow: 0 -4px 12px rgba(19, 55, 93, .08); }
+.voice-sessions-page .lws-recording-footer .session-recording-container { display: block; padding: 0; border: 0; box-shadow: none; }
+.voice-sessions-page .lws-recording-footer .session-recorder .recorder-panel { min-height: 48px; padding: 0; border: 0; }
+.voice-sessions-page .lws-recording-footer .session-recorder .recorder-copy p { display: none; }
+.voice-sessions-page .lws-recording-footer .session-recorder .recording-consent { width: min(280px, 100%); }
+.voice-sessions-page .lws-recording-footer .session-recorder .connected-recording-metrics { margin-top: 3px; }
+.voice-sessions-page .lws-recording-footer .connected-audio-recovery { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 5px; border-top: 1px solid #e8eef5; }
+.voice-sessions-page .lws-recording-footer .pending-audio-row { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px; }
+.voice-sessions-page .lws-recording-footer .pending-audio-row p { display: flex; align-items: baseline; gap: 8px; margin: 0; color: #52677f; font-size: 10px; }
+.voice-sessions-page .lws-recording-footer .pending-audio-row p span { color: #7a8faa; }
+.voice-sessions-page .lws-recording-footer .pending-audio-row > div { display: flex; gap: 6px; }
+.voice-sessions-page .lws-recording-footer .pending-audio-row .button { min-height: 30px; }
+@media (max-width: 760px) {
+  .voice-sessions-page .lws-recording-footer .session-recorder .recorder-panel { grid-template-columns: 34px minmax(0, 1fr); }
+  .voice-sessions-page .lws-recording-footer .recorder-controls { grid-column: 1 / -1; justify-content: flex-start; }
+  .voice-sessions-page .lws-recording-footer .pending-audio-row { align-items: flex-start; flex-direction: column; }
+}

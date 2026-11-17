@@ -46,7 +46,10 @@ async def acquire(conversation_id: UUID, body: s.LeaseAcquire, request: Request,
 @router.post("/{conversation_id}/lease/heartbeat")
 async def heartbeat(conversation_id: UUID, body: s.LeaseHeartbeat, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        await owned_conversation(connection, context, conversation_id)
+        # Heartbeats only renew the lease. Taking a conversation row lock here
+        # makes a 15-second heartbeat wait behind chunk confirmation/finalize,
+        # which can cause the next upload to lose its lease during DB pressure.
+        await owned_conversation(connection, context, conversation_id, lock=False)
         row = await one(connection, "select heartbeat_recording_lease(%s,%s,%s,%s) as renewed", (conversation_id, context.user.id, body.tab_id, body.lease_token))
         if not row["renewed"]:
             fail("recording_lease_expired", 409)
@@ -148,8 +151,17 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await valid_lease(connection, context, conversation_id, body.lease_token)
         await connection.execute("update audio_chunks set state='validated',confirmed_at=now(),validated_at=now() where id=%s", (row["id"],))
         await connection.execute("update conversations set total_samples=greatest(total_samples,%s),duration_seconds=greatest(duration_seconds,%s),updated_at=now() where id=%s", (body.start_sample+body.sample_count, (body.start_sample+body.sample_count)/16000, conversation_id))
-        await plan_windows(connection, conversation_id, request.app.state.settings)
     log.info("chunk_validated conversation_id=%s part_id=%s sequence=%s bytes=%s", conversation_id, body.part_id, body.sequence, len(data))
+    # Audio durability is independent from processing readiness. Schedule the
+    # next window after the validation transaction has committed, so queue
+    # contention cannot keep the validated chunk transaction open or turn a
+    # successful save into a 503. The next chunk/finalize path will retry this
+    # idempotently if the processing database is temporarily busy.
+    try:
+        async with request.app.state.db.connection() as connection:
+            await plan_windows(connection, conversation_id, request.app.state.settings)
+    except Exception as error:
+        log.warning("chunk_processing_schedule_deferred conversation_id=%s exception_type=%s", conversation_id, type(error).__name__)
     return {"confirmed": True, "chunk_id": row["id"], "sample_count": info.sample_count}
 
 
@@ -157,6 +169,7 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
 async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, context: Workspace = Depends(workspace)):
     canonical = {"part_id": str(body.part_id), "expected_chunks": body.expected_chunks, "total_samples": body.total_samples}
     digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    should_plan = False
     async with request.app.state.db.connection() as connection:
         conv = await owned_conversation(connection, context, conversation_id)
         if conv["manifest_hash"]:
@@ -186,10 +199,19 @@ async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, co
             # Playback is assembled on demand from the validated bucket chunks.
             # No background playback job is required for a recording to be playable.
             log.info("playback_ready_for_on_demand_stream conversation_id=%s chunks=%s samples=%s", conversation_id, len(chunks), expected)
-            await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
+            should_plan = True
         else:
             await connection.execute("update conversations set final_state='complete',english_state='unavailable',speaker_state='unavailable',transcription_state='complete' where id=%s", (conversation_id,))
         await audit(connection, context, "recording.stopped", {"samples": expected, "chunks": len(chunks)}, conversation_id)
+    if should_plan:
+        # Do not hold the conversation row lock while enqueueing provider work.
+        # Saving the manifest and releasing the lease are the durable part of
+        # finalization; processing can be retried from the next poll or the UI.
+        try:
+            async with request.app.state.db.connection() as connection:
+                await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
+        except Exception as error:
+            log.warning("final_processing_schedule_deferred conversation_id=%s exception_type=%s", conversation_id, type(error).__name__)
     return {"saved": True, "manifest_hash": digest, "final_state": "queued" if expected else "complete"}
 
 

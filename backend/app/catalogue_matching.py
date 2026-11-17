@@ -227,7 +227,6 @@ def normalize_item(row: dict) -> dict | None:
         if _inventory_tracked(row) is False:
             result.update(availability_status='not_tracked', availability_basis='not_tracked', stock_tracking_status='not_tracked')
         if row.get('_catalogue_stale') or row.get('catalogue_stale'):
-            result['price_status'] = 'confirmation_required'
             if result.get('availability_status') != 'not_tracked':
                 result['availability_status'] = 'needs_review'
         return result
@@ -302,11 +301,13 @@ def normalize_item(row: dict) -> dict | None:
     # Zoho Books returns `rate` for normal items, while imported/legacy rows
     # can retain one of these equivalent selling-price fields. Normalize them
     # here so a delayed cache row does not render as "Price unavailable".
-    rate = _number(_first(row, 'rate', 'Rate', 'selling_price', 'selling_rate', 'sales_rate', 'unit_price', 'price', 'Selling Price', 'Selling Rate'))
+    source_facts = row.get('source_facts') if isinstance(row.get('source_facts'), dict) else {}
+    rate = _number(_first(row, 'rate', 'Rate', 'mrp', 'MRP', 'selling_price', 'selling_rate', 'sales_rate', 'unit_price', 'price', 'Selling Price', 'Selling Rate',
+                           default=_first(source_facts, 'rate', 'Rate', 'mrp', 'MRP', 'selling_price', 'selling_rate', 'sales_rate', 'unit_price', 'price')))
     explicitly_free = _boolean(_first(row, 'is_free', 'explicitly_free', 'is_complimentary'), False)
     stale = bool(row.get('_catalogue_stale') or row.get('catalogue_stale'))
     price_status = ('known' if rate is not None and (rate > 0 or rate == 0 and explicitly_free)
-                    and not stale and row.get('price_status') != 'confirmation_required' else 'confirmation_required')
+                    and row.get('price_status') != 'confirmation_required' else 'confirmation_required')
     stock = _number(_first(row, 'stock_on_hand', 'Stock On Hand'))
     available = _number(_first(row, 'available_stock', 'available_for_sale_stock', 'actual_available_stock'))
     basis = available if available is not None else stock

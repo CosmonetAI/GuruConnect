@@ -60,11 +60,13 @@ export async function uploadAudioFile(options: AudioUploadOptions): Promise<void
     const progress = (phase: AudioUploadProgress['phase']) => options.onProgress?.({ phase, confirmedSamples, totalSamples });
     const checkLease = () => { options.signal?.throwIfAborted(); if (leaseFailure) throw leaseFailure; };
     let renewing = false;
+    // The server lease lasts 90 seconds. Renewing every 30 seconds is enough
+    // for long uploads and avoids competing with chunk authorization calls.
     const heartbeat = setInterval(() => {
       if (renewing || leaseFailure || options.signal?.aborted) return;
       renewing = true;
       void hooks.heartbeat().catch(error => { if (!transientAudioError(error)) leaseFailure = error; }).finally(() => { renewing = false; });
-    }, 15000);
+    }, 30000);
     const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', unload);
     try {
