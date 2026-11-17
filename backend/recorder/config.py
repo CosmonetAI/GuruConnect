@@ -15,6 +15,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True, populate_by_name=True)
     environment: Literal["development", "local", "test", "staging", "production"] = "development"
+    error_alert_ai_enabled: bool = True
+    error_alert_ai_model: str = "gpt-4.1-mini"
+    error_alert_cooldown_seconds: int = Field(default=3600, ge=0, le=86400)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=2525, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr | None = None
+    smtp_from_email: str = ""
+    smtp_from_name: str = "GuruConnect"
+    error_alert_emails: list[str] = Field(default_factory=list)
     local_data_dir: Path = Path(__file__).resolve().parents[1] / ".local-data"
     database_url: SecretStr | None = None
     supabase_url: str = ""
@@ -84,6 +94,18 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_environment(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("error_alert_emails", mode="before")
+    @classmethod
+    def parse_error_alert_emails(cls, value):
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return []
+            if cleaned.startswith("["):
+                return value
+            return [item.strip() for item in cleaned.split(",") if item.strip()]
+        return value
 
     @field_validator("supabase_url")
     @classmethod

@@ -16,6 +16,7 @@ from . import schemas as s
 from .db import many, one
 from .errors import fail
 from .security import User, Workspace, administrator, conversation, current_user, token_hash, workspace
+from .activity_log import emit
 
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("recorder.api")
@@ -51,7 +52,9 @@ def merge_document_permissions(rows: list[dict]) -> dict[str, dict[str, dict[str
 
 
 async def audit(connection, context: Workspace, action: str, metadata: dict | None = None, conversation_id=None):
-    await connection.execute("insert into audit_events(organisation_id,conversation_id,actor_id,action,metadata) values(%s,%s,%s,%s,%s)", (context.id, conversation_id, context.user.id, action, Jsonb(metadata or {})))
+    await connection.execute("insert into audit_events(organisation_id,conversation_id,member_id,actor_id,action,metadata) values(%s,%s,%s,%s,%s,%s)", (context.id, conversation_id, context.member_id, context.user.id, action, Jsonb(metadata or {})))
+    emit(action, organisation_id=context.id, member_id=context.member_id, actor_id=context.user.id,
+         conversation_id=conversation_id, metadata=metadata)
 
 
 @router.get("/profile")

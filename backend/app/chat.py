@@ -2,6 +2,7 @@ from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 from .db import require_db, row_dict, scope_parameters
 from .settings import settings
+from recorder.activity_log import monitored_call
 
 def normalize_phone(v): return ''.join(c for c in (v or '') if c.isdigit())[-15:] or None
 def normalize_email(v): return (v or '').strip().lower() or None
@@ -16,7 +17,9 @@ async def openai_answer(message,history,customer):
     from openai import AsyncOpenAI
     client=AsyncOpenAI(api_key=settings.openai_api_key)
     system='You are Guru Group sales assistant. Be multilingual. Never invent product, price, stock, quote or delivery facts. Ask for missing product/model, quantity and requirements. Escalate uncertain pricing to a salesperson.'
-    r=await client.chat.completions.create(model=settings.openai_model,temperature=.2,messages=[{'role':'system','content':system},*history[-10:],{'role':'user','content':message}])
+    r=await monitored_call(
+        client.chat.completions.create(model=settings.openai_model,temperature=.2,messages=[{'role':'system','content':system},*history[-10:],{'role':'user','content':message}]),
+        "openai", "chat.completions.create", metadata={"model": settings.openai_model})
     return r.choices[0].message.content or None
 async def run_graph(message,customer,history):
     from .agent import run_sales_agent

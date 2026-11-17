@@ -15,10 +15,10 @@ def windows_selector_loop_factory():
 
 
 def main():
-    configure_logging()
     from .config import Settings
     try:
-        Settings()  # Validate production secrets/origins before opening a socket.
+        settings = Settings()  # Validate production secrets/origins before opening a socket.
+        configure_logging(settings)
         port = int(os.environ.get("PORT", "10000"))
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port")

@@ -104,6 +104,26 @@ services:
         value: https://www.zohoapis.com
       - key: OPENAI_API_KEY
         sync: false
+      - key: ERROR_ALERT_AI_ENABLED
+        value: "true"
+      - key: ERROR_ALERT_AI_MODEL
+        value: gpt-4.1-mini
+      - key: ERROR_ALERT_COOLDOWN_SECONDS
+        value: "3600"
+      - key: ERROR_ALERT_EMAILS
+        sync: false
+      - key: SMTP_HOST
+        value: mail.smtp2go.com
+      - key: SMTP_PORT
+        value: "2525"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: GuruConnect
       - key: OPENAI_MODEL
         value: gpt-4o-mini
       - key: CATALOGUE_SEMANTICS_ENABLED

@@ -14,6 +14,7 @@ import re
 from typing import Any, Mapping
 
 import httpx
+from recorder.activity_log import monitored_call
 
 from .settings import settings
 
@@ -193,8 +194,9 @@ async def send_document_email(*, recipient: str, subject: str, message: str, pdf
 
     async def submit(connection):
         try:
-            response = await connection.post(SMTP2GO_SEND_URL, json=payload, headers=headers,
-                timeout=httpx.Timeout(timeout, connect=min(5, timeout)), follow_redirects=False)
+            response = await monitored_call(connection.post(SMTP2GO_SEND_URL, json=payload, headers=headers,
+                timeout=httpx.Timeout(timeout, connect=min(5, timeout)), follow_redirects=False),
+                "smtp2go", "POST /v3/email/send")
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
             raise EmailDeliveryError('email_provider_unreachable', 503, retryable=True) from None
         except httpx.HTTPError:

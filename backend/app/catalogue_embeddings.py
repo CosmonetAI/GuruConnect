@@ -13,6 +13,7 @@ import math
 import time
 
 from openai import AsyncOpenAI
+from recorder.activity_log import monitored_call
 
 from .settings import settings
 
@@ -74,10 +75,12 @@ class CatalogueEmbeddingClient:
         try:
             async with self._gate:
                 async with asyncio.timeout(self.timeout):
-                    response = await self._client.embeddings.create(
-                        model=self.model, dimensions=DIMENSIONS, encoding_format='float',
-                        input=[row['text'] for row in requested],
-                    )
+                    response = await monitored_call(
+                        self._client.embeddings.create(
+                            model=self.model, dimensions=DIMENSIONS, encoding_format='float',
+                            input=[row['text'] for row in requested],
+                        ),
+                        "openai", "embeddings.create", metadata={"model": self.model, "batch_size": len(requested)})
             if response.model != self.model or len(response.data) != len(requested):
                 raise ValueError('Unexpected embedding model or batch length')
             returned = {}

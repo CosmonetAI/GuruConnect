@@ -26,6 +26,7 @@ from .providers import AzureTranslator, ElevenLabsAdapter, ProviderError, protec
 from .security import SecretBox
 from .storage import Storage
 from .logging_config import configure_logging
+from .activity_log import emit, update_context
 
 log = logging.getLogger("recorder.worker")
 TRANSLATION_BLOCKED_CODES = {"invalid_credentials", "connection_unavailable", "engine_unconfigured", "translator_unconfigured", "translator_unavailable", "provider_model_access_denied", "provider_access_denied", "provider_permission_denied", "provider_payment_required", "provider_quota_exceeded", "provider_plan_access_denied"}
@@ -45,6 +46,18 @@ class MainWorker:
         self.id = os.environ.get("MAIN_WORKER_ID") or f"main-{uuid4()}"
         self.stopping = asyncio.Event()
         self.last_cycle = None
+
+    async def durable_activity(self, action: str, *, organisation_id, member_id=None,
+                               conversation_id=None, job_id=None, metadata=None) -> None:
+        """Best-effort worker activity row; processing must not fail on logging."""
+        try:
+            async with self.db.connection() as connection:
+                await connection.execute("""insert into audit_events
+                    (organisation_id,conversation_id,member_id,action,metadata)
+                    values(%s,%s,%s,%s,%s)""",
+                    (organisation_id, conversation_id, member_id, action, Jsonb(metadata or {})))
+        except Exception:
+            log.warning("activity_persist_failed action=%s exception_type=database_error", action)
 
     async def credentials(self, connection_id) -> dict:
         async with self.db.connection() as connection:
@@ -129,6 +142,13 @@ class MainWorker:
 
     async def transcribe(self, job):
         audio, conv = await self.audio_file(job)
+        update_context(organisation_id=str(conv.get("organisation_id")), member_id=str(conv.get("owner_id")))
+        emit("transcription.started", organisation_id=conv.get("organisation_id"), member_id=conv.get("owner_id"),
+             conversation_id=conv.get("id"), job_id=job.get("id"),
+             metadata={"provider": "elevenlabs", "kind": job.get("kind")})
+        await self.durable_activity("transcription.started", organisation_id=conv.get("organisation_id"),
+                                    member_id=conv.get("owner_id"), conversation_id=conv.get("id"),
+                                    job_id=job.get("id"), metadata={"provider": "elevenlabs", "kind": job.get("kind")})
         try:
             credentials = await self.credentials(job["connection_id"])
             adapter = ElevenLabsAdapter(credentials.get("api_key") or credentials.get("key"), model_id=self.settings.elevenlabs_transcription_model)
@@ -152,14 +172,22 @@ class MainWorker:
             version_id = await publish_result(connection, job, result)
             if not reliably_english and result["source_segments"]:
                 await schedule(connection, conv["id"],job["run_id"],"translate",f"translate:{job['id']}",{**job["payload"],"source_job_id":str(job["id"]),"source_version_id":str(version_id),"final":job["kind"]=="finalise"},job.get("window_id"),job["priority"])
+        emit("transcription.completed", organisation_id=conv.get("organisation_id"), member_id=conv.get("owner_id"),
+             conversation_id=conv.get("id"), job_id=job.get("id"),
+             metadata={"segments": len(result.get("source_segments") or []), "english_state": result.get("english_state")})
+        await self.durable_activity("transcription.completed", organisation_id=conv.get("organisation_id"),
+                                    member_id=conv.get("owner_id"), conversation_id=conv.get("id"),
+                                    job_id=job.get("id"), metadata={"segments": len(result.get("source_segments") or [])})
 
     async def translate(self, job):
         async with self.db.connection() as connection:
+            conv = await one(connection, "select organisation_id,owner_id from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
             provider = await one(connection, "select engine_id,config,generation from engine_connections where id=%s and organisation_id=%s", (job["connection_id"],job["organisation_id"]))
             source_job = await one(connection, "select p.result from processing_jobs p join transcript_versions v on v.job_id=p.id and v.run_id=p.run_id and v.conversation_id=p.conversation_id where p.id=%s and p.conversation_id=%s and p.run_id=%s and p.state='succeeded' and v.id=%s", (job["payload"]["source_job_id"],job["conversation_id"],job["run_id"],job["payload"]["source_version_id"]))
             turns = await many(connection, "select t.* from transcript_turns t join transcript_versions v on v.id=t.version_id where v.id=%s and v.conversation_id=%s and v.run_id=%s and (%s::uuid is null or t.window_id=%s::uuid) order by t.ordinal", (job["payload"]["source_version_id"],job["conversation_id"],job["run_id"],job.get("window_id"),job.get("window_id")))
             words = await many(connection, "select w.turn_id,w.word,w.start_seconds,w.end_seconds from transcript_words w join transcript_turns t on t.id=w.turn_id join transcript_versions v on v.id=t.version_id where v.id=%s and v.conversation_id=%s and v.run_id=%s and (%s::uuid is null or t.window_id=%s::uuid) order by w.start_seconds,w.end_seconds,w.id", (job["payload"]["source_version_id"],job["conversation_id"],job["run_id"],job.get("window_id"),job.get("window_id")))
         if not source_job: raise ProviderError("invalid_result")
+        update_context(organisation_id=str((conv or {}).get("organisation_id")), member_id=str((conv or {}).get("owner_id")))
         if not provider or provider["generation"] != job["connection_generation"]:
             raise ProviderError("connection_unavailable")
         engine = provider["engine_id"]
@@ -169,6 +197,12 @@ class MainWorker:
             raise ProviderError("connection_unavailable")
         is_openai = engine == "openai-translator"
         model = provider["config"].get("model", OPENAI_TRANSLATION_MODEL) if is_openai else "standard-v3"
+        emit("translation.started", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
+             conversation_id=job.get("conversation_id"), job_id=job.get("id"),
+             metadata={"provider": engine, "model": model})
+        await self.durable_activity("translation.started", organisation_id=(conv or {}).get("organisation_id"),
+                                    member_id=(conv or {}).get("owner_id"), conversation_id=job.get("conversation_id"),
+                                    job_id=job.get("id"), metadata={"provider": engine, "model": model})
         if is_openai:
             try: validate_translation_model(model)
             except ValueError: raise ProviderError("provider_model_access_denied") from None
@@ -219,6 +253,12 @@ class MainWorker:
         async with self.db.connection() as connection:
             finished = await one(connection,"select finish_job(%s,%s,%s,%s,%s) as ok",(job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
             if finished["ok"]: await publish_result(connection,job,result)
+        emit("translation.completed", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
+             conversation_id=job.get("conversation_id"), job_id=job.get("id"),
+             metadata={"provider": engine, "model": model, "characters": sum(len(item.get("text") or "") for item in english)})
+        await self.durable_activity("translation.completed", organisation_id=(conv or {}).get("organisation_id"),
+                                    member_id=(conv or {}).get("owner_id"), conversation_id=job.get("conversation_id"),
+                                    job_id=job.get("id"), metadata={"provider": engine, "model": model})
 
     async def assemble(self, job):
         log.info("assembly_started job_id=%s conversation_id=%s", job["id"], job["conversation_id"])

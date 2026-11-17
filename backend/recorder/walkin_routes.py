@@ -299,9 +299,10 @@ async def extract_voice_field(
         if not spoken:
             fail("voice_field_empty", 422, "No speech was detected. Try again")
         from openai import AsyncOpenAI
+        from .activity_log import monitored_call
 
         client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value(), max_retries=1)
-        extraction = await client.chat.completions.create(
+        extraction = await monitored_call(client.chat.completions.create(
             model=settings.openai_translation_model,
             temperature=0,
             response_format=VOICE_FIELD_RESPONSE_FORMAT,
@@ -309,7 +310,7 @@ async def extract_voice_field(
                 {"role": "system", "content": f"{VOICE_FIELD_EXTRACTION_PROMPT}\n\nField-specific rule: {VOICE_FIELD_EXTRACTION_FIELD_RULES[field]}\nField question hint: {VOICE_FIELD_QUESTION_HINTS[field]}"},
                 {"role": "user", "content": f"Target field: {VOICE_FIELD_PROMPTS[field]}\nTranscript: {spoken}"},
             ],
-        )
+        ), "openai", "chat.completions.create", metadata={"model": settings.openai_translation_model, "component": "voice_field_extraction"})
         raw = _completion_text(extraction.choices[0].message)
         value = _voice_value(field, raw, spoken)
         if not value:
@@ -472,9 +473,10 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
         return {}
     try:
         from openai import AsyncOpenAI
+        from .activity_log import monitored_call
 
         client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value(), max_retries=1)
-        completion = await client.chat.completions.create(
+        completion = await monitored_call(client.chat.completions.create(
             model=settings.openai_translation_model,
             temperature=0,
             response_format=WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT,
@@ -483,7 +485,7 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
                 {"role": "system", "content": "Extract visitor registration details from the cumulative English translation available so far. Map each answer to the nearby question or explicit label. Never use an email username, email domain, or phone digit as a person's name. Never use an email domain as a company. Only fill customerName when the visitor explicitly gives a name (for example, 'my name is Akshat Saxena'); only fill companyName when the visitor explicitly gives a company or organisation; only fill mobileNumber from a phone/mobile answer. Ignore questions, greetings, and filler. Return only facts explicitly spoken by the visitor. Keep names and company names in English/Latin letters for CRM search. Return phone as ASCII digits only, preserving every spoken digit including double/triple words. Return email exactly as spoken after converting at/dot/underscore/hyphen words; never autocorrect. Return customerType as customer for buying/customer or vendor for selling/vendor; otherwise empty. Do not wait for the recording to finish and do not clear a fact just because it is absent from this prefix."},
                 {"role": "user", "content": f"Transcript:\n{dialogue[:30000]}"},
             ],
-        )
+        ), "openai", "chat.completions.create", metadata={"model": settings.openai_translation_model, "component": "walkin_extraction"})
         raw = _completion_text(completion.choices[0].message)
         parsed = json.loads(raw)
         fields = {key: str(parsed.get(key) or "").strip() for key in ("customerName", "mobileNumber", "email", "companyName", "projectName", "customerType")}

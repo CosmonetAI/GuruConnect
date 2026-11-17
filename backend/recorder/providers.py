@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 
 import httpx
+from urllib.parse import urlsplit
+from .activity_log import external_completed, external_failed, external_started
 
 MAX_PROVIDER_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_TRANSCRIPT_CHARS = 240_000
@@ -24,6 +26,10 @@ async def bounded_request(client, method: str, url: str, *, max_bytes: int = MAX
     HTTPX's read timeout covers inactivity, so a trickling response also needs
     a total deadline. Count decoded bytes to cover compressed response bombs.
     """
+    parsed = urlsplit(url)
+    provider = parsed.hostname or "external"
+    operation = f"{method.upper()} {parsed.path or '/'}"
+    started_at = external_started(provider, operation)
     try:
         async with asyncio.timeout(timeout):
             kwargs["headers"] = {**kwargs.get("headers", {}), "Accept-Encoding": "identity"}
@@ -35,13 +41,25 @@ async def bounded_request(client, method: str, url: str, *, max_bytes: int = MAX
                     if len(body) + len(chunk) > max_bytes:
                         raise ProviderError("provider_response_too_large", uncertain=paid)
                     body.extend(chunk)
-                return httpx.Response(response.status_code, headers=response.headers,
-                                      content=bytes(body), request=response.request)
+                result = httpx.Response(response.status_code, headers=response.headers,
+                                        content=bytes(body), request=response.request)
+                external_completed(provider, operation, started_at, status=result.status_code,
+                                   external_request_id=result.headers.get("x-request-id"),
+                                   metadata={"response_bytes": len(body)})
+                if result.status_code >= 400:
+                    external_failed(provider, operation, started_at, RuntimeError(f"provider_http_{result.status_code}"), status=result.status_code)
+                return result
     except TimeoutError:
-        raise ProviderError("external_execution_uncertain" if paid else "provider_connection_failed",
-                            uncertain=paid, retryable=not paid) from None
+        error = ProviderError("external_execution_uncertain" if paid else "provider_connection_failed", uncertain=paid, retryable=not paid)
+        external_failed(provider, operation, started_at, error)
+        raise error from None
+    except httpx.RequestError as exc:
+        external_failed(provider, operation, started_at, exc)
+        raise
     except httpx.DecodingError:
-        raise ProviderError("provider_invalid_response", uncertain=paid) from None
+        error = ProviderError("provider_invalid_response", uncertain=paid)
+        external_failed(provider, operation, started_at, error)
+        raise error from None
 
 
 def _credential(value: str, missing: str) -> str:

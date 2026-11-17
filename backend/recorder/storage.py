@@ -9,6 +9,7 @@ import httpx
 from fastapi import HTTPException
 from .config import Settings
 from .errors import fail
+from .activity_log import external_completed, external_failed, external_started
 
 log = logging.getLogger("recorder.storage")
 STORAGE_ERROR_CODES = {"NoSuchBucket", "NoSuchKey", "InvalidJWT", "AccessDenied", "InternalError",
@@ -36,18 +37,26 @@ class Storage:
 
     async def request(self, client, method, url, **kwargs):
         # Write/list/sign responses must never buffer unbounded upstream data.
-        async with client.stream(method, url, **kwargs) as response:
-            content = bytearray()
-            async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
-                if len(content) + len(chunk) > 262144:
-                    fail("invalid_storage_response", 503)
-                content.extend(chunk)
-            # aiter_bytes has already decompressed the body. Keeping the wire
-            # encoding makes HTTPX decompress it again when constructing this
-            # response, turning a successful Storage write into DecodingError.
-            headers = {key: value for key, value in response.headers.items()
-                       if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}}
-            return httpx.Response(response.status_code, headers=headers, content=bytes(content))
+        operation = f"{method.upper()} {urlsplit(url).path or '/'}"
+        started_at = external_started("supabase-storage", operation)
+        try:
+            async with client.stream(method, url, **kwargs) as response:
+                content = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    if len(content) + len(chunk) > 262144:
+                        fail("invalid_storage_response", 503)
+                    content.extend(chunk)
+                external_completed("supabase-storage", operation, started_at, status=response.status_code,
+                                   metadata={"response_bytes": len(content)})
+                # aiter_bytes has already decompressed the body. Keeping the wire
+                # encoding makes HTTPX decompress it again when constructing this
+                # response, turning a successful Storage write into DecodingError.
+                headers = {key: value for key, value in response.headers.items()
+                           if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}}
+                return httpx.Response(response.status_code, headers=headers, content=bytes(content))
+        except Exception as error:
+            external_failed("supabase-storage", operation, started_at, error)
+            raise
 
     @staticmethod
     def error_code(body):

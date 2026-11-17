@@ -43,6 +43,7 @@ select
     and to_regclass('public.engine_connections') is not null
     and to_regclass('public.workspace_engine_settings') is not null
     and to_regclass('public.audit_events') is not null
+    and exists(select 1 from information_schema.columns where table_schema='public' and table_name='audit_events' and column_name='member_id')
     and to_regclass('public.transcript_versions') is not null
     and to_regclass('public.guruconnect_enquiries') is not null
     and to_regclass('public.guruconnect_walkin_visits') is not null

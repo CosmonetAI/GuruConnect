@@ -7,9 +7,10 @@ from uuid import UUID
 import httpx
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .config import Settings
+from .activity_log import external_completed, external_failed, external_started, update_context
 from .db import one
 from .errors import fail
 
@@ -44,15 +45,25 @@ class JWTVerifier:
             return
         self.last_fetch_at = now
         self.fetch_failed = True
-        async with asyncio.timeout(self.JWKS_TIMEOUT_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3), follow_redirects=False, trust_env=False) as client:
-            async with client.stream("GET", f"{self.settings.issuer}/.well-known/jwks.json") as response:
-                if response.status_code != 200:
-                    fail("auth_temporarily_unavailable", 503)
-                payload = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(payload) + len(chunk) > 262144:
+        operation = "GET /.well-known/jwks.json"
+        started_at = external_started("supabase-auth", operation)
+        try:
+            async with asyncio.timeout(self.JWKS_TIMEOUT_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3), follow_redirects=False, trust_env=False) as client:
+                async with client.stream("GET", f"{self.settings.issuer}/.well-known/jwks.json") as response:
+                    external_completed("supabase-auth", operation, started_at, status=response.status_code,
+                                       metadata={"response_bytes": response.headers.get("content-length", "unknown")})
+                    if response.status_code != 200:
+                        external_failed("supabase-auth", operation, started_at, RuntimeError(f"jwks_http_{response.status_code}"), status=response.status_code)
                         fail("auth_temporarily_unavailable", 503)
-                    payload.extend(chunk)
+                    payload = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(payload) + len(chunk) > 262144:
+                            fail("auth_temporarily_unavailable", 503)
+                        payload.extend(chunk)
+        except Exception as error:
+            if not isinstance(error, HTTPException):
+                external_failed("supabase-auth", operation, started_at, error)
+            raise
         try:
             items = json.loads(payload)["keys"]
             if not isinstance(items, list) or not 1 <= len(items) <= 64:
@@ -149,6 +160,7 @@ async def current_user(request: Request, credentials: HTTPAuthorizationCredentia
     if not credentials or credentials.scheme.lower() != "bearer":
         fail("authentication_required", 401)
     user = await request.app.state.verifier.verify(credentials.credentials)
+    update_context(actor_id=str(user.id))
     async with request.app.state.db.connection() as connection:
         allowance = await one(connection, "select allow_api_request(%s,%s,60) as allowed", (f"user:{user.id}", request.app.state.settings.rate_limit_per_minute))
         if not allowance["allowed"]:
@@ -193,6 +205,7 @@ async def workspace(request: Request, user: User = Depends(current_user),
         fail("workspace_read_only", 403, "Owner views of salesperson and receptionist workspaces are read-only")
     if selected.get("status", "active") != "active" and (actor["role"] != "owner" or request.method not in {"GET", "HEAD"}):
         fail("workspace_access_denied", 403)
+    update_context(organisation_id=str(x_workspace_id), member_id=str(selected_id))
     return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])
 
 

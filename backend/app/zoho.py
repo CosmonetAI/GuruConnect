@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlsplit
 from sqlalchemy import text
 from .db import require_db, row_dict, now
+from recorder.activity_log import external_completed, external_failed, external_started
 
 _organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
 _member_id: ContextVar[str | None] = ContextVar('zoho_member_id', default=None)
@@ -51,6 +52,14 @@ def get_member_id():
 
 def get_organisation_id():
     return _organisation_id.get()
+
+
+def _log_zoho_response(operation, started_at, response):
+    external_completed('zoho', operation, started_at, status=response.status_code,
+                       external_request_id=response.headers.get('x-request-id'),
+                       metadata={'response_bytes': len(response.content)})
+    if response.status_code >= 400:
+        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'), status=response.status_code)
 
 class ZohoClient:
     def _tenant_key(self):
@@ -132,8 +141,14 @@ class ZohoClient:
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'authorization_code','client_id':c['client_id'],'client_secret':c['client_secret'],'code':code}
         accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
-        response.raise_for_status(); payload=response.json(); await self._save_tokens(payload); return self.status()
+        operation = 'POST /oauth/v2/token'; started_at = external_started('zoho', operation)
+        try:
+            async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
+            _log_zoho_response(operation, started_at, response)
+            response.raise_for_status(); payload=response.json(); await self._save_tokens(payload); return self.status()
+        except Exception as error:
+            if 'response' not in locals() or response.status_code < 400: external_failed('zoho', operation, started_at, error, status=getattr(locals().get('response'), 'status_code', None))
+            raise
     async def refresh(self, force=False):
         c=self._connection()
         if not c or not c.get('refresh_token'): return False
@@ -141,8 +156,14 @@ class ZohoClient:
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'refresh_token','client_id':c['client_id'],'client_secret':c['client_secret'],'refresh_token':c['refresh_token']}
         accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
-        response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
+        operation = 'POST /oauth/v2/token'; started_at = external_started('zoho', operation)
+        try:
+            async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
+            _log_zoho_response(operation, started_at, response)
+            response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
+        except Exception as error:
+            if 'response' not in locals() or response.status_code < 400: external_failed('zoho', operation, started_at, error, status=getattr(locals().get('response'), 'status_code', None))
+            raise
     async def _save_tokens(self,payload):
         self._member()
         with require_db() as db:
@@ -156,13 +177,30 @@ class ZohoClient:
         if not c or not c.get('access_token'): raise RuntimeError('Zoho is not connected')
         headers={'Authorization':f"Zoho-oauthtoken {c['access_token']}"}
         api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
-        async with httpx.AsyncClient(timeout=30) as client:
-            response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
-            if response.status_code==401:
-                await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
-                api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
+        operation = f"{method.upper()} {path}"
+        started_at = external_started('zoho', operation)
+        response = None
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
                 response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
-        response.raise_for_status(); return response.json() if response.content else {'ok': True}
+                if response.status_code==401:
+                    await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
+                    api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
+                    response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
+            if response.status_code >= 400:
+                external_completed('zoho', operation, started_at, status=response.status_code,
+                                   external_request_id=response.headers.get('x-request-id'))
+                external_failed('zoho', operation, started_at, RuntimeError(f"zoho_http_{response.status_code}"), status=response.status_code)
+            else:
+                external_completed('zoho', operation, started_at, status=response.status_code,
+                                   external_request_id=response.headers.get('x-request-id'),
+                                   metadata={'response_bytes': len(response.content)})
+            response.raise_for_status()
+            return response.json() if response.content else {'ok': True}
+        except Exception as error:
+            if response is None or response.status_code < 400:
+                external_failed('zoho', operation, started_at, error, status=getattr(response, 'status_code', None))
+            raise
 
     async def mail_accounts(self):
         """Resolve the Mail account IDs available to this OAuth user."""
@@ -173,8 +211,14 @@ class ZohoClient:
         domain = zoho_endpoints(connection.get('zoho_region'))['mail_api_domain'].rstrip('/')
         headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/json'}
         for attempt in range(2):
-            async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
-                response = await client.get(f'{domain}/api/accounts', headers=headers)
+            operation = 'GET /api/accounts'; started_at = external_started('zoho', operation)
+            try:
+                async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+                    response = await client.get(f'{domain}/api/accounts', headers=headers)
+                _log_zoho_response(operation, started_at, response)
+            except Exception as error:
+                external_failed('zoho', operation, started_at, error)
+                raise
             if response.status_code == 401 and attempt == 0:
                 await self.refresh(force=True)
                 connection = self._connection()
@@ -253,7 +297,13 @@ class ZohoClient:
             url = f'{domain}/books/v3/{resource}/{document_id}'
             retry = False
             async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                operation = f'GET /books/v3/{resource}/{document_id}'; started_at = external_started('zoho', operation)
                 async with client.stream('GET', url, params={'organization_id': str(org), 'accept': 'pdf'}, headers=headers) as response:
+                    external_completed('zoho', operation, started_at, status=response.status_code,
+                                       external_request_id=response.headers.get('x-request-id'),
+                                       metadata={'content_type': response.headers.get('content-type', '').split(';', 1)[0]})
+                    if response.status_code >= 400:
+                        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'), status=response.status_code)
                     if response.status_code == 401 and attempt == 0:
                         retry = True
                     else:

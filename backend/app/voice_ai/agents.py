@@ -659,9 +659,11 @@ requested, available, or associated with a particular customer. Keep the exact c
 
 async def _structured_completion(configuration: Any, payload: dict[str, Any]) -> Any:
     from openai import AsyncOpenAI
+    from recorder.activity_log import monitored_call
     async with AsyncOpenAI(api_key=configuration.openai_api_key, timeout=35.0, max_retries=1) as client:
-        return await client.chat.completions.create(
-            model=configuration.voice_extraction_model or configuration.openai_model,
+        model = configuration.voice_extraction_model or configuration.openai_model
+        return await monitored_call(client.chat.completions.create(
+            model=model,
             temperature=0, max_tokens=5000,
             response_format={'type': 'json_schema', 'json_schema': {
                 'name': 'voice_conversation_understanding', 'strict': True,
@@ -674,7 +676,7 @@ async def _structured_completion(configuration: Any, payload: dict[str, Any]) ->
                        'and emit only new deltas. If a claim lacks support, omit it. '
                        if payload.get('validation_repair') else '')},
                       {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False, default=str)}],
-        )
+        ), "openai", "chat.completions.create", metadata={"model": model, "component": "voice_extraction"})
 
 
 def _failure(status: str, code: str, message: str) -> dict[str, Any]:

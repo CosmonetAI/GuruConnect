@@ -23,11 +23,28 @@ from .voice_ai.live import analysis_turns, batch_fingerprint, catalogue_queries,
 from .voice_ai.workspace import (analysis_outcome, catalogue_due, failed_analysis_data, retain_catalogue_recommendations,
                                 requirement_signature, retry_failure, row_analysis_error, workspace_fields)
 from .session_tags import derive_business_tags
+from recorder.activity_log import emit
 
 # At most two live analyses hold database/provider resources in this process.
 # PostgreSQL advisory locks also serialize a conversation across API instances
 # and the optional database webhook, so repeated polls never duplicate paid work.
 _voice_live_tasks: dict[tuple[str, str, str], asyncio.Task] = {}
+
+
+def persist_activity(db, action: str, metadata: dict | None = None, conversation_id=None) -> None:
+    """Persist a business event and mirror it to the searchable application log."""
+    context = sales_workspace.get()
+    if not context:
+        return
+    safe_metadata = metadata or {}
+    db.execute(text("""insert into audit_events(organisation_id,conversation_id,member_id,actor_id,action,metadata)
+      values(cast(:org as uuid),cast(:conversation as uuid),cast(:member as uuid),cast(:actor as uuid),:action,cast(:metadata as jsonb))"""), {
+        'org': str(context.id), 'conversation': str(conversation_id) if conversation_id else None,
+        'member': str(context.member_id), 'actor': str(context.user.id), 'action': action,
+        'metadata': json.dumps(safe_metadata, default=str),
+    })
+    emit(action, organisation_id=context.id, member_id=context.member_id, actor_id=context.user.id,
+         conversation_id=conversation_id, metadata=safe_metadata)
 
 async def stop_voice_live_tasks():
     from .catalogue_index import close_catalogue_tasks
@@ -600,6 +617,7 @@ def open_voice_session(payload: VoiceSessionIn, request: Request, background_tas
                 row = db.execute(text("""insert into chat_sessions(customer_id,title,identity_phone,identity_email,organisation_id,member_id)
                   values(cast(:customer as uuid),:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"""), params).first()
             session = row_dict(row)
+            persist_activity(db, 'session.started', {'customer_id': customer.get('id')}, session['id'])
             db.commit()
             background_tasks.add_task(_warm_voice_catalogue, sales_workspace.get())
             return {**_voice_history(db, session), 'customer': customer}
@@ -717,6 +735,8 @@ async def _analyse_voice_live(session_id):
         conversation_id = snapshot.get('conversation_id')
         if not conversation_id:
             return
+        emit('openai.analysis.started', session_id=session_id, conversation_id=conversation_id,
+             metadata={'component': 'live_voice_analysis'})
         async with _voice_live_database() as db:
             claim = await _voice_live_execute(db, 'select pg_try_advisory_xact_lock(hashtext(:key)) as acquired',
                                              {'key': f'voice-live:{conversation_id}'})
@@ -804,10 +824,14 @@ async def _analyse_voice_live(session_id):
                   {**scope_parameters(), 'conversation': conversation_id, 'fingerprint': f'catalogue:{signature}',
                    'data': json.dumps(data, ensure_ascii=False, default=str)})
             await asyncio.to_thread(db.commit)
+            emit('openai.analysis.completed', session_id=session_id, conversation_id=conversation_id,
+                 metadata={'pending_turns': len(pending), 'catalogue_status': catalogue.get('status')})
     except asyncio.CancelledError:
         raise
     except Exception as error:
         log.warning('voice_live_analysis_failed exception_type=%s', type(error).__name__)
+        emit('openai.analysis.failed', level=logging.WARNING, session_id=session_id,
+             conversation_id=conversation_id, metadata={'exception_type': type(error).__name__})
         if fingerprint and conversation_id:
             # Store a short retry marker after the model transaction rolls back.
             # No raw provider errors or customer speech enter logs/notices.
@@ -918,6 +942,7 @@ def add_voice_session_note(session_id: UUID, payload: VoiceSessionNoteIn, reques
           {**scope_parameters(), 'session': str(session['id']), 'content': content}).first()
         if not note:
             raise HTTPException(404, 'Session not found')
+        persist_activity(db, 'session.note_saved', {'note_id': note['id']}, session_id)
         db.commit()
         return {'note': row_dict(note)}
 
@@ -941,6 +966,8 @@ def update_voice_session_context(session_id: UUID, payload: VoiceSessionContextI
           {**scope_parameters(), 'context': json.dumps(context), 'session': str(session_id)}).first()
         if not row:
             raise HTTPException(404, 'Session not found')
+        persist_activity(db, 'session.context_saved', {
+            'requirements_count': len(payload.product_requirements), 'cart_count': len(payload.cart)}, session_id)
         db.commit()
         return {'product_requirements': payload.product_requirements, 'cart': payload.cart}
 
@@ -1876,6 +1903,12 @@ async def create_contact(payload: ContactIn):
         result = await zoho.create_books_contact(org, data)
         updated_contact = result.get('contact') or result.get('contact_person') or ((result.get('contact_persons') or [None])[0])
         _cache_recent_rows('contacts', [{**updated_contact, '__source': 'books'}] if isinstance(updated_contact, dict) else [])
+        with require_db() as db:
+            persist_activity(db, 'contact.saved', {
+                'provider': 'zoho_books',
+                'contact_id': (updated_contact or {}).get('contact_id') if isinstance(updated_contact, dict) else None,
+                'contact_type': payload.contact_type or 'customer'})
+            db.commit()
         return {'contact': updated_contact, 'response': result}
     except HTTPException:
         raise
@@ -2211,6 +2244,7 @@ async def chat(payload: ChatIn):
           from chat_sessions s where e.session_id=s.id and s.id=cast(:session as uuid)
             and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)"""),
           {**params, 'data':json.dumps({'intent':result.get('intent'),'language':result.get('language'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])},default=str)})
+        persist_activity(db, 'chat.message_processed', {'intent': result.get('intent')}, session['id'])
         db.commit()
     return {'session_id':str(session['id']),'customer':customer,'intent':result['intent'],'answer':result['answer']}
 

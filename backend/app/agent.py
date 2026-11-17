@@ -19,6 +19,7 @@ from .chat import normalize_email, normalize_phone
 from .db import require_db, scope_parameters
 from .settings import settings
 from .zoho import zoho
+from recorder.activity_log import monitored_call
 
 
 class AgentState(TypedDict, total=False):
@@ -82,7 +83,9 @@ async def _invoke_with_retry(client, *, model: str, messages: list[dict[str, str
     """Retry transient provider failures without retrying auth/request errors."""
     for attempt in range(attempts):
         try:
-            return await client.chat.completions.create(model=model, temperature=temperature, max_tokens=max_tokens, messages=messages)
+            return await monitored_call(
+                client.chat.completions.create(model=model, temperature=temperature, max_tokens=max_tokens, messages=messages),
+                "openai", "chat.completions.create", metadata={"model": model, "attempt": attempt + 1})
         except Exception as exc:
             status = getattr(exc, 'status_code', None)
             transient = status is None or status in {408, 409, 425, 429, 500, 502, 503, 504}
