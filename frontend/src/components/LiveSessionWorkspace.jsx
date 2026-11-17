@@ -812,7 +812,7 @@ function Cart({
           )}
         </div>
       </div>
-      {(taxes.length > 0 || onRefreshTaxes) && (
+      {taxes.length > 0 && (
         <div className="lws-tax-rule">
           <TaxRulePicker
             taxes={taxes}

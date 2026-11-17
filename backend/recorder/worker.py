@@ -336,31 +336,80 @@ class MainWorker:
 
     async def cleanup_deleted(self, conversation_id=None):
         async with self.db.connection() as connection:
-            expired=await many(connection,"update conversations c set deleted_at=now(),capture_state='deleted',upload_state='pending',active_version_id=null,updated_at=now() from organisations o where c.organisation_id=o.id and c.deleted_at is null and c.created_at<now()-make_interval(days=>o.retention_days) returning c.id")
+            # Retention runs must be a small, skip-locked batch.  A single
+            # unbounded update can hold conversation row locks while another
+            # request is trying to authorize/confirm audio.
+            expired=await many(connection,"""
+                with candidates as (
+                    select c.id
+                    from conversations c
+                    join organisations o on o.id=c.organisation_id
+                    where c.deleted_at is null
+                      and c.created_at<now()-make_interval(days=>o.retention_days)
+                    order by c.created_at
+                    for update of c skip locked
+                    limit 10
+                )
+                update conversations c
+                   set deleted_at=now(),capture_state='deleted',upload_state='pending',
+                       active_version_id=null,updated_at=now()
+                  from candidates
+                 where c.id=candidates.id
+                returning c.id
+            """)
             for expired_conv in expired:
                 await connection.execute("delete from recording_leases where conversation_id=%s",(expired_conv["id"],))
                 await connection.execute("update processing_jobs set state='cancelled',cancelled_at=now(),finish_in_flight=false where conversation_id=%s and state<>'succeeded'",(expired_conv["id"],))
                 await connection.execute("update processing_runs set state='cancelled',cancelled_at=now() where conversation_id=%s",(expired_conv["id"],))
-            rows = await many(connection,"select id,organisation_id,owner_id,playback_object_path from conversations where deleted_at is not null and (upload_state<>'saved' or deleted_at>now()-interval '1 day') and (%s::uuid is null or id=%s) order by updated_at limit 10",(conversation_id,conversation_id))
+            # Claim cleanup rows before leaving the transaction.  The old
+            # query also selected rows deleted in the last day even after
+            # cleanup had succeeded, causing an endless storage list/delete
+            # cycle and unnecessary Supabase usage.
+            rows = await many(connection,"""
+                with candidates as (
+                    select id
+                    from conversations
+                    where deleted_at is not null
+                      and (
+                          upload_state='pending'
+                          or (upload_state='uploading' and updated_at<now()-interval '10 minutes')
+                      )
+                      and (%s::uuid is null or id=%s)
+                    order by updated_at
+                    for update skip locked
+                    limit 10
+                )
+                update conversations c
+                   set upload_state='uploading',updated_at=now()
+                  from candidates
+                 where c.id=candidates.id
+                returning c.id,c.organisation_id,c.owner_id,c.playback_object_path
+            """,(conversation_id,conversation_id))
         for conv in rows:
-            async with self.db.connection() as connection:
-                paths = await many(connection,"select object_path from audio_chunks where conversation_id=%s union select object_path from inference_artifacts where conversation_id=%s",(conv["id"],conv["id"]))
-            objects = [row["object_path"] for row in paths]
-            if conv["playback_object_path"]: objects.append(conv["playback_object_path"])
-            prefix=f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}"
-            objects.extend(await self.storage.list_paths(prefix))
-            await self.storage.delete(objects)
-            async with self.db.connection() as connection:
-                # Mark cleanup complete; retained tombstone fences all late work.
-                await connection.execute("delete from transcript_words where version_id in(select id from transcript_versions where conversation_id=%s)",(conv["id"],))
-                await connection.execute("delete from conversation_extractions where conversation_id=%s",(conv["id"],))
-                await connection.execute("delete from voice_ai_contexts where conversation_id=%s",(conv["id"],))
-                for table in ("transcript_revisions","speaker_assignments","diarization_intervals","translations"):
-                    await connection.execute(f"delete from {table} where conversation_id=%s",(conv["id"],))
-                await connection.execute("delete from transcript_turns where conversation_id=%s",(conv["id"],))
-                await connection.execute("delete from transcript_versions where conversation_id=%s",(conv["id"],))
-                await connection.execute("update processing_jobs set result=case when result is null then null else '{\"deleted\":true}'::jsonb end where conversation_id=%s",(conv["id"],))
-                await connection.execute("update conversations set upload_state='saved',customer_name_snapshot='Deleted recording',salesperson_name_snapshot='',title='',location='',updated_at=now() where id=%s and deleted_at is not null",(conv["id"],))
+            try:
+                async with self.db.connection() as connection:
+                    paths = await many(connection,"select object_path from audio_chunks where conversation_id=%s union select object_path from inference_artifacts where conversation_id=%s",(conv["id"],conv["id"]))
+                objects = [row["object_path"] for row in paths]
+                if conv["playback_object_path"]: objects.append(conv["playback_object_path"])
+                prefix=f"{conv['organisation_id']}/{conv['owner_id']}/{conv['id']}"
+                objects.extend(await self.storage.list_paths(prefix))
+                await self.storage.delete(objects)
+                async with self.db.connection() as connection:
+                    # Mark cleanup complete; retained tombstone fences all late work.
+                    await connection.execute("delete from transcript_words where version_id in(select id from transcript_versions where conversation_id=%s)",(conv["id"],))
+                    await connection.execute("delete from conversation_extractions where conversation_id=%s",(conv["id"],))
+                    await connection.execute("delete from voice_ai_contexts where conversation_id=%s",(conv["id"],))
+                    for table in ("transcript_revisions","speaker_assignments","diarization_intervals","translations"):
+                        await connection.execute(f"delete from {table} where conversation_id=%s",(conv["id"],))
+                    await connection.execute("delete from transcript_turns where conversation_id=%s",(conv["id"],))
+                    await connection.execute("delete from transcript_versions where conversation_id=%s",(conv["id"],))
+                    await connection.execute("update processing_jobs set result=case when result is null then null else '{\"deleted\":true}'::jsonb end where conversation_id=%s",(conv["id"],))
+                    await connection.execute("update conversations set upload_state='saved',customer_name_snapshot='Deleted recording',salesperson_name_snapshot='',title='',location='',updated_at=now() where id=%s and deleted_at is not null",(conv["id"],))
+            except Exception as exc:
+                # Keep one storage/provider failure from stopping cleanup for
+                # every other conversation. The uploading claim is retried
+                # after ten minutes if this worker dies or the call fails.
+                log.warning("retention_cleanup_failed conversation_id=%s exception_type=%s", conv["id"], type(exc).__name__)
 
     async def maintenance(self):
         """Heartbeats and retention are independent of slow provider requests."""

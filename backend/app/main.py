@@ -1047,7 +1047,8 @@ async def voice_session_live(session_id: UUID, request: Request):
             'tags': derive_business_tags(context, requirements=requirements,
                                          recommendations=context.get('recent_recommendations'),
                                          current_intent=fields.get('current_intent'),
-                                         document_kind=fields.get('document_kind')),
+                                         document_kind=fields.get('document_kind'),
+                                         payload={'summary': '\n'.join(str(turn.get('english_text') or '') for turn in turns)}),
             'analysis_status': status, 'analysis_error': analysis_error if status in {'failed', 'unavailable', 'waiting_for_ai'} else None,
             'catalogue_status': 'searching' if task else catalogue.get('status', 'waiting'),
             'notices': notices}
@@ -1546,6 +1547,8 @@ async def purchase_order_options():
             'projects': projects.get('projects', projects.get('data', [])),
             'reporting_tags': tags.get('reporting_tags', tags.get('tags', tags.get('data', []))),
             'taxes': taxes.get('taxes', taxes.get('data', [])),
+            'zoho_region': taxes.get('zoho_region'),
+            'zoho_region_label': taxes.get('zoho_region_label'),
             'organization_id': org,
         }
     except HTTPException:

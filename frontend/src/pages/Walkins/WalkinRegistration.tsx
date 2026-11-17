@@ -129,7 +129,10 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
       } catch { /* processing is asynchronous; the recorder remains usable */ }
       // Poll quickly while the recording is being translated so the first
       // completed text fills the form without waiting for the full recording.
-      if (!cancelled) timer = window.setTimeout(() => void refresh(), 1000)
+      // Preview is read-only and audio chunks are saved independently. Keep
+      // this light enough that it cannot compete with chunk authorization or
+      // confirmation when the database is busy.
+      if (!cancelled) timer = window.setTimeout(() => void refresh(), 3000)
     }
     void refresh()
     return () => { cancelled = true; if (timer) window.clearTimeout(timer) }

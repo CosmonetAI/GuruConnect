@@ -41,6 +41,22 @@ ROUTES = {
 }
 
 
+_DOCUMENT_MENTION_PATTERNS = {
+    'quotation': r'\b(?:quote|quotation|estimate|written offer|boq|bill of quantities)\b',
+    'invoice': r'\b(?:invoice|tax invoice)\b',
+    'sales_order': r'\bsales order\b',
+    'purchase_order': r'\bpurchase order\b',
+}
+
+
+def document_mentions(text: str) -> list[str]:
+    """Detect document topics without turning them into business actions."""
+    value = str(text or '').lower().strip()
+    positive = re.sub(r"\b(?:no|not|don't|do not|without|cancel|skip)\b[^,.;!?]*?(?=\b(?:just|only|but|instead)\b|[,.;!?]|$)", ' ', value)
+    return [kind for kind, pattern in _DOCUMENT_MENTION_PATTERNS.items()
+            if re.search(pattern, positive)]
+
+
 def classify_voice_intent(text: str, context: dict[str, Any]) -> Route:
     """Conservative offline hint, never an authorization for a business action.
 

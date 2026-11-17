@@ -88,6 +88,10 @@ export default function TaxRulePicker({
     };
   }, [open, taxes.length]);
 
+  // No configured rules means there is no useful selector. Settings remains
+  // the place where an owner can inspect or refresh tax configuration.
+  if (!taxes.length) return null;
+
   const choose = (taxId: string) => {
     onTaxChange?.(taxId);
     setOpen(false);

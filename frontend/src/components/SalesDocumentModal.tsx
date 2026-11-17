@@ -397,7 +397,7 @@ export default function SalesDocumentModal({
                   </tbody>
                 </table>
               </div>
-              {!demo && (taxes.length > 0 || Boolean(onRefreshTaxes)) && (
+              {!demo && taxes.length > 0 && (
                 <div className="sdm-tax-selector">
                   <TaxRulePicker
                     taxes={taxes}

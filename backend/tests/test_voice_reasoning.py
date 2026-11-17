@@ -8,8 +8,9 @@ import pytest
 from app.voice_ai.agents import (ConversationMonitorAgent, _Understanding, _bounded_dialogue, _number_supported,
                                  _phone_digits, _quantity_supported, _reference_schema, _resolve_evidence)
 from app.voice_ai.context import VoiceConversationContext
-from app.voice_ai.intents import classify_voice_intent
+from app.voice_ai.intents import classify_voice_intent, document_mentions
 from app.voice_ai.orchestrator import VoiceConversationOrchestrator
+from app.session_tags import derive_business_tags
 
 
 CONFIG = SimpleNamespace(openai_api_key='synthetic-provider-key', voice_extraction_model='gpt-4o-mini', openai_model='gpt-4o-mini')
@@ -41,6 +42,13 @@ def requirement(product_name, quote, **changes):
 def completion(value, finish_reason='stop', refusal=None):
     return SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish_reason,
         message=SimpleNamespace(content=json.dumps(value), refusal=refusal))])
+
+
+def test_document_mentions_become_topics_without_becoming_actions():
+    text = 'There is an unpaid quote or invoice from last time that we can discuss.'
+    assert document_mentions(text) == ['quotation', 'invoice']
+    assert document_mentions('No quotation, just prices.') == []
+    assert derive_business_tags({'document_mentions': ['quotation', 'invoice']}) == ['Quote discussed', 'Invoice discussed']
 
 
 def provider(monkeypatch, value):

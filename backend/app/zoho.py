@@ -381,7 +381,7 @@ class ZohoClient:
               where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
               {'selected':organization_id,'currency':currency_code,'org':_organisation_id.get(),'member':_member_id.get()}); db.commit()
         connection = self._connection() or {}
-        if zoho_region(connection.get('zoho_region') or 'in') == 'in':
+        if zoho_region(connection.get('zoho_region') or 'us') == 'in':
             try:
                 await self.refresh_taxes()
             except Exception as error:
@@ -390,7 +390,9 @@ class ZohoClient:
 
     def cached_taxes(self):
         connection = self._connection() or {}
-        region = zoho_region(connection.get('zoho_region') or 'in')
+        # GST is an India-only product surface. Missing/legacy region data is
+        # deliberately treated as non-India so it cannot leak GST controls.
+        region = zoho_region(connection.get('zoho_region') or 'us')
         raw = connection.get('zoho_taxes')
         taxes = raw if isinstance(raw, list) else (raw.get('taxes', []) if isinstance(raw, dict) else [])
         return {
@@ -406,6 +408,9 @@ class ZohoClient:
     async def refresh_taxes(self):
         self._member()
         connection = self._connection() or {}
+        region = zoho_region(connection.get('zoho_region') or 'us')
+        if region != 'in':
+            return {**self.cached_taxes(), 'refreshed': False}
         org = connection.get('organization_id')
         if not connection.get('refresh_token') or not org:
             raise RuntimeError('Connect Zoho and select a Books organization first')
@@ -425,7 +430,7 @@ class ZohoClient:
 
     async def taxes_for_documents(self, org):
         connection = self._connection() or {}
-        region = zoho_region(connection.get('zoho_region') or 'in')
+        region = zoho_region(connection.get('zoho_region') or 'us')
         if region == 'in':
             cached = self.cached_taxes()
             result = cached if cached.get('updated_at') else await self.refresh_taxes()
@@ -443,7 +448,9 @@ class ZohoClient:
                 and str(tax.get('tax_specification') or '').lower() in {'intra', 'inter'}
             ]
             return {**result, 'taxes': document_taxes}
-        return await self.list_books_taxes(org)
+        # Non-India organizations may have other tax concepts, but this
+        # product surface is specifically GST/tax-rule selection for India.
+        return {**self.cached_taxes(), 'taxes': []}
     async def list_bigin_contacts(self, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':50, 'page':page})

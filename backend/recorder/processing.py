@@ -75,8 +75,10 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
     existing = await one(connection, "select id from transcript_versions where job_id=%s", (job["id"],))
     if existing:
         return existing["id"]
-    run = await one(connection, "select * from processing_runs where id=%s for update", (job["run_id"],))
-    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null for update", (job["conversation_id"],))
+    # These are read-only inputs for most of publication. Do not hold either
+    # row lock while inserting the transcript and word data below.
+    run = await one(connection, "select * from processing_runs where id=%s", (job["run_id"],))
+    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
     if not run or not conv or run["cancelled_at"]:
         fail("result_publication_cancelled", 409)
     final = job["kind"] == "finalise" or bool(job["payload"].get("final"))
@@ -161,6 +163,12 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
     for interval in result.get("diarization_intervals") or []:
         await connection.execute("insert into diarization_intervals(version_id,conversation_id,speaker_ref,start_seconds,end_seconds,overlap) values(%s,%s,%s,%s,%s,%s)", (version_id, conv["id"], interval["speaker"], float(interval["start"]) + offset, float(interval["end"]) + offset, bool(interval.get("overlap", False))))
     next_state = "complete" if final and english_state == "complete" else "running"
+    # Serialize only the final run/conversation state transition. The heavy
+    # transcript publication above can now coexist with chunk confirmation.
+    run = await one(connection, "select * from processing_runs where id=%s for update", (run["id"],))
+    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null for update", (conv["id"],))
+    if not run or run["cancelled_at"] or not conv:
+        fail("result_publication_cancelled", 409)
     await connection.execute("update processing_runs set coverage_samples=greatest(coverage_samples,%s),state=case when state='complete' and %s<>'complete' then state else %s end where id=%s", (coverage, next_state, next_state, run["id"]))
     active = await one(connection, "select * from transcript_versions where id=%s", (conv["active_version_id"],)) if conv["active_version_id"] else None
     publish_active = run["kind"] == "production" and not (active and active["kind"] == "final" and active["english_state"] == "complete" and not final)

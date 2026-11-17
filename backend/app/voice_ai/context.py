@@ -42,6 +42,7 @@ class VoiceConversationContext:
     recent_summaries: list[str] = field(default_factory=list)
     intent_confidence: float | None = None
     intent_evidence: list[str] = field(default_factory=list)
+    document_mentions: list[str] = field(default_factory=list)
     document_kind: str | None = None
     missing_critical_fields: list[str] = field(default_factory=list)
     suggested_questions: list[str] = field(default_factory=list)
@@ -84,6 +85,12 @@ class VoiceConversationContext:
         for key in ('intent_evidence', 'missing_critical_fields', 'suggested_questions'):
             if isinstance(extraction.get(key), list):
                 setattr(self, key, [str(value) for value in extraction[key]])
+        mentions = extraction.get('document_mentions')
+        if isinstance(mentions, list):
+            self.document_mentions = list(dict.fromkeys([
+                *self.document_mentions,
+                *[str(value).strip() for value in mentions if str(value).strip()],
+            ]))[-12:]
         if 'document_kind' in extraction:
             self.document_kind = extraction['document_kind']
         for incoming, target in {

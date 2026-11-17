@@ -660,7 +660,7 @@ export default function VoiceSessions() {
     [documentSubject, setDocumentSubject] = useState(""),
     [documentMessage, setDocumentMessage] = useState("");
   const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentProgress, setDocumentProgress] = useState(null), [documentDownloadPdf, setDocumentDownloadPdf] = useState(false), [documentResult, setDocumentResult] = useState(null);
-  const [zohoTaxes, setZohoTaxes] = useState([]), [selectedTaxId, setSelectedTaxId] = useState(""), [taxRefreshBusy, setTaxRefreshBusy] = useState(false), [taxesUpdatedAt, setTaxesUpdatedAt] = useState(null);
+  const [zohoTaxes, setZohoTaxes] = useState([]), [zohoTaxRegion, setZohoTaxRegion] = useState(null), [selectedTaxId, setSelectedTaxId] = useState(""), [taxRefreshBusy, setTaxRefreshBusy] = useState(false), [taxesUpdatedAt, setTaxesUpdatedAt] = useState(null);
   const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
   const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
   const documentDrafts = useRef(new Map());
@@ -743,14 +743,15 @@ export default function VoiceSessions() {
     setTaxRefreshBusy(true);
     try {
       const result = await sessionCall('/zoho/taxes/refresh', { method: 'POST' });
-      if (alive.current) { setZohoTaxes(result.taxes || []); setTaxesUpdatedAt(result.updated_at || null); }
+      if (alive.current) { setZohoTaxes(result.taxes || []); setZohoTaxRegion(result.zoho_region || null); setTaxesUpdatedAt(result.updated_at || null); }
     } catch (error) { if (alive.current) setCartSaveError(error.message || 'Unable to refresh Zoho tax rules.'); }
     finally { if (alive.current) setTaxRefreshBusy(false); }
   };
   useEffect(() => {
     if (!workspace || localMode) return undefined;
     let cancelled = false;
-    sessionCall('/zoho/taxes').then(result => { if (!cancelled) { setZohoTaxes(result.taxes || []); setTaxesUpdatedAt(result.updated_at || null); } }).catch(() => {});
+    setZohoTaxes([]); setZohoTaxRegion(null); setSelectedTaxId("");
+    sessionCall('/zoho/taxes').then(result => { if (!cancelled) { setZohoTaxes(result.taxes || []); setZohoTaxRegion(result.zoho_region || null); setTaxesUpdatedAt(result.updated_at || null); } }).catch(() => {});
     return () => { cancelled = true; };
   }, [workspace?.id, workspace?.member_id, localMode]);
   // Load once when a contact opens, then refresh once whenever Documents is
@@ -1314,8 +1315,9 @@ export default function VoiceSessions() {
   const removeCartItem = (index) => { if (sessionBusy || contextHydrated !== session) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
   const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
-  const selectedTax = zohoTaxes.find(tax => String(tax.tax_id || '') === String(selectedTaxId));
-  const cartTaxTotal = zohoTaxes.length ? Math.max(0, cartSubtotal - cartDiscount) * Number(selectedTax?.tax_percentage || 0) / 100 : undefined;
+  const visibleTaxes = zohoTaxRegion === "in" ? zohoTaxes : [];
+  const selectedTax = visibleTaxes.find(tax => String(tax.tax_id || '') === String(selectedTaxId));
+  const cartTaxTotal = visibleTaxes.length ? Math.max(0, cartSubtotal - cartDiscount) * Number(selectedTax?.tax_percentage || 0) / 100 : undefined;
   const openDocumentModal = async () => {
     if (!session || !cart.length || documentInFlight.current || contextHydrated !== session) return;
     if (!cart.every(productPriceAvailable)) { setCartSaveError('Confirm catalogue prices before completing this cart.'); return; }
@@ -1334,7 +1336,7 @@ export default function VoiceSessions() {
     try {
       const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
       if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
-      if (Array.isArray(options.taxes)) { setZohoTaxes(options.taxes); setTaxesUpdatedAt(options.taxes_updated_at || null); }
+      if (Array.isArray(options.taxes)) { setZohoTaxes(options.taxes); setZohoTaxRegion(options.zoho_region || null); setTaxesUpdatedAt(options.taxes_updated_at || null); }
       const availableTypes = sourceDocumentId ? (options.document_edit_types || options.document_types || []) : (options.document_create_types || options.document_types || []);
       const supportedTypes = availableTypes.filter((type) => customerType === "dealer" ? type === "purchase-order" : ["invoice", "quote", "sales-order"].includes(type));
       if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
@@ -1694,7 +1696,7 @@ export default function VoiceSessions() {
               onViewProduct={setViewProduct}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
                taxTotal={cartTaxTotal}
-               taxes={zohoTaxes}
+               taxes={visibleTaxes}
                selectedTaxId={selectedTaxId}
                onTaxChange={applyTaxToCart}
                onRefreshTaxes={() => void refreshZohoTaxes()}
@@ -1749,7 +1751,7 @@ export default function VoiceSessions() {
         error={documentError}
         createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status, updated: documentResult.document?.updated_existing === true } : null}
         pendingCreation={documentPendingCreation}
-        taxes={zohoTaxes}
+        taxes={visibleTaxes}
         selectedTaxId={selectedTaxId}
         onTaxChange={applyTaxToCart}
         onRefreshTaxes={() => void refreshZohoTaxes()}

@@ -460,7 +460,10 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
         return {}
     fingerprint = "walkin-fields:" + hashlib.sha256(dialogue.encode("utf-8")).hexdigest()
     async with request.app.state.db.connection() as connection:
-        await owned_conversation(connection, context, conversation_id)
+        # This is an extraction read/claim, not a recording mutation. Do not
+        # hold the conversation row lock while chunk authorization/confirmation
+        # is trying to save the audio.
+        await owned_conversation(connection, context, conversation_id, lock=False)
         claimed = await one(connection, """
             insert into public.conversation_extractions(conversation_id,organisation_id,fingerprint,status,data)
             values(%s,%s,%s,'running','{}'::jsonb)
@@ -513,7 +516,10 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
 async def walkin_preview(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     """Return the safe, progressively available transcript/extraction preview for registration."""
     async with request.app.state.db.connection() as connection:
-        recording = await owned_conversation(connection, context, conversation_id)
+        # Preview is read-only. A row lock here contends with every audio chunk
+        # authorize/confirm update and can turn a healthy recording into a DB
+        # statement-timeout failure.
+        recording = await owned_conversation(connection, context, conversation_id, lock=False)
         version = None
         turns = []
         if recording.get("active_version_id"):

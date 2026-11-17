@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .product_training import PRODUCT_CHEAT_SHEET
+from .voice_ai.intents import document_mentions
 
 
 _DOCUMENT_TAGS = {
@@ -123,6 +124,16 @@ def derive_business_tags(
 
     document = _text(document_kind or context.get("document_kind") or payload.get("document_kind")).casefold()
     add(_DOCUMENT_TAGS.get(document))
+    for mention in context.get("document_mentions") or payload.get("document_mentions") or []:
+        add(_DOCUMENT_TAGS.get(_text(mention).casefold()))
+    # Backward compatibility for contexts created before document_mentions:
+    # evidence and summaries still provide a grounded topic signal.
+    for source in (context.get("intent_evidence"), context.get("recent_summaries"),
+                   payload.get("intent_evidence"), payload.get("summary")):
+        values = source if isinstance(source, list) else [source]
+        for value in values:
+            for mention in document_mentions(value):
+                add(_DOCUMENT_TAGS.get(mention))
     for key, label in _DOCUMENT_TAGS.items():
         if payload.get(key) or payload.get(f"{key}Discussed"):
             add(label)

@@ -4,7 +4,7 @@ from typing import Any
 
 from .agents import ConversationMonitorAgent, ProductRecommendationAgent
 from .context import VoiceConversationContext
-from .intents import classify_voice_intent, model_route
+from .intents import classify_voice_intent, document_mentions, model_route
 
 
 class VoiceConversationOrchestrator:
@@ -27,6 +27,11 @@ class VoiceConversationOrchestrator:
                     'route': {**hint.__dict__, 'source': 'rule_fallback', 'confidence': 0,
                               'evidence': [], 'auto_execute': False, 'requires_agent_approval': True},
                     'agent_result': await self.recommendations.run(context.as_dict())}
+        mentions = document_mentions(chunk.get('english_text') or chunk.get('source_text') or '')
+        if mentions:
+            # Keep discussion topics even when the model correctly routes the
+            # sentence as requirements/follow-up instead of an action request.
+            extraction = {**extraction, 'document_mentions': mentions}
         route = model_route(extraction)
         context.merge_extraction(extraction, {
             'conversation_id': chunk.get('conversation_id'),
