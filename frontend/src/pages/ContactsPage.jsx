@@ -3,6 +3,7 @@ import { call, withDate } from '../shared/api';
 import { useZohoDateFilter, useGlobalPager } from '../shared/hooks';
 import { ContactCard } from '../components/Records';
 import PageLoader from '../components/PageLoader';
+import { sanitizePhoneNumber, sanitizeTextInput, validateEmail, validatePhoneNumber, validateText } from '../utils/formValidation';
 
 const emptyAddress = () => ({ attention: '', address: '', street2: '', city: '', state: '', zip: '', country: '', phone: '', fax: '' });
 const emptyContactPerson = () => ({ first_name: '', last_name: '', email: '', mobile: '', designation: '', is_primary_contact: false });
@@ -28,6 +29,7 @@ export function ContactsPage({ setError }) {
   const [tags, setTags] = useState([]);
   const [reportingTags, setReportingTags] = useState([]);
   const [tagOptions, setTagOptions] = useState({});
+  const [fieldErrors, setFieldErrors] = useState({});
   const date = useZohoDateFilter();
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -76,7 +78,14 @@ export function ContactsPage({ setError }) {
   };
 
   const create = async event => {
-    event.preventDefault(); setBusy(true); setError(''); setCreated(false);
+    event.preventDefault(); setError(''); setCreated(false);
+    const nextErrors = {};
+    if (validateText(form.first_name, 'First name', { required: true })) nextErrors.first_name = validateText(form.first_name, 'First name', { required: true });
+    if (validatePhoneNumber(form.mobile)) nextErrors.mobile = validatePhoneNumber(form.mobile);
+    if (validateEmail(form.email)) nextErrors.email = validateEmail(form.email);
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    setBusy(true);
     try {
       const body = {
         ...form,
@@ -90,37 +99,51 @@ export function ContactsPage({ setError }) {
       setCreated(true); setShowCreate(false); setForm(emptyForm());
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
-  const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
-  const setAddress = (kind, key, value) => setForm(current => ({ ...current, [kind]: { ...current[kind], [key]: value } }));
-  const addressFields = (kind, label) => <div className="contact-subsection"><div className="form-section-heading"><div><h4>{label}</h4><p>Optional address information</p></div></div><div className="form-two contact-address-grid">{[['attention', 'Attention'], ['address', 'Address'], ['street2', 'Address line 2'], ['city', 'City'], ['state', 'State'], ['zip', 'Postal code'], ['country', 'Country'], ['phone', 'Phone'], ['fax', 'Fax']].map(([key, placeholder]) => <label className="contact-field" key={key}><span>{placeholder} <small>Optional</small></span><input placeholder={placeholder} value={form[kind][key]} onChange={e => setAddress(kind, key, e.target.value)} /></label>)}</div></div>;
+  const setField = (key, value) => {
+    const nextValue = typeof value !== 'string'
+      ? value
+      : key === 'mobile' || key === 'phone'
+        ? sanitizePhoneNumber(value, 13)
+        : key === 'notes' ? sanitizeTextInput(value, 2000) : sanitizeTextInput(value);
+    setForm(current => ({ ...current, [key]: nextValue }));
+    const validation = key === 'mobile' || key === 'phone'
+      ? (nextValue ? validatePhoneNumber(nextValue) : undefined)
+      : key === 'email' ? validateEmail(nextValue) : key === 'first_name' ? validateText(nextValue, 'First name', { required: true }) : undefined;
+    setFieldErrors(current => ({ ...current, [key]: validation }));
+  };
+  const setAddress = (kind, key, value) => {
+    const boundedValue = key === 'phone' || key === 'fax' ? sanitizePhoneNumber(value, 13) : sanitizeTextInput(value);
+    setForm(current => ({ ...current, [kind]: { ...current[kind], [key]: boundedValue } }));
+  };
+  const addressFields = (kind, label) => <div className="contact-subsection"><div className="form-section-heading"><div><h4>{label}</h4><p>Optional address information</p></div></div><div className="form-two contact-address-grid">{[['attention', 'Attention'], ['address', 'Address'], ['street2', 'Address line 2'], ['city', 'City'], ['state', 'State'], ['zip', 'Postal code'], ['country', 'Country'], ['phone', 'Phone'], ['fax', 'Fax']].map(([key, placeholder]) => <label className="contact-field" key={key}><span>{placeholder} <small>Optional</small></span><input maxLength={key === 'phone' || key === 'fax' ? 14 : 255} placeholder={placeholder} value={form[kind][key]} onChange={e => setAddress(kind, key, e.target.value)} /></label>)}</div></div>;
 
   return <section className="products-page">
-    <div className="products-heading"><div><small>CUSTOMER DIRECTORY</small><h2>Customer directory</h2><p>Keep customer and supplier details ready for conversations, quotations, orders, and follow-up.</p></div><button className="primary" onClick={() => { setShowCreate(true); setCreated(false); setForm(emptyForm()); setContactPersons([]); setCustomFields([]); setTags([]); setTagOptions({}); }}>Add contact</button></div>
+    <div className="products-heading"><div><small>CUSTOMER DIRECTORY</small><h2>Customer directory</h2><p>Keep customer and supplier details ready for conversations, quotations, orders, and follow-up.</p></div><button className="primary" onClick={() => { setShowCreate(true); setCreated(false); setFieldErrors({}); setForm(emptyForm()); setContactPersons([]); setCustomFields([]); setTags([]); setTagOptions({}); }}>Add contact</button></div>
     {created && <div className="success">Contact added successfully.</div>}
-    <form className="product-search" onSubmit={search}><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name, company, phone, or email…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search directory'}</button></form>
+    <form className="product-search" onSubmit={search}><input maxLength={255} value={query} onChange={e => setQuery(sanitizeTextInput(e.target.value))} placeholder="Search by name, company, phone, or email…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search directory'}</button></form>
     {query && !busy && <p className="product-count">{contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'} found</p>}
     {!query.trim() && busy ? <PageLoader kind="contacts" label="Loading customer directory" detail="Bringing the latest people and organisations into view." /> : !query.trim() && !contacts.length ? <div className="product-empty">Search the customer directory by name, company, phone number, or email.</div> : !busy && !contacts.length ? <div className="product-empty">{query.trim() ? `No contacts matched “${query.trim()}”.` : 'No recent contacts found.'}</div> : <div className="contacts-grid">{contacts.map(contact => <ContactCard contact={contact} key={`${contact.__source || 'unknown'}-${contact.id || contact.contact_id}`} />)}</div>}
-    {showCreate && <div className="modal-backdrop" onClick={() => setShowCreate(false)}><form className="contact-modal" onSubmit={create} onClick={e => e.stopPropagation()}>
+    {showCreate && <div className="modal-backdrop" onClick={() => setShowCreate(false)}><form className="contact-modal" noValidate onSubmit={create} onClick={e => e.stopPropagation()}>
       <div className="modal-heading"><h3>Add contact</h3><button type="button" onClick={() => setShowCreate(false)}>×</button></div><p>Add a customer or supplier record for use across the sales workflow.</p>
       <div className="form-section-heading"><div><h4>Contact identity</h4><p className="required-guidance"><strong className="required-copy">Required:</strong> first name and mobile. All other identity fields are optional.</p></div><span>Core customer details</span></div>
-      <div className="form-two contact-form-grid">{[['contact_name','Contact name'],['company_name','Company name'],['contact_number','Contact number'],['salutation','Salutation'],['first_name','First name'],['last_name','Last name'],['website','Website'],['language_code','Language code'],['email','Email'],['phone','Phone'],['mobile','Mobile'],['title','Designation'],['department','Department'],['payment_terms','Payment terms (days)'],['payment_terms_label','Payment terms label'],['credit_limit','Credit limit'],['pan_no','PAN number'],['gst_no','GST number']].map(([key, label]) => <label className="contact-field" key={key}><span>{label} <small>{key === 'first_name' || key === 'mobile' ? 'Required' : 'Optional'}</small></span><input required={key === 'first_name' || key === 'mobile'} type={key === 'email' ? 'email' : key === 'credit_limit' || key === 'payment_terms' ? 'number' : 'text'} placeholder={`Enter ${label.toLowerCase()}`} value={form[key] || ''} onChange={e => setField(key, key === 'mobile' ? e.target.value.replace(/\D/g, '').slice(0, 10) : e.target.value)} /></label>)}</div>
+      <div className="form-two contact-form-grid">{[['contact_name','Contact name'],['company_name','Company name'],['contact_number','Contact number'],['salutation','Salutation'],['first_name','First name'],['last_name','Last name'],['website','Website'],['language_code','Language code'],['email','Email'],['phone','Phone'],['mobile','Mobile'],['title','Designation'],['department','Department'],['payment_terms','Payment terms (days)'],['payment_terms_label','Payment terms label'],['credit_limit','Credit limit'],['pan_no','PAN number'],['gst_no','GST number']].map(([key, label]) => <label className="contact-field" key={key}><span>{label} <small>{key === 'first_name' || key === 'mobile' ? 'Required' : 'Optional'}</small></span><input aria-invalid={Boolean(fieldErrors[key])} required={key === 'first_name' || key === 'mobile'} maxLength={key === 'mobile' || key === 'phone' ? 14 : 255} type={key === 'email' ? 'email' : key === 'credit_limit' || key === 'payment_terms' ? 'number' : key === 'mobile' || key === 'phone' ? 'tel' : 'text'} inputMode={key === 'mobile' || key === 'phone' ? 'numeric' : undefined} placeholder={`Enter ${label.toLowerCase()}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} />{fieldErrors[key] && <small className="field-error" role="alert">{fieldErrors[key]}</small>}</label>)}</div>
       <label className="checkbox-row"><input type="checkbox" checked={form.is_portal_enabled} onChange={e => setField('is_portal_enabled', e.target.checked)} /> Enable portal</label>
       <label className="checkbox-row"><input type="checkbox" checked={form.payment_reminder_enabled} onChange={e => setField('payment_reminder_enabled', e.target.checked)} /> Enable payment reminders</label>
       {addressFields('billing_address', 'Billing address')}{addressFields('shipping_address', 'Shipping address')}
       <section className="contact-form-section">
         <div className="form-section-heading"><div><h4>Notes</h4><p>Optional internal note for this Books contact.</p></div><span>01</span></div>
-        <label className="contact-field contact-field-wide"><span>Internal notes <small>Optional</small></span><textarea value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Add context for your team" /></label>
+        <label className="contact-field contact-field-wide"><span>Internal notes <small>Optional</small></span><textarea maxLength={2000} value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Add context for your team" /></label>
       </section>
       <section className="contact-form-section">
         <div className="form-section-heading"><div><h4>Additional contact persons</h4><p>Add people who can receive communications for this customer.</p></div><span>02</span></div>
         {!contactPersons.length && <div className="contact-empty-row">No additional contact persons added yet.</div>}
         {contactPersons.map((person, index) => <div className="structured-row" key={`person-${index}`}>
           <div className="contact-form-grid">
-            <label className="contact-field"><span>First name <small>Optional</small></span><input value={person.first_name} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, first_name: e.target.value } : row))} /></label>
-            <label className="contact-field"><span>Last name <small>Optional</small></span><input value={person.last_name} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, last_name: e.target.value } : row))} /></label>
-            <label className="contact-field"><span>Email <small>Optional</small></span><input type="email" value={person.email} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, email: e.target.value } : row))} /></label>
-            <label className="contact-field"><span>Mobile <small>Optional</small></span><input value={person.mobile} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, mobile: e.target.value } : row))} /></label>
-            <label className="contact-field"><span>Designation <small>Optional</small></span><input value={person.designation} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, designation: e.target.value } : row))} /></label>
+            <label className="contact-field"><span>First name <small>Optional</small></span><input maxLength={255} value={person.first_name} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, first_name: sanitizeTextInput(e.target.value) } : row))} /></label>
+            <label className="contact-field"><span>Last name <small>Optional</small></span><input maxLength={255} value={person.last_name} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, last_name: sanitizeTextInput(e.target.value) } : row))} /></label>
+            <label className="contact-field"><span>Email <small>Optional</small></span><input type="email" maxLength={320} value={person.email} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, email: sanitizeTextInput(e.target.value, 320) } : row))} /></label>
+            <label className="contact-field"><span>Mobile <small>Optional</small></span><input maxLength={14} value={person.mobile} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, mobile: sanitizePhoneNumber(e.target.value, 13) } : row))} /></label>
+            <label className="contact-field"><span>Designation <small>Optional</small></span><input maxLength={255} value={person.designation} onChange={e => setContactPersons(current => current.map((row, i) => i === index ? { ...row, designation: sanitizeTextInput(e.target.value) } : row))} /></label>
           </div>
           <div className="structured-row-actions"><label className="checkbox-row"><input type="checkbox" checked={Boolean(person.is_primary_contact)} onChange={() => setContactPersons(current => current.map((row, i) => ({ ...row, is_primary_contact: i === index })))} /> Primary contact</label><button type="button" className="danger-link" onClick={() => setContactPersons(current => current.filter((_, i) => i !== index))}>Remove</button></div>
         </div>)}
