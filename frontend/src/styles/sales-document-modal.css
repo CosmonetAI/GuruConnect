@@ -46,6 +46,16 @@
 .sdm-totals .sdm-discount dd { color:#13975f; }
 .sdm-totals .sdm-tax { font-size:10px; }
 .sdm-tax dd { color:#7b8da7; font-weight:400; }
+.sdm-tax-selector { display:flex; align-items:flex-end; gap:8px; width:min(100%,315px); margin:14px 0 0 auto; max-width:315px; }
+.sdm-tax-selector > .tax-rule-picker { width:100%; }
+.sdm-tax-selector[hidden] { display:none !important; }
+.sdm-tax-selector label { display:grid; gap:6px; flex:1; color:#526d8e; font-size:11px; font-weight:700; }
+.sdm-tax-selector select { width:100%; border:1px solid #cddced; border-radius:8px; padding:9px 10px; background:#fff; color:#18375f; font:inherit; }
+.sdm-tax-refresh { display:grid; place-items:center; width:34px; height:34px; border:1px solid #cddced; border-radius:8px; background:#f4f8fd; color:#1764d4; cursor:pointer; }
+.sdm-tax-refresh:hover:not(:disabled) { background:#eaf2ff; }
+.sdm-tax-refresh:disabled { opacity:.55; cursor:wait; }
+.sdm-spin { animation: sdm-spin .8s linear infinite; }
+@keyframes sdm-spin { to { transform:rotate(360deg); } }
 .sdm-totals .sdm-total { margin-top:3px; padding-top:11px; border-top:1px solid #d9e5f4; font-size:15px; }
 .sdm-total dt { color:#15335b; font-weight:750; }
 .sdm-type-fieldset,.sdm-email-fieldset { min-width:0; margin:0; padding:0; border:0; }

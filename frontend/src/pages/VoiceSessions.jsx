@@ -649,7 +649,8 @@ export default function VoiceSessions() {
     [documentEmail, setDocumentEmail] = useState(""),
     [documentSubject, setDocumentSubject] = useState(""),
     [documentMessage, setDocumentMessage] = useState("");
-  const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentProgress, setDocumentProgress] = useState(null), [documentDelivery, setDocumentDelivery] = useState("email"), [documentResult, setDocumentResult] = useState(null);
+  const [documentOptions, setDocumentOptions] = useState(null), [documentCart, setDocumentCart] = useState([]), [documentError, setDocumentError] = useState(""), [documentProgress, setDocumentProgress] = useState(null), [documentDownloadPdf, setDocumentDownloadPdf] = useState(false), [documentResult, setDocumentResult] = useState(null);
+  const [zohoTaxes, setZohoTaxes] = useState([]), [selectedTaxId, setSelectedTaxId] = useState(""), [taxRefreshBusy, setTaxRefreshBusy] = useState(false), [taxesUpdatedAt, setTaxesUpdatedAt] = useState(null);
   const [documentPendingCreation, setDocumentPendingCreation] = useState(false);
   const documentSnapshot = useRef(null), documentInFlight = useRef(false), currentDocumentScope = useRef("");
   const documentDrafts = useRef(new Map());
@@ -723,6 +724,22 @@ export default function VoiceSessions() {
     try { return await call(path, { ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal, headers: { ...options.headers, 'X-Workspace-Member-ID': workspace?.member_id || user?.id } }, workspace?.id); }
     finally { controllers.current.delete(controller); }
   };
+  const applyTaxToCart = (taxId) => { setSelectedTaxId(taxId); setCart(current => current.map(line => ({ ...line, tax_id: taxId || undefined }))); setDocumentCart(current => current.map(line => ({ ...line, tax_id: taxId || undefined }))); };
+  const refreshZohoTaxes = async () => {
+    if (taxRefreshBusy) return;
+    setTaxRefreshBusy(true);
+    try {
+      const result = await sessionCall('/zoho/taxes/refresh', { method: 'POST' });
+      if (alive.current) { setZohoTaxes(result.taxes || []); setTaxesUpdatedAt(result.updated_at || null); }
+    } catch (error) { if (alive.current) setCartSaveError(error.message || 'Unable to refresh Zoho tax rules.'); }
+    finally { if (alive.current) setTaxRefreshBusy(false); }
+  };
+  useEffect(() => {
+    if (!workspace || localMode) return undefined;
+    let cancelled = false;
+    sessionCall('/zoho/taxes').then(result => { if (!cancelled) { setZohoTaxes(result.taxes || []); setTaxesUpdatedAt(result.updated_at || null); } }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [workspace?.id, workspace?.member_id, localMode]);
   // Load once when a contact opens, then refresh once whenever Documents is
   // opened. Changing other tabs does not restart the Zoho searches.
   useEffect(() => {
@@ -853,7 +870,8 @@ export default function VoiceSessions() {
     const requirements = contextData.product_requirements?.length ? contextData.product_requirements : [newProduct()];
     const savedCart = contextData.cart || [];
     contextSaves.current.set(id, { saved: JSON.stringify({ product_requirements: requirements, cart: savedCart }), running: false, pending: null });
-    setProductRequirements(requirements); setCart(savedCart); setCartOpen(savedCart.length > 0); setContextHydrated(id);
+    const savedTaxId = savedCart.find(line => line.tax_id)?.tax_id || "";
+    setProductRequirements(requirements); setCart(savedCart); setSelectedTaxId(savedTaxId); setCartOpen(savedCart.length > 0); setContextHydrated(id);
   };
   const clearLiveWorkspace = () => {
     documentSnapshot.current = null; setDocumentModalOpen(false); setDocumentOptions(null); setDocumentCart([]); setDocumentError(""); setDocumentProgress(null); setDocumentResult(null); setDocumentBusy(""); setDocumentPendingCreation(false);
@@ -863,7 +881,7 @@ export default function VoiceSessions() {
     setLiveKeywords([]); setLiveTags([]); setCustomIntents([]); setHiddenIntents([]);
     setLiveGuidance({ requirements: [], clarificationSuggestions: [], currentIntent: '', agentGuidance: [], catalogueStatus: '' });
     setLiveAnalysis("waiting_for_translation"); setLiveProcessing(null); setCatalogueNotices([]); setLiveNotice("");
-    setCart([]); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
+    setCart([]); setSelectedTaxId(""); setCartOpen(false); setDocumentContact(null); setCustomerType("unknown");
     setActiveTab("conversation"); setSessionDocuments([]); setSessionDocumentSearchState({}); setSessionDocumentQuery(null); setDocumentRefreshToken(0); documentInitialSearchSession.current = null; documentSearchInFlight.current = false; documentLastSearchToken.current = 0; setSessionDocumentsError(""); setSessionDocumentDetailsBusy(false); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); setArchivedConversationId(null);
     setCartProductSearchOpen(false); setViewProduct(null); setCartSearchError("");
     setCaptureState({ capture: "idle", elapsedSeconds: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false });
@@ -1220,7 +1238,7 @@ export default function VoiceSessions() {
     setCart((current) => {
       const found = current.find((line) => (line.item_id || line.id || line.sku) === id);
       if (found) return current.map((line) => line === found ? { ...line, quantity: Number(line.quantity || 1) + 1 } : line);
-      return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', rate }];
+      return [...current, { ...item, item_id: item.item_id || item.id, product: item.name || item.item_name, quantity: 1, discount: 0, discount_type: 'percentage', tax_id: selectedTaxId || item.tax_id || undefined, rate }];
     });
     setCartOpen(true);
     setCartProductSearchOpen(false);
@@ -1235,17 +1253,19 @@ export default function VoiceSessions() {
   const removeCartItem = (index) => { if (sessionBusy || contextHydrated !== session) return; setCart((current) => current.filter((_, i) => i !== index)); if (cart.length <= 1) setCartOpen(false); };
   const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.rate || 0) * Number(line.quantity || 0), 0);
   const cartDiscount = cart.reduce((sum, line) => sum + (line.discount_type === 'fixed' ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0);
+  const selectedTax = zohoTaxes.find(tax => String(tax.tax_id || '') === String(selectedTaxId));
+  const cartTaxTotal = zohoTaxes.length ? Math.max(0, cartSubtotal - cartDiscount) * Number(selectedTax?.tax_percentage || 0) / 100 : undefined;
   const openDocumentModal = async () => {
     if (!session || !cart.length || documentInFlight.current || contextHydrated !== session) return;
     if (!cart.every(productPriceAvailable)) { setCartSaveError('Confirm catalogue prices before completing this cart.'); return; }
     const scope = currentDocumentScope.current, selectedSession = session, ticket = selection.current;
     const unresolved = documentDrafts.current.get(scope);
-    const sameCart = unresolved && JSON.stringify(unresolved.cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type])) === JSON.stringify(cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type]));
+    const sameCart = unresolved && JSON.stringify(unresolved.cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type, line.tax_id])) === JSON.stringify(cart.map((line) => [line.item_id || line.id, line.quantity, line.rate, line.discount, line.discount_type, line.tax_id]));
     if (unresolved?.pendingCreation || (sameCart && unresolved?.result && ["failed", "uncertain"].includes(unresolved.result.delivery?.status))) {
       documentSnapshot.current = unresolved;
       setDocumentOptions(unresolved.options); setDocumentCart(unresolved.cart); setDocumentResult(unresolved.result); setDocumentPendingCreation(Boolean(unresolved.pendingCreation)); setDocumentError(unresolved.error || "");
       const original = unresolved.createAction.body, fields = unresolved.emailFields || original;
-      setDocumentType(original.type); setDocumentEmail(fields.recipient || ""); setDocumentSubject(fields.subject); setDocumentMessage(fields.message); setDocumentDelivery(original.delivery); setDocumentModalOpen(true);
+      setDocumentType(original.type); setDocumentEmail(fields.recipient || ""); setDocumentSubject(fields.subject); setDocumentMessage(fields.message); setDocumentDownloadPdf(Boolean(unresolved.downloadPdf)); setDocumentModalOpen(true);
       return;
     }
     const lines = cart.map((line) => ({ ...line }));
@@ -1253,6 +1273,7 @@ export default function VoiceSessions() {
     try {
       const options = await sessionCall(`/voice-sessions/${selectedSession}/sales-documents/options`);
       if (!alive.current || currentDocumentScope.current !== scope || sessionRef.current !== selectedSession || ticket !== selection.current) return;
+      if (Array.isArray(options.taxes)) { setZohoTaxes(options.taxes); setTaxesUpdatedAt(options.taxes_updated_at || null); }
       const availableTypes = sourceDocumentId ? (options.document_edit_types || options.document_types || []) : (options.document_create_types || options.document_types || []);
       const supportedTypes = availableTypes.filter((type) => customerType === "dealer" ? type === "purchase-order" : ["invoice", "quote", "sales-order"].includes(type));
       if (!supportedTypes.length) throw new Error("No sales document types are available for this customer.");
@@ -1261,7 +1282,7 @@ export default function VoiceSessions() {
       documentSnapshot.current = snapshot;
       setDocumentOptions(snapshot.options); setDocumentCart(lines); setDocumentResult(null); setDocumentError(""); setDocumentPendingCreation(false);
       setDocumentType(sourceDocumentType && supportedTypes.includes(sourceDocumentType) ? sourceDocumentType : supportedTypes[0]); setDocumentEmail(customer.email || "");
-      setDocumentDelivery(options.mode === "local-demo" || !options.email?.configured || !customer.email ? "download" : "email");
+      setDocumentDownloadPdf(false);
       setDocumentSubject("Your document from ConnectCosmos");
       setDocumentMessage(`Hi ${customer.name || "there"},\n\nPlease find your document for the selected items attached. Let us know if you have any questions.`);
       setDocumentModalOpen(true);
@@ -1327,15 +1348,16 @@ export default function VoiceSessions() {
     const snapshot = documentSnapshot.current;
     if (!snapshot || documentInFlight.current || !documentScopeCurrent(snapshot)) return;
     const recipient = documentEmail.trim();
-    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !snapshot.options.customer?.email || !recipient || documentDelivery === "download";
-    if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email, or choose Download PDF instead of emailing."); return; }
+    const downloadOnly = snapshot.options.mode === "local-demo" || !snapshot.options.email?.configured || !snapshot.options.customer?.email || !recipient;
+    const downloadAfterCreate = downloadOnly || documentDownloadPdf;
+    if (!downloadOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { setDocumentError("Enter a valid recipient email before sending the document."); return; }
     const existing = snapshot.result;
-    if (existing && downloadOnly) {
+    if (existing && downloadAfterCreate) {
       try { downloadDocumentPdf(existing); setDocumentModalOpen(false); returnToDefaultSession(); setDocumentProgress({ state: "success", label: `${documentTypeLabel(existing.document?.type || documentType)}${existing.document?.number ? ` ${existing.document.number}` : ""} created` }); } catch (error) { setDocumentError(error.message); }
       return;
     }
     if (existing?.delivery?.status === "uncertain") { setDocumentError("Email submission is uncertain. Check its status before retrying; your document PDF is available to download."); return; }
-    const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", description: line.notes || line.product || line.name || "" }));
+    const lines = snapshot.cart.map((line) => ({ item_id: line.item_id || line.id, quantity: Number(line.quantity), rate: Number(line.rate || 0), discount: Number(line.discount || 0), discount_type: line.discount_type || "percentage", tax_id: line.tax_id || undefined, description: line.notes || line.product || line.name || "" }));
     if (!lines.length || lines.some((line) => !line.item_id || !Number.isFinite(line.quantity) || line.quantity <= 0)) { setDocumentError("Select at least one catalogue product with a valid quantity."); return; }
     const updateExisting = !existing && snapshot.sourceDocumentId && snapshot.sourceDocumentType === type;
     const body = snapshot.pendingCreation ? snapshot.createAction.body : existing ? { recipient } : { type, customer_type: customerType === "dealer" ? "vendor" : "customer", delivery: downloadOnly ? "download" : "email", recipient: downloadOnly ? "" : recipient, line_items: lines, ...(updateExisting ? { source_document_id: snapshot.sourceDocumentId, source_document_number: snapshot.sourceDocumentNumber } : {}) };
@@ -1358,9 +1380,16 @@ export default function VoiceSessions() {
       // A confirmed rejection can be retried as a new delivery. A lost response
       // keeps its action key so checking it cannot submit the email twice.
       if (existing && deliveryStatus === "failed") snapshot.emailAction = null;
-      if (downloadOnly) {
-        downloadDocumentPdf(result); setDocumentModalOpen(false); returnToDefaultSession();
-        setDocumentProgress({ state: "success", label: `${result.document.demo ? `Sample ${createdType.toLocaleLowerCase()}` : createdType}${createdNumber} ${documentAction}` });
+      if (downloadAfterCreate) {
+        downloadDocumentPdf(result);
+        if (downloadOnly || deliveryStatus === "accepted") {
+          setDocumentModalOpen(false); returnToDefaultSession();
+          setDocumentProgress({ state: "success", label: `${result.document.demo ? `Sample ${createdType.toLocaleLowerCase()}` : createdType}${createdNumber} ${documentAction}${downloadOnly ? "" : " and downloaded"}` });
+        } else {
+          snapshot.result = result; snapshot.error = result.delivery?.message || "The document was downloaded, but Zoho Books could not confirm the email.";
+          documentDrafts.current.set(snapshot.scope, snapshot); setDocumentError(snapshot.error);
+          setDocumentProgress({ state: "error", label: `${createdType}${createdNumber} downloaded; email needs attention` });
+        }
       } else if (deliveryStatus === "accepted") {
         setDocumentModalOpen(false); returnToDefaultSession(); setDocumentProgress({ state: "success", label: `${createdType}${createdNumber} ${documentAction}` });
       } else {
@@ -1604,6 +1633,13 @@ export default function VoiceSessions() {
               onViewProduct={setViewProduct}
               onAddIntent={() => { setIntentSearch(true); setCartProductSearchOpen(true); setCartSearch(""); setCartSearchResults([]); setCartSearchError(""); }}
               onRemoveIntent={(keyword) => setHiddenIntents((current) => [...current, keyword])}
+               taxTotal={cartTaxTotal}
+               taxes={zohoTaxes}
+               selectedTaxId={selectedTaxId}
+               onTaxChange={applyTaxToCart}
+               onRefreshTaxes={() => void refreshZohoTaxes()}
+               taxRefreshBusy={taxRefreshBusy}
+               taxesUpdatedAt={taxesUpdatedAt}
               notes={notes}
               noteText={noteText}
               onNoteTextChange={setNoteText}
@@ -1648,19 +1684,25 @@ export default function VoiceSessions() {
         discount={documentCart.reduce((sum, line) => sum + (line.discount_type === "fixed" ? Number(line.discount || 0) : Number(line.rate || 0) * Number(line.quantity || 0) * Number(line.discount || 0) / 100), 0)}
         documentTypes={documentOptions?.document_types}
         emailConfigured={documentOptions?.email?.configured === true}
-        delivery={documentDelivery}
-        setDelivery={setDocumentDelivery}
         demo={documentOptions?.mode === "local-demo"}
         forceDownload={!documentOptions?.customer?.email}
         error={documentError}
         createdDocument={documentResult ? { number: documentResult.document?.number, deliveryStatus: documentResult.delivery?.status, updated: documentResult.document?.updated_existing === true } : null}
         pendingCreation={documentPendingCreation}
+        taxes={zohoTaxes}
+        selectedTaxId={selectedTaxId}
+        onTaxChange={applyTaxToCart}
+        onRefreshTaxes={() => void refreshZohoTaxes()}
+        taxRefreshBusy={taxRefreshBusy}
+        taxesUpdatedAt={taxesUpdatedAt}
         onDownload={() => { try { downloadDocumentPdf(documentResult); setDocumentProgress({ state: "success", label: `${documentTypeLabel(documentResult?.document?.type)} PDF downloaded` }); } catch (error) { setDocumentError(error.message); } }}
         documentType={documentType}
         setDocumentType={setDocumentType}
         sourceDocumentType={sourceDocumentType}
         email={documentEmail}
         setEmail={setDocumentEmail}
+        downloadPdf={documentDownloadPdf}
+        setDownloadPdf={(value) => { setDocumentDownloadPdf(value); if (documentSnapshot.current) documentSnapshot.current.downloadPdf = value; }}
         subject={documentSubject}
         setSubject={setDocumentSubject}
         message={documentMessage}

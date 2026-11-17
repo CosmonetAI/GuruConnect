@@ -183,7 +183,8 @@ class CustomerIn(BaseModel): name:str=Field(min_length=2); phone:str|None=None; 
 class ChatIn(BaseModel): message:str=Field(min_length=1); customer:CustomerIn|None=None; session_id:UUID|None=None
 class CodeIn(BaseModel): code:str=Field(min_length=3)
 class OrganizationIn(BaseModel): organization_id:str=Field(min_length=1)
-class ZohoConfigIn(BaseModel): client_id:str=Field(min_length=5); client_secret:str=''
+class ZohoConfigIn(BaseModel): client_id:str=Field(min_length=5); client_secret:str=''; zoho_region:str='in'
+class ZohoRegionIn(BaseModel): zoho_region:str=Field(min_length=2, max_length=2)
 class ContactIn(BaseModel):
     first_name:str=Field(min_length=1)
     mobile:str=Field(min_length=10, max_length=10)
@@ -345,8 +346,13 @@ def zoho_status():
 def zoho_configuration():
     try: return zoho.configuration()
     except Exception as e: return _db_http_error(e)
+@app.post('/api/zoho/region')
+async def zoho_region_save(payload:ZohoRegionIn):
+    try: return await zoho.save_region(payload.zoho_region)
+    except ValueError as error: raise HTTPException(400, str(error))
+    except Exception: raise HTTPException(400, 'Unable to save Zoho data center')
 @app.post('/api/zoho/configuration')
-async def zoho_configuration_save(payload:ZohoConfigIn): return await zoho.save_configuration(payload.client_id,payload.client_secret)
+async def zoho_configuration_save(payload:ZohoConfigIn): return await zoho.save_configuration(payload.client_id,payload.client_secret,payload.zoho_region)
 @app.post('/api/zoho/connect')
 async def zoho_connect(payload:CodeIn):
     try: return await zoho.exchange_code(payload.code)
@@ -359,6 +365,19 @@ async def zoho_organizations():
 async def zoho_organization(payload:OrganizationIn):
     try: return await zoho.select_organization(payload.organization_id)
     except Exception: raise HTTPException(400,'Unable to select Zoho Books organization')
+@app.get('/api/zoho/taxes')
+async def zoho_taxes():
+    try:
+        cached = zoho.cached_taxes()
+        if cached.get('available') and cached.get('zoho_region') == 'in' and not cached.get('updated_at'):
+            return await zoho.refresh_taxes()
+        return cached
+    except Exception as error: return _db_http_error(error)
+@app.post('/api/zoho/taxes/refresh')
+async def zoho_taxes_refresh():
+    try: return await zoho.refresh_taxes()
+    except HTTPException: raise
+    except Exception: raise HTTPException(502, 'Unable to refresh Zoho Books taxes')
 @app.post('/api/zoho/mail-account')
 async def zoho_mail_account(payload: dict):
     try: return await zoho.select_mail_account(payload.get('account_id'))
@@ -1333,7 +1352,7 @@ async def purchase_order_options():
             zoho.list_books_chart_of_accounts(org),
             zoho.list_books_projects(org),
             zoho.list_books_reporting_tags(org),
-            zoho.list_books_taxes(org),
+            zoho.taxes_for_documents(org),
         )
         return {
             'currencies': currencies.get('currencies', []),

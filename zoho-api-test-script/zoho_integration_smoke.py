@@ -7,12 +7,13 @@ This script intentionally uses environment variables instead of storing tokens:
   $env:ZOHO_CLIENT_ID = '...'
   $env:ZOHO_CLIENT_SECRET = '...'
   $env:ZOHO_ORGANIZATION_ID = '...'
-  $env:ZOHO_API_DOMAIN = 'https://www.zohoapis.com'  # optional
+  $env:ZOHO_REGION = 'us'  # us (default) or in; overrides regional defaults
+  $env:ZOHO_API_DOMAIN = 'https://www.zohoapis.com'  # optional override
   python scripts/zoho_integration_smoke.py
 
 It creates temporary records, exercises the live APIs, verifies the returned
-state, and removes temporary records where Zoho permits deletion. It never
-emails a customer or sends a document to a recipient.
+state, removes temporary records where Zoho permits deletion, and sends only
+explicitly marked QA messages to the configured test recipient.
 """
 
 from __future__ import annotations
@@ -29,6 +30,19 @@ from decimal import Decimal
 from typing import Any
 
 
+ZOHO_REGIONS = {
+    "us": {"accounts": "https://accounts.zoho.com", "api": "https://www.zohoapis.com", "mail": "https://mail.zoho.com"},
+    "in": {"accounts": "https://accounts.zoho.in", "api": "https://www.zohoapis.in", "mail": "https://mail.zoho.in"},
+}
+
+
+def region_endpoints() -> dict[str, str]:
+    region = os.environ.get("ZOHO_REGION", "us").strip().lower()
+    if region not in ZOHO_REGIONS:
+        raise SystemExit("ZOHO_REGION must be 'us' or 'in'")
+    return ZOHO_REGIONS[region]
+
+
 class ApiError(RuntimeError):
     def __init__(self, status: int, payload: Any, headers: dict[str, str] | None = None):
         self.status = status
@@ -39,9 +53,10 @@ class ApiError(RuntimeError):
 
 
 class Zoho:
-    def __init__(self, token: str, domain: str, organization_id: str):
+    def __init__(self, token: str, domain: str, organization_id: str, mail_domain: str):
         self.token = token
         self.domain = domain.rstrip("/")
+        self.mail_domain = mail_domain.rstrip("/")
         self.organization_id = organization_id
         self.calls = 0
         self.rate_headers: dict[str, str] = {}
@@ -79,6 +94,7 @@ class Zoho:
         ) if key in headers})
         code = result.get("code") if isinstance(result, dict) else None
         self.trace.append({
+            "service": "books" if "/books/" in path else "bigin" if "/bigin/" in path else "api",
             "method": method,
             "path": path,
             "params": query,
@@ -90,6 +106,73 @@ class Zoho:
         if status not in expected or (code not in (None, 0)):
             raise ApiError(status, result, headers)
         return result if isinstance(result, dict) else {"data": result}
+
+    def mail_call(self, method: str, path: str, *, payload: dict[str, Any] | None = None,
+                  expected=(200, 201, 202, 204)) -> dict[str, Any]:
+        """Call the Zoho Mail REST API and include it in the same trace report."""
+        url = f"{self.mail_domain}{path}"
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(url, method=method, data=body, headers={
+            "Authorization": f"Zoho-oauthtoken {self.token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        })
+        self.calls += 1
+        try:
+            with urllib.request.urlopen(request, timeout=35) as response:
+                raw = response.read()
+                status = response.status
+                headers = {key.lower(): value for key, value in response.headers.items()}
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            status = error.code
+            headers = {key.lower(): value for key, value in error.headers.items()}
+        try:
+            result = json.loads(raw.decode() or "{}")
+        except json.JSONDecodeError:
+            result = {"raw": raw.decode(errors="replace")}
+        code = result.get("code") if isinstance(result, dict) else None
+        self.trace.append({
+            "service": "mail",
+            "method": method,
+            "path": path,
+            "http_status": status,
+            "zoho_code": code,
+            "message": result.get("message") if isinstance(result, dict) else None,
+            "response": result,
+        })
+        if status not in expected or (code not in (None, 0)):
+            raise ApiError(status, result, headers)
+        return result if isinstance(result, dict) else {"data": result}
+
+    def pdf_call(self, path: str, *, params: dict[str, Any] | None = None,
+                 expected=(200,)) -> dict[str, Any]:
+        """Validate a Books PDF response without storing the document bytes."""
+        query = {key: value for key, value in (params or {}).items() if value is not None}
+        url = f"{self.domain}{path}"
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        request = urllib.request.Request(url, method="GET", headers={
+            "Authorization": f"Zoho-oauthtoken {self.token}",
+            "Accept": "application/pdf",
+        })
+        self.calls += 1
+        try:
+            with urllib.request.urlopen(request, timeout=35) as response:
+                raw = response.read()
+                status = response.status
+                headers = {key.lower(): value for key, value in response.headers.items()}
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            status = error.code
+            headers = {key.lower(): value for key, value in error.headers.items()}
+        content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        valid = content_type == "application/pdf" and raw.startswith(b"%PDF-") and b"%%EOF" in raw[-1024:]
+        result = {"content_type": content_type, "bytes": len(raw), "valid_pdf": valid}
+        self.trace.append({"service": "books", "method": "GET", "path": path, "params": query, "http_status": status, "zoho_code": None, "message": None, "response": result})
+        if status not in expected or not valid:
+            raise ApiError(status, result, headers)
+        return result
 
 
 def env(name: str) -> str:
@@ -126,6 +209,20 @@ def identifier(record: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def document_contains_tax(result: dict[str, Any], tax_id: str, *keys: str) -> bool:
+    document = first(result, *keys)
+    for line in document.get("line_items") or []:
+        if not isinstance(line, dict):
+            continue
+        if str(line.get("tax_id") or "") == str(tax_id):
+            return True
+        for nested in (line.get("tax"), line.get("taxes"), line.get("taxes_info")):
+            values = nested if isinstance(nested, list) else [nested]
+            if any(isinstance(value, dict) and str(value.get("tax_id") or "") == str(tax_id) for value in values):
+                return True
+    return False
+
+
 def norm_phone(value: Any) -> str:
     digits = "".join(character for character in str(value or "") if character.isdigit())
     return digits[-10:]
@@ -138,7 +235,7 @@ def refresh_token() -> str:
         "client_secret": env("ZOHO_CLIENT_SECRET"),
         "grant_type": "refresh_token",
     }).encode()
-    request = urllib.request.Request("https://accounts.zoho.com/oauth/v2/token", method="POST", data=payload)
+    request = urllib.request.Request(f"{region_endpoints()['accounts']}/oauth/v2/token", method="POST", data=payload)
     try:
         with urllib.request.urlopen(request, timeout=35) as response:
             result = json.loads(response.read().decode())
@@ -161,11 +258,12 @@ def report(label: str, ok: bool, detail: str = "") -> None:
 
 def run() -> int:
     token = access_token()
-    zoho = Zoho(token, os.environ.get("ZOHO_API_DOMAIN", "https://www.zohoapis.com"), env("ZOHO_ORGANIZATION_ID"))
+    endpoints = region_endpoints()
+    zoho = Zoho(token, os.environ.get("ZOHO_API_DOMAIN", endpoints["api"]), env("ZOHO_ORGANIZATION_ID"), endpoints["mail"])
     today = date.today().isoformat()
     stamp = str(int(time.time()))
     prefix = f"ConnectCosmos QA {stamp}"
-    created: dict[str, list[str]] = {"items": [], "books_contacts": [], "bigin_contacts": [], "pipelines": [], "quotes": [], "orders": [], "purchase_orders": [], "invoices": [], "payments": []}
+    created: dict[str, list[str]] = {"items": [], "books_contacts": [], "bigin_contacts": [], "pipelines": [], "tasks": [], "notes": [], "quotes": [], "orders": [], "purchase_orders": [], "invoices": [], "payments": []}
     failures = 0
 
     def check(label: str, callback, *, required=True):
@@ -182,6 +280,8 @@ def run() -> int:
 
     print("Zoho live smoke test")
     print(f"Organization: {zoho.organization_id}")
+    print(f"Books/Bigin API: {zoho.domain}")
+    print(f"Mail API: {zoho.mail_domain}")
 
     # Read-only foundation used by the application.
     check("Books organizations", lambda: zoho.call("GET", "/books/v3/organizations"))
@@ -193,13 +293,43 @@ def run() -> int:
     tag_rows = rows(reporting_tags, "tags", "data")
     if tag_rows and identifier(tag_rows[0], "tag_id", "id"):
         check("Books reporting tag options", lambda: zoho.call("GET", "/books/v3/reportingtags/options", params={"organization_id": zoho.organization_id, "tag_id": identifier(tag_rows[0], "tag_id", "id")}), required=False)
-    check("Books taxes", lambda: zoho.call("GET", "/books/v3/settings/taxes", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}), required=False)
+    taxes_result = check("Books taxes", lambda: zoho.call("GET", "/books/v3/settings/taxes", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}), required=False) or {}
+    tax_rows = rows(taxes_result, "taxes", "data")
+    active_taxes = [
+        tax for tax in tax_rows
+        if not tax.get("is_inactive")
+        and str(tax.get("status") or "Active").lower() == "active"
+        and identifier(tax, "tax_id", "id")
+    ]
+    # Zoho Books accepts a tax group on GST documents (for example, a group
+    # containing CGST + SGST), not an individual GST component such as CGST.
+    # Prefer a group whenever the organization has one configured, while
+    # retaining a fallback for non-GST organizations.
+    tax_groups = [tax for tax in active_taxes if str(tax.get("tax_type") or "").lower() == "tax_group"]
+    # GST organizations can retain older custom groups that have no
+    # tax_specification and are rejected by document endpoints. Prefer the
+    # current intra-state GST group for the Indian test customer.
+    gst_tax = next((tax for tax in tax_groups if str(tax.get("tax_specification") or "").lower() == "intra"), None)
+    gst_tax = gst_tax or next((tax for tax in tax_groups if tax.get("tax_specification")), None)
+    gst_tax = gst_tax or (tax_groups[0] if tax_groups else None)
+    gst_tax = gst_tax or (active_taxes[0] if active_taxes else {})
+    tax_id = identifier(gst_tax, "tax_id", "id")
+    if tax_id:
+        report("Books GST tax rule selected", True, f"{gst_tax.get('tax_name') or 'tax'} ({tax_id})")
+    else:
+        report("Books GST tax rule selected", False, "No active Zoho tax rule is configured; document GST checks cannot run")
+    check("Books item masters", lambda: zoho.call("GET", "/books/v3/itemmasters", params={"organization_id": zoho.organization_id, "status": "active", "per_page": 200, "page": 1}), required=False)
+    check("Books item variants", lambda: zoho.call("GET", "/books/v3/itemvariants", params={"organization_id": zoho.organization_id, "status": "active", "per_page": 200, "page": 1}), required=False)
     check("Books contacts list", lambda: zoho.call("GET", "/books/v3/contacts", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}))
     check("Books items list", lambda: zoho.call("GET", "/books/v3/items", params={"organization_id": zoho.organization_id, "status": "active", "per_page": 200, "page": 1}))
+    check("Books items search", lambda: zoho.call("GET", "/books/v3/items", params={"organization_id": zoho.organization_id, "search_text": "ConnectCosmos", "per_page": 20, "page": 1}), required=False)
     check("Books estimates list", lambda: zoho.call("GET", "/books/v3/estimates", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}))
     check("Books sales orders list", lambda: zoho.call("GET", "/books/v3/salesorders", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}))
+    check("Books sales orders search", lambda: zoho.call("GET", "/books/v3/salesorders", params={"organization_id": zoho.organization_id, "search_text": "ConnectCosmos", "per_page": 20, "page": 1}), required=False)
     check("Books purchase orders list", lambda: zoho.call("GET", "/books/v3/purchaseorders", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}), required=False)
+    check("Books purchase orders search", lambda: zoho.call("GET", "/books/v3/purchaseorders", params={"organization_id": zoho.organization_id, "search_text": "ConnectCosmos", "per_page": 20, "page": 1}), required=False)
     check("Books invoices list", lambda: zoho.call("GET", "/books/v3/invoices", params={"organization_id": zoho.organization_id, "per_page": 200, "page": 1}))
+    check("Books invoices search", lambda: zoho.call("GET", "/books/v3/invoices", params={"organization_id": zoho.organization_id, "search_text": "ConnectCosmos", "per_page": 20, "page": 1}), required=False)
     bigin_fields = "First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out"
     check("Bigin contacts list", lambda: zoho.call("GET", "/bigin/v2/Contacts", params={"fields": bigin_fields, "per_page": 50, "page": 1}))
     layout = check("Bigin pipeline layout", lambda: zoho.call("GET", "/bigin/v2/settings/layouts", params={"module": "Pipelines"})) or {}
@@ -208,16 +338,41 @@ def run() -> int:
     pipeline_layout_id = identifier(pipeline_layout, "id")
     if pipeline_layout_id:
         check("Bigin pipeline records", lambda: zoho.call("GET", "/bigin/v2/Pipelines", params={"pipeline_id": pipeline_layout_id, "fields": "id,Deal_Name,Stage,Contact_Name,Pipeline,Owner,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
+        check("Bigin pipeline search", lambda: zoho.call("GET", "/bigin/v2/Pipelines/search", params={"word": "ConnectCosmos"}), required=False)
     check("Bigin accounts list", lambda: zoho.call("GET", "/bigin/v2/Accounts", params={"fields": "Account_Name,Phone,Email,Website,Owner,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
     check("Bigin products list", lambda: zoho.call("GET", "/bigin/v2/Products", params={"fields": "Product_Name,Product_Code,Unit_Price,Description,Owner,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
     check("Bigin tasks list", lambda: zoho.call("GET", "/bigin/v2/Tasks", params={"fields": "Subject,Due_Date,Status,Priority,Who_Id,What_Id,Owner,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
     check("Bigin notes list", lambda: zoho.call("GET", "/bigin/v2/Notes", params={"fields": "Note_Title,Note_Content,Parent_Id,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
     check("Bigin events list", lambda: zoho.call("GET", "/bigin/v2/Events", params={"fields": "Event_Title,Start_DateTime,End_DateTime,Owner,Who_Id,What_Id,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
     check("Bigin calls list", lambda: zoho.call("GET", "/bigin/v2/Calls", params={"fields": "Subject,Call_Start_Time,Call_Duration,Call_Type,Who_Id,What_Id,Owner,Created_Time,Modified_Time", "per_page": 200, "page": 1}), required=False)
+    check("Bigin deleted contacts", lambda: zoho.call("GET", "/bigin/v2/Contacts/deleted", params={"type": "recycle", "page": 1, "per_page": 200}), required=False)
+
+    # Zoho Mail: discover the account and send one explicitly marked test
+    # message to the safe QA recipient. The sender is always resolved from
+    # Zoho's own account response; no caller-supplied sender is trusted.
+    mail_accounts = check("Mail accounts list", lambda: zoho.mail_call("GET", "/api/accounts"), required=False) or {}
+    mail_rows = rows(mail_accounts, "data", "accounts")
+    configured_mail_id = os.environ.get("ZOHO_MAIL_ACCOUNT_ID", "").strip()
+    mail_account = next((row for row in mail_rows if str(row.get("accountId") or "") == configured_mail_id), None) if configured_mail_id else None
+    mail_account = mail_account or (mail_rows[0] if mail_rows else {})
+    mail_account_id = str(mail_account.get("accountId") or "")
+    sender = str(mail_account.get("mailboxAddress") or mail_account.get("incomingUserName") or mail_account.get("primaryEmailAddress") or "")
+    recipient = os.environ.get("ZOHO_MAIL_TO", "akshatsaxena2211@gmail.com").strip()
+    if mail_account_id and sender and recipient:
+        check("Mail send dummy message", lambda: zoho.mail_call("POST", f"/api/accounts/{mail_account_id}/messages", payload={
+            "fromAddress": sender,
+            "toAddress": recipient,
+            "subject": f"ConnectCosmos Zoho {os.environ.get('ZOHO_REGION', 'us').upper()} API smoke test {stamp}",
+            "content": f"This is a temporary ConnectCosmos API smoke-test message for the {os.environ.get('ZOHO_REGION', 'us').upper()} Zoho data center. No customer action is required.",
+            "mailFormat": "html",
+            "askReceipt": "no",
+        }), required=False)
+    else:
+        report("Mail send dummy message", False, "No usable Zoho Mail account/sender was returned")
 
     books_contacts = check("Find reusable Books customer", lambda: rows(zoho.call("GET", "/books/v3/contacts", params={"organization_id": zoho.organization_id, "customer_type": "customer", "per_page": 200, "page": 1}), "contacts"), required=False) or []
     items = check("Find reusable Books item", lambda: rows(zoho.call("GET", "/books/v3/items", params={"organization_id": zoho.organization_id, "status": "active", "per_page": 200, "page": 1}), "items"), required=False) or []
-    customer = next((item for item in books_contacts if identifier(item, "contact_id", "customer_id", "id")), {})
+    customer = next((item for item in books_contacts if str(item.get("contact_type") or item.get("contact_type_formatted") or "").lower() in {"customer", "customer and vendor"} and identifier(item, "contact_id", "customer_id", "id")), {})
     item = next((item for item in items if identifier(item, "item_id", "id")), {})
     customer_id = identifier(customer, "contact_id", "customer_id", "id")
     item_id = identifier(item, "item_id", "id")
@@ -228,18 +383,26 @@ def run() -> int:
     if item_id:
         check("Books item detail", lambda: zoho.call("GET", f"/books/v3/items/{item_id}", params={"organization_id": zoho.organization_id}), required=False)
     if not customer_id or not item_id:
-        report("Reusable Books customer/item", False, "A customer and active item are required for document tests")
-        failures += 1
+        report("Reusable Books customer/item", True, "No reusable records; the test will use temporary records created below")
 
     # Books item: single create, edit, then the same operation used by bulk upload.
     single_item_id = ""
-    single = check("Books single item create", lambda: zoho.call("POST", "/books/v3/items", params={"organization_id": zoho.organization_id}, payload={
-        "name": f"{prefix} single item", "sku": f"CC-QA-{stamp}-S", "rate": 17.25, "purchase_rate": 10.0, "unit": "pcs", "description": "Temporary ConnectCosmos API smoke-test item", "item_type": "sales",
-    }), required=False)
+    account_rows = rows(accounts, "chartofaccounts", "accounts")
+    purchase_account = next((row for row in account_rows if str(row.get("account_type") or row.get("account_type_name") or row.get("type") or "").lower() == "cost_of_goods_sold"), {})
+    purchase_account_id = identifier(purchase_account, "account_id", "id")
+    single_item_payload = {
+        "name": f"{prefix} single item", "sku": f"CC-QA-{stamp}-S", "rate": 17.25, "purchase_rate": 10.0, "unit": "pcs",
+        "description": "Temporary ConnectCosmos API smoke-test item", "item_type": "sales_and_purchases",
+    }
+    if purchase_account_id:
+        single_item_payload["purchase_account_id"] = purchase_account_id
+    single = check("Books single item create", lambda: zoho.call("POST", "/books/v3/items", params={"organization_id": zoho.organization_id}, payload=single_item_payload), required=False)
     if single:
         single_item_id = identifier(first(single, "item"), "item_id", "id")
         if single_item_id: created["items"].append(single_item_id)
         check("Books single item edit", lambda: zoho.call("PUT", f"/books/v3/items/{single_item_id}", params={"organization_id": zoho.organization_id}, payload={"description": "Updated ConnectCosmos smoke-test item"}), required=False)
+        if not item_id:
+            item_id = single_item_id
     else:
         failures += 1
 
@@ -265,10 +428,18 @@ def run() -> int:
         "contact_persons": [{"first_name": "ConnectCosmos", "last_name": "QA", "email": f"{stamp}.books@example.com", "mobile": "9876543210", "is_primary_contact": True}],
     }), required=False)
     if contact_result:
-        books_contact_id = identifier(first(contact_result, "contact"), "contact_id", "customer_id", "id")
+        created_contact = first(contact_result, "contact")
+        books_contact_id = identifier(created_contact, "contact_id", "customer_id", "id")
         if books_contact_id: created["books_contacts"].append(books_contact_id)
         check("Books contact edit", lambda: zoho.call("PUT", f"/books/v3/contacts/{books_contact_id}", params={"organization_id": zoho.organization_id}, payload={"contact_name": f"{prefix} Books edited"}), required=False)
         check("Books contact read after edit", lambda: zoho.call("GET", f"/books/v3/contacts/{books_contact_id}", params={"organization_id": zoho.organization_id}), required=False)
+        check("Books created contact persons", lambda: zoho.call("GET", f"/books/v3/contacts/{books_contact_id}/contactpersons", params={"organization_id": zoho.organization_id}), required=False)
+        contact_persons = created_contact.get("contact_persons") if isinstance(created_contact.get("contact_persons"), list) else []
+        contact_person_id = identifier(contact_persons[0], "contact_person_id", "id") if contact_persons else ""
+        if contact_person_id:
+            check("Books contact person edit", lambda: zoho.call("PUT", f"/books/v3/contacts/contactpersons/{contact_person_id}", params={"organization_id": zoho.organization_id}, payload={"last_name": "QA edited"}), required=False)
+        if not customer_id:
+            customer_id = books_contact_id
     vendor_result = check("Books vendor create", lambda: zoho.call("POST", "/books/v3/contacts", params={"organization_id": zoho.organization_id}, payload={
         "contact_name": f"{prefix} Vendor", "contact_type": "vendor", "vendor_sub_type": "business", "email": f"{stamp}.vendor@example.com", "mobile": "9876543212",
         "contact_persons": [{"first_name": "ConnectCosmos", "last_name": "Vendor QA", "email": f"{stamp}.vendor@example.com", "mobile": "9876543212", "is_primary_contact": True}],
@@ -318,8 +489,35 @@ def run() -> int:
                 check("Bigin pipeline record read", lambda: zoho.call("GET", f"/bigin/v2/Pipelines/{pipeline_record_id}"))
                 check("Bigin pipeline record edit", lambda: zoho.call("PUT", f"/bigin/v2/Pipelines/{pipeline_record_id}", payload={"data": [{"id": pipeline_record_id, "Description": "Updated ConnectCosmos smoke-test pipeline record"}]}))
 
+    # Bigin activity create/edit/read/delete coverage used by the CRM layer.
+    if bigin_contact_id:
+        task_result = check("Bigin task create", lambda: zoho.call("POST", "/bigin/v2/Tasks", payload={"data": [{
+            "Subject": f"ConnectCosmos QA task {stamp}", "Due_Date": today, "Status": "Not Started", "Priority": "Normal", "Who_Id": {"id": bigin_contact_id},
+        }]}), required=False)
+        if task_result:
+            task_row = first(task_result)
+            task_details = task_row.get("details") if isinstance(task_row.get("details"), dict) else task_row
+            task_id = identifier(task_details, "id", "task_id")
+            if task_id:
+                created["tasks"].append(task_id)
+                check("Bigin task read", lambda: zoho.call("GET", f"/bigin/v2/Tasks/{task_id}"), required=False)
+                check("Bigin task edit", lambda: zoho.call("PUT", f"/bigin/v2/Tasks/{task_id}", payload={"data": [{"id": task_id, "Status": "Completed"}]}), required=False)
+        note_result = check("Bigin note create", lambda: zoho.call("POST", "/bigin/v2/Notes", payload={"data": [{
+            "Note_Title": f"ConnectCosmos QA note {stamp}", "Note_Content": "Temporary ConnectCosmos API smoke-test note", "Parent_Id": {"id": bigin_contact_id}, "$se_module": "Contacts",
+        }]}), required=False)
+        if note_result:
+            note_row = first(note_result)
+            note_details = note_row.get("details") if isinstance(note_row.get("details"), dict) else note_row
+            note_id = identifier(note_details, "id", "note_id")
+            if note_id:
+                created["notes"].append(note_id)
+                check("Bigin note read", lambda: zoho.call("GET", f"/bigin/v2/Notes/{note_id}"), required=False)
+                check("Bigin note edit", lambda: zoho.call("PUT", f"/bigin/v2/Notes/{note_id}", payload={"data": [{"id": note_id, "Note_Content": "Updated ConnectCosmos smoke-test note"}]}), required=False)
+
     # Document payload shared by quote, sales order, and invoice flows.
     line_items = [{"item_id": item_id, "quantity": 1, "rate": 100}]
+    if tax_id:
+        line_items[0]["tax_id"] = tax_id
     quote_id = order_id = invoice_id = ""
     if customer_id and item_id:
         if vendor_id:
@@ -329,26 +527,55 @@ def run() -> int:
                 created["purchase_orders"].append(purchase_order_id)
                 check("Purchase order read", lambda: zoho.call("GET", f"/books/v3/purchaseorders/{purchase_order_id}", params={"organization_id": zoho.organization_id}), required=False)
                 check("Purchase order edit", lambda: zoho.call("PUT", f"/books/v3/purchaseorders/{purchase_order_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} purchase order edited"}), required=False)
+                check("Purchase order PDF", lambda: zoho.pdf_call(f"/books/v3/purchaseorders/{purchase_order_id}", params={"organization_id": zoho.organization_id, "accept": "pdf"}), required=False)
+                check("Purchase order email", lambda: zoho.call("POST", f"/books/v3/purchaseorders/{purchase_order_id}/email", params={"organization_id": zoho.organization_id}, payload={"to_mail_ids": [recipient], "subject": f"{prefix} purchase order QA", "body": "Temporary ConnectCosmos purchase order API smoke-test message."}), required=False)
         quote = check("Quote create", lambda: zoho.call("POST", "/books/v3/estimates", params={"organization_id": zoho.organization_id}, payload={"customer_id": customer_id, "line_items": line_items, "notes": f"{prefix} quote"}))
         if quote:
             quote_id = identifier(first(quote, "estimate"), "estimate_id", "id")
             if quote_id: created["quotes"].append(quote_id)
-            check("Quote read", lambda: zoho.call("GET", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id}))
-            check("Quote edit", lambda: zoho.call("PUT", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} quote edited"}))
+            quote_read = check("Quote read", lambda: zoho.call("GET", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id})) or {}
+            quote_tax_ok = not tax_id or document_contains_tax(quote_read, tax_id, "estimate", "data")
+            report("Quote returned GST tax id", quote_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not quote_tax_ok: failures += 1
+            quote_edit = check("Quote edit with GST tax id", lambda: zoho.call("PUT", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} quote edited", "line_items": line_items})) or {}
+            quote_edit_read = check("Quote read after GST edit", lambda: zoho.call("GET", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id})) or {}
+            quote_edit_tax_ok = not tax_id or document_contains_tax(quote_edit_read, tax_id, "estimate", "data")
+            report("Quote edit retained GST tax id", quote_edit_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not quote_edit_tax_ok: failures += 1
+            check("Quote PDF", lambda: zoho.pdf_call(f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id, "accept": "pdf"}), required=False)
             check("Quote send before acceptance", lambda: zoho.call("POST", f"/books/v3/estimates/{quote_id}/status/sent", params={"organization_id": zoho.organization_id}, payload={}))
             check("Quote mark accepted", lambda: zoho.call("POST", f"/books/v3/estimates/{quote_id}/status/accepted", params={"organization_id": zoho.organization_id}, payload={}))
+            check("Quote email", lambda: zoho.call("POST", f"/books/v3/estimates/{quote_id}/email", params={"organization_id": zoho.organization_id}, payload={"to_mail_ids": [recipient], "subject": f"{prefix} quote QA", "body": "Temporary ConnectCosmos quote API smoke-test message."}), required=False)
         order = check("Sales order create", lambda: zoho.call("POST", "/books/v3/salesorders", params={"organization_id": zoho.organization_id}, payload={"customer_id": customer_id, "line_items": line_items, "notes": f"{prefix} sales order"}))
         if order:
             order_id = identifier(first(order, "salesorder"), "salesorder_id", "id")
             if order_id: created["orders"].append(order_id)
-            check("Sales order read", lambda: zoho.call("GET", f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id}))
-            check("Sales order edit", lambda: zoho.call("PUT", f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} sales order edited"}))
+            order_read = check("Sales order read", lambda: zoho.call("GET", f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id})) or {}
+            order_tax_ok = not tax_id or document_contains_tax(order_read, tax_id, "salesorder", "data")
+            report("Sales order returned GST tax id", order_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not order_tax_ok: failures += 1
+            check("Sales order edit with GST tax id", lambda: zoho.call("PUT", f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} sales order edited", "line_items": line_items}))
+            order_edit_read = check("Sales order read after GST edit", lambda: zoho.call("GET", f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id})) or {}
+            order_edit_tax_ok = not tax_id or document_contains_tax(order_edit_read, tax_id, "salesorder", "data")
+            report("Sales order edit retained GST tax id", order_edit_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not order_edit_tax_ok: failures += 1
+            check("Sales order PDF", lambda: zoho.pdf_call(f"/books/v3/salesorders/{order_id}", params={"organization_id": zoho.organization_id, "accept": "pdf"}), required=False)
+            check("Sales order email", lambda: zoho.call("POST", f"/books/v3/salesorders/{order_id}/email", params={"organization_id": zoho.organization_id}, payload={"to_mail_ids": [recipient], "subject": f"{prefix} sales order QA", "body": "Temporary ConnectCosmos sales order API smoke-test message."}), required=False)
         invoice = check("Invoice create", lambda: zoho.call("POST", "/books/v3/invoices", params={"organization_id": zoho.organization_id}, payload={"customer_id": customer_id, "line_items": line_items, "notes": f"{prefix} invoice"}))
         if invoice:
             invoice_id = identifier(first(invoice, "invoice"), "invoice_id", "id")
             if invoice_id: created["invoices"].append(invoice_id)
-            check("Invoice read", lambda: zoho.call("GET", f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id}))
-            check("Invoice edit", lambda: zoho.call("PUT", f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} invoice edited"}))
+            invoice_read = check("Invoice read", lambda: zoho.call("GET", f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id})) or {}
+            invoice_tax_ok = not tax_id or document_contains_tax(invoice_read, tax_id, "invoice", "data")
+            report("Invoice returned GST tax id", invoice_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not invoice_tax_ok: failures += 1
+            check("Invoice edit with GST tax id", lambda: zoho.call("PUT", f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id}, payload={"notes": f"{prefix} invoice edited", "line_items": line_items}))
+            invoice_edit_read = check("Invoice read after GST edit", lambda: zoho.call("GET", f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id})) or {}
+            invoice_edit_tax_ok = not tax_id or document_contains_tax(invoice_edit_read, tax_id, "invoice", "data")
+            report("Invoice edit retained GST tax id", invoice_edit_tax_ok, f"tax_id={tax_id or 'not configured'}")
+            if not invoice_edit_tax_ok: failures += 1
+            check("Invoice PDF", lambda: zoho.pdf_call(f"/books/v3/invoices/{invoice_id}", params={"organization_id": zoho.organization_id, "accept": "pdf"}), required=False)
+            check("Invoice email", lambda: zoho.call("POST", f"/books/v3/invoices/{invoice_id}/email", params={"organization_id": zoho.organization_id}, payload={"to_mail_ids": [recipient], "subject": f"{prefix} invoice QA", "body": "Temporary ConnectCosmos invoice API smoke-test message."}), required=False)
             account_rows = rows(accounts, "chartofaccounts", "accounts")
             eligible = [row for row in account_rows if str(row.get("account_type") or row.get("account_type_name") or row.get("type") or "").lower() in {"bank", "cash"}]
             account = eligible[0] if eligible else (account_rows[0] if account_rows else {})
@@ -374,6 +601,10 @@ def run() -> int:
                 report("Invoice is paid", status == "paid", f"status={status or 'unknown'}")
                 if status != "paid": failures += 1
 
+    else:
+        report("Books document prerequisites", False, "No Books customer and item were available after temporary-record creation")
+        failures += 1
+
     # Cleanup in dependency order. Payment deletion is required before invoice deletion.
     for payment_id in reversed(created["payments"]):
         check(f"Cleanup payment {payment_id}", lambda payment_id=payment_id: zoho.call("DELETE", f"/books/v3/customerpayments/{payment_id}", params={"organization_id": zoho.organization_id}), required=False)
@@ -387,6 +618,10 @@ def run() -> int:
         check(f"Cleanup quote {quote_id}", lambda quote_id=quote_id: zoho.call("DELETE", f"/books/v3/estimates/{quote_id}", params={"organization_id": zoho.organization_id}), required=False)
     for pipeline_id in reversed(created["pipelines"]):
         check(f"Cleanup Bigin pipeline record {pipeline_id}", lambda pipeline_id=pipeline_id: zoho.call("DELETE", f"/bigin/v2/Pipelines/{pipeline_id}"), required=False)
+    for task_id in reversed(created["tasks"]):
+        check(f"Cleanup Bigin task {task_id}", lambda task_id=task_id: zoho.call("DELETE", f"/bigin/v2/Tasks/{task_id}"), required=False)
+    for note_id in reversed(created["notes"]):
+        check(f"Cleanup Bigin note {note_id}", lambda note_id=note_id: zoho.call("DELETE", f"/bigin/v2/Notes/{note_id}"), required=False)
     for item_id in reversed(created["items"]):
         check(f"Cleanup item {item_id}", lambda item_id=item_id: zoho.call("DELETE", f"/books/v3/items/{item_id}", params={"organization_id": zoho.organization_id}), required=False)
     for contact_id in reversed(created["books_contacts"]):
@@ -404,7 +639,9 @@ def run() -> int:
     with open(report_path, "w", encoding="utf-8") as report_file:
         json.dump({
             "organization_id": zoho.organization_id,
+            "region": os.environ.get("ZOHO_REGION", "us").strip().lower(),
             "api_domain": zoho.domain,
+            "mail_api_domain": zoho.mail_domain,
             "created_records": created,
             "api_calls": zoho.calls,
             "rate_headers": zoho.rate_headers,

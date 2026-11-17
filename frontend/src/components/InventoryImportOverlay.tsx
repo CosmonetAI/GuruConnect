@@ -7,6 +7,7 @@ export type InventorySheet = {
   rows: string[][]
   searchIndex: string[]
   columnCount: number
+  columnHeaders: string[]
 }
 
 export type InventoryImportData = {
@@ -59,12 +60,17 @@ function parseWorkbook(fileBytes: ArrayBuffer): InventorySheet[] {
     const rows = rawRows.map(row => row.map(toCellText))
     const columnCount = rows.reduce((highest, row) => Math.max(highest, row.length), 0)
     const normalizedRows = rows.map(row => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
+    const headerCandidate = normalizedRows.slice(0, 25).reduce<{ row: string[]; score: number }>((best, row) => {
+      const score = row.filter(value => value.trim()).length
+      return score > best.score ? { row, score } : best
+    }, { row: normalizedRows[0] ?? [], score: -1 }).row
 
     return {
       name,
       rows: normalizedRows,
       searchIndex: normalizedRows.map(row => row.join('\u0001').toLocaleLowerCase()),
       columnCount,
+      columnHeaders: headerCandidate,
     }
   })
 }
@@ -284,11 +290,13 @@ export default function InventoryImportOverlay({ data, onDataChange, onClose }: 
         {error && <p role="alert" className="inventory-error">{error}</p>}
         {sheets.length === 0 && !busy && <div className="inventory-empty"><FileSpreadsheet size={32} /><h3>View your offline documents in this window</h3><p>Import .xlsx, .xlsm, .xls, or .csv. The file stays in this browser tab until you refresh or close the tab.</p><label className="inventory-file-button inventory-empty-upload"><UploadCloud size={16} />Choose Excel or CSV<input type="file" accept=".xlsx,.xlsm,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={event => void importFile(event)} disabled={busy} /></label></div>}
         {sheets.length > 0 && <>
-          <div className="inventory-summary"><span><strong>{sheets.length}</strong> sheet{sheets.length === 1 ? '' : 's'} · <strong>{currentSheet?.rows.length.toLocaleString() ?? 0}</strong> rows on {currentSheet?.name}</span>{normalizedQuery ? <span><strong>{totalMatches.toLocaleString()}</strong> matching rows across all sheets</span> : <span>Search scans every imported sheet</span>}</div>
-          <div className="inventory-sheet-tabs" role="tablist" aria-label="Imported workbook sheets">{sheets.map((sheet, index) => <button type="button" role="tab" aria-selected={index === activeSheet} className={index === activeSheet ? 'selected' : ''} key={sheet.name} onClick={() => setActiveSheet(index)}>{sheet.name}<span>{sheetMatchCount(sheet).toLocaleString()}</span></button>)}</div>
+          <div className="inventory-data-heading">
+            <div className="inventory-summary"><span><strong>{sheets.length}</strong> sheet{sheets.length === 1 ? '' : 's'} · <strong>{currentSheet?.rows.length.toLocaleString() ?? 0}</strong> rows on {currentSheet?.name}</span>{normalizedQuery ? <span><strong>{totalMatches.toLocaleString()}</strong> matching rows across all sheets</span> : <span>Search scans every imported sheet</span>}</div>
+            <div className="inventory-sheet-tabs" role="tablist" aria-label="Imported workbook sheets">{sheets.map((sheet, index) => <button type="button" role="tab" aria-selected={index === activeSheet} className={index === activeSheet ? 'selected' : ''} key={sheet.name} onClick={() => setActiveSheet(index)}>{sheet.name}<span>{sheetMatchCount(sheet).toLocaleString()}</span></button>)}</div>
+          </div>
           {currentSheet?.rows.length === 0 || currentSheet?.columnCount === 0 ? <div className="inventory-empty inventory-empty-small"><h3>This sheet is empty</h3><p>Select another sheet or import a different workbook.</p></div> : <>
             <div className="inventory-grid-wrap">
-              <table className="inventory-grid"><thead><tr><th className="inventory-row-number" aria-label="Row number">#</th>{Array.from({ length: currentSheet.columnCount }, (_, index) => <th key={index}>{columnLabel(index)}</th>)}</tr></thead><tbody>{visibleRows.map(rowIndex => <tr key={rowIndex}><th className="inventory-row-number">{rowIndex + 1}</th>{currentSheet.rows[rowIndex].map((value, columnIndex) => { const copyKey = `${activeSheet}-${rowIndex}-${columnIndex}`; return <td key={columnIndex} title={value}><span className="inventory-cell-value">{value}</span><button type="button" className="inventory-copy-cell" aria-label={`Copy ${columnLabel(columnIndex)}${rowIndex + 1}`} title="Copy cell" onClick={() => void copyCell(value, copyKey)}>{copiedKey === copyKey ? <Check size={13} /> : <Copy size={13} />}</button></td> })}</tr>)}</tbody></table>
+              <table className="inventory-grid"><thead><tr><th className="inventory-row-number" aria-label="Row number">#</th>{Array.from({ length: currentSheet.columnCount }, (_, index) => <th key={index}><span className="inventory-column-letter">{columnLabel(index)}</span><span className="inventory-column-heading">{currentSheet.columnHeaders[index] || `Column ${columnLabel(index)}`}</span></th>)}</tr></thead><tbody>{visibleRows.map(rowIndex => <tr key={rowIndex}><th className="inventory-row-number">{rowIndex + 1}</th>{currentSheet.rows[rowIndex].map((value, columnIndex) => { const copyKey = `${activeSheet}-${rowIndex}-${columnIndex}`; return <td key={columnIndex} title={value}><span className="inventory-cell-value">{value}</span><button type="button" className="inventory-copy-cell" aria-label={`Copy ${columnLabel(columnIndex)}${rowIndex + 1}`} title="Copy cell" onClick={() => void copyCell(value, copyKey)}>{copiedKey === copyKey ? <Check size={13} /> : <Copy size={13} />}</button></td> })}</tr>)}</tbody></table>
               {visibleRows.length === 0 && <div className="inventory-no-results">No rows match “{query}” on this sheet. Try another sheet or clear the search.</div>}
             </div>
             <div className="inventory-pagination"><span>{matchingRows.length ? `Showing ${(page * PAGE_SIZE + 1).toLocaleString()}–${Math.min((page + 1) * PAGE_SIZE, matchingRows.length).toLocaleString()} of ${matchingRows.length.toLocaleString()}` : 'No matching rows'}</span><div><button type="button" aria-label="Previous rows" disabled={page === 0} onClick={() => setPage(current => Math.max(0, current - 1))}><ChevronLeft size={15} /></button><span>Page {page + 1} of {totalPages}</span><button type="button" aria-label="Next rows" disabled={page >= totalPages - 1} onClick={() => setPage(current => Math.min(totalPages - 1, current + 1))}><ChevronRight size={15} /></button></div></div>

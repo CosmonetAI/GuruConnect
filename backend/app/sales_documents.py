@@ -28,6 +28,7 @@ class SalesLine(BaseModel):
     discount: float = Field(default=0, ge=0, le=1000000000, strict=True)
     discount_type: Literal['percentage', 'fixed'] = 'percentage'
     description: str = Field(default='', max_length=2000)
+    tax_id: str | None = Field(default=None, max_length=100)
 
 
 class DocumentEmailInput(BaseModel):
@@ -103,6 +104,29 @@ def _catalogue_review(code, message):
     return HTTPException(409, {'code': code, 'document_started': False, 'message': message})
 
 
+def _zoho_document_rejection(error):
+    response = getattr(error, 'response', None)
+    if response is None or not 400 <= response.status_code < 500:
+        return None
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    provider_message = str(payload.get('message') or '').strip() if isinstance(payload, dict) else ''
+    provider_code = str(payload.get('code') or '').strip() if isinstance(payload, dict) else ''
+    lowered = provider_message.lower()
+    if 'gst' in lowered and ('not registered' in lowered or 'enable gst' in lowered or 'tax settings' in lowered):
+        return 'Zoho Books has tax rules, but GST is not enabled for this organization. Enable GST in Zoho Books under Settings → Taxes, complete the GST registration details, then refresh the GST rules here.'
+    if provider_code == '1016' or 'specified tax is not allowed' in lowered:
+        return 'This GST rule is not available for Zoho Books sales documents. Refresh the GST rules and choose a GST group marked for intra-state or inter-state use, rather than an individual CGST/SGST component.'
+    # A definitive Zoho 4xx validation response means the provider rejected the
+    # request before creation. Surface it as a safe, retryable form error so it
+    # is not incorrectly shown as an uncertain document creation.
+    if provider_message:
+        return f'Zoho Books rejected this document: {provider_message}'
+    return 'Zoho Books rejected this document. Review the selected customer, items, and tax rules, then try again.'
+
+
 class DocumentRepository:
     """One durable state record per request, using either SQLite or PostgreSQL."""
     def __init__(self, scope, *, local_store=None, database_factory=None):
@@ -163,6 +187,24 @@ class DocumentRepository:
                 db.commit()
         return row
 
+    def discard(self, identity, expected=None):
+        """Remove a locally recorded request that the provider definitely rejected."""
+        if self.local_store:
+            with self.local_store.transaction() as db:
+                row = db.execute("select data from records where table_name='sales_documents' and id=?", (str(identity),)).fetchone()
+                current = json.loads(row['data']) if row else None
+                if self._matches(current) and all(current.get(key) == value for key, value in (expected or {}).items()):
+                    db.execute("delete from records where table_name='sales_documents' and id=?", (str(identity),))
+            return
+        with self.database_factory() as db:
+            row = db.execute(text('''select data from voice_sales_documents where id=cast(:id as uuid)
+              and organisation_id=cast(:organisation_id as uuid) and member_id=cast(:member_id as uuid)
+              and session_id=cast(:session_id as uuid) for update'''), {**self.scope, 'id': str(identity)}).first()
+            current = row[0] if row else None
+            if self._matches(current) and all(current.get(key) == value for key, value in (expected or {}).items()):
+                db.execute(text('delete from voice_sales_documents where id=cast(:id as uuid)'), {'id': str(identity)})
+                db.commit()
+
 
 class SalesDocumentService:
     TYPES = {'invoice': ('create_invoice', 'update_invoice', 'invoice', 'invoice_id', 'invoice_number'),
@@ -190,9 +232,18 @@ class SalesDocumentService:
                               if document_permission(document_type, 'create') or document_permission(document_type, 'edit')]
             create_types = [document_type for document_type in self.TYPES if document_permission(document_type, 'create')]
             edit_types = [document_type for document_type in self.TYPES if document_permission(document_type, 'edit')]
+        taxes = []
+        taxes_updated_at = None
+        if not self.demo:
+            status = await asyncio.to_thread(self.zoho.status)
+            tax_loader = getattr(self.zoho, 'taxes_for_documents', None)
+            tax_payload = await tax_loader(status.get('organization_id')) if tax_loader else {}
+            taxes = tax_payload.get('taxes', []) if isinstance(tax_payload, dict) else []
+            taxes_updated_at = tax_payload.get('updated_at') if isinstance(tax_payload, dict) else None
         return {'mode': 'local-demo' if self.demo else 'zoho', 'customer': self.customer,
                 'customer_type': 'customer', 'document_types': document_types,
                 'document_create_types': create_types, 'document_edit_types': edit_types,
+                'taxes': taxes, 'taxes_updated_at': taxes_updated_at,
                 'email': {'provider': 'zoho_books', 'configured': not self.demo}}
 
     async def _lines(self, lines, org):
@@ -241,11 +292,12 @@ class SalesDocumentService:
             percentage = Decimal(str(line.discount)) if line.discount_type == 'percentage' else (
                 Decimal(str(line.discount)) * 100 / (Decimal(str(price)) * Decimal(str(line.quantity))) if amount else Decimal(0))
             discount = f'{percentage.quantize(Decimal("0.000000000001")).normalize():f}%'
+            selected_tax_id = line.tax_id or item.get('tax_id')
             clean.append({'item_id': line.item_id, 'name': item.get('name') or item.get('item_name'),
                           'sku': item.get('sku') or '', 'rate': price, 'quantity': line.quantity,
                           'discount': discount, 'discount_amount': line.discount if line.discount_type == 'fixed' else amount * line.discount / 100,
                           'description': line.description or item.get('description') or '',
-                          **({'tax_id': item['tax_id']} if item.get('tax_id') and not self.demo else {})})
+                          **({'tax_id': selected_tax_id} if selected_tax_id and not self.demo else {})})
         return clean
 
     async def create(self, body: SalesDocumentInput):
@@ -323,7 +375,11 @@ class SalesDocumentService:
                             'pricing_review': pricing_review,
                             'total': created.get('total'), 'tax_total': created.get('tax_total'), 'currency_code': created.get('currency_code')}
             row = await asyncio.to_thread(self.repository.patch, identity, {**document, 'state': 'created'}, {'state': 'creating'})
-        except Exception:
+        except Exception as error:
+            rejection = _zoho_document_rejection(error)
+            if rejection:
+                await asyncio.to_thread(self.repository.discard, identity, {'state': 'creating'})
+                raise HTTPException(422, {'code': 'zoho_document_rejected', 'document_started': False, 'message': rejection}) from None
             # A network failure may happen after Books accepted creation. Never
             # repeat it under this key; the reference lets an admin reconcile.
             await asyncio.to_thread(self.repository.patch, identity, {'state': 'creation_uncertain'})
@@ -341,9 +397,24 @@ class SalesDocumentService:
             raise HTTPException(422, 'Enter a valid recipient email or choose Create & download.')
 
     def _mail_content(self, subject, message):
-        if not subject.strip() or any(value in subject for value in '\r\n\0') or not message.strip() or '\0' in message:
+        """Validate optional overrides without requiring them.
+
+        Zoho Books uses the organization's configured template when subject
+        and body are omitted. ConnectCosmos currently sends only the recipient,
+        but keep validation for older callers that still provide overrides.
+        """
+        subject = str(subject or '').strip()
+        message = str(message or '').strip()
+        if subject and any(value in subject for value in '\r\n\0'):
+            raise HTTPException(422, {'code': 'email_invalid_subject', 'document_started': False,
+                'message': 'The email subject contains invalid characters.'})
+        if message and '\0' in message:
             raise HTTPException(422, {'code': 'email_invalid_message', 'document_started': False,
-                'message': 'Enter an email subject and message before creating and sending.'})
+                'message': 'The email message contains an invalid character.'})
+        if bool(subject) != bool(message):
+            raise HTTPException(422, {'code': 'email_invalid_message', 'document_started': False,
+                'message': 'Provide both an email subject and message, or leave both blank to use the Zoho Books template.'})
+        return subject, message
 
     async def _pdf(self, row):
         if row.get('demo'):
@@ -379,7 +450,7 @@ class SalesDocumentService:
 
     async def email(self, identity, body: DocumentEmailInput):
         self._email_available(body.recipient)
-        self._mail_content(body.subject, body.message)
+        subject, message = self._mail_content(body.subject, body.message)
         row = await asyncio.to_thread(self.repository.get, str(identity))
         if not row or row['state'] != 'created':
             raise HTTPException(404, 'Created sales document not found')
@@ -395,7 +466,7 @@ class SalesDocumentService:
             raise HTTPException(409, 'The previous email was submitted or needs delivery review. It will not be sent twice.')
         pdf = await self._pdf(row)
         delivery = {'provider': 'zoho_books', 'status': 'sending', 'request_id': str(body.request_id), 'request_hash': action_hash,
-                    'fingerprint': delivery_fingerprint(recipient=body.recipient, subject=body.subject, message=body.message,
+                    'fingerprint': delivery_fingerprint(recipient=body.recipient, subject=subject, message=message,
                         pdf_bytes=pdf, filename=f'{row["type"]}-{row["id"][:8]}.pdf')}
         row = await asyncio.to_thread(self.repository.patch, str(identity), {'delivery': delivery}, {'delivery': prior})
         try:
@@ -410,11 +481,13 @@ class SalesDocumentService:
                     'sales-order': self.zoho.email_sales_order,
                 }
                 method = email_methods[row['type']]
-                receipt = await method(row['books_org'], row['external_id'], {
-                    'to_mail_ids': [body.recipient],
-                    'subject': body.subject,
-                    'body': body.message,
-                })
+                # An empty JSON body makes Zoho Books use the organization's
+                # default email template. The recipient is the only input we
+                # need from the salesperson.
+                payload = {'to_mail_ids': [body.recipient]}
+                if subject and message:
+                    payload.update({'subject': subject, 'body': message})
+                receipt = await method(row['books_org'], row['external_id'], payload)
             delivery.update({'provider_response': receipt.get('message') if isinstance(receipt, dict) else None}, status='accepted', message='Submitted to Zoho Books for delivery.')
         except EmailDeliveryError as error:
             delivery.update(status='uncertain' if error.uncertain else 'failed',

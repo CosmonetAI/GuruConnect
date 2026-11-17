@@ -3,6 +3,7 @@ import base64
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -21,6 +22,7 @@ PDF = b'%PDF-1.4\nfixture\n%%EOF\n'
 class Books:
     def __init__(self):
         self.created, self.pdf_calls, self.fail_create, self.fail_pdf = [], [], False, False
+        self.create_error = None
         self.fetched, self.contact_calls, self.updated = [], 0, None
         self.item = {'item_id': '123', 'name': 'Fan', 'sku': 'FAN', 'rate': 1000, 'tax_id': '456',
                      'status': 'active', 'can_be_sold': True, 'item_type': 'inventory',
@@ -41,6 +43,8 @@ class Books:
 
     async def create_invoice(self, org, payload):
         self.created.append(payload)
+        if self.create_error:
+            raise self.create_error
         if self.fail_create:
             raise TimeoutError('unsafe-provider-text')
         return {'invoice': {'invoice_id': '345', 'invoice_number': 'INV/3', 'total': 1800, 'tax_total': 0, 'currency_code': 'INR'}}
@@ -120,6 +124,15 @@ async def test_no_email_creates_real_books_document_and_downloads_native_pdf_onc
 
 
 @pytest.mark.asyncio
+async def test_selected_tax_id_overrides_catalogue_tax_for_books_document(tmp_path):
+    service, books = setup(tmp_path)
+    await service.create(body(line_items=[{
+        'item_id': '123', 'quantity': 1, 'rate': 1000, 'tax_id': '999',
+    }]))
+    assert books.created[0]['line_items'][0]['tax_id'] == '999'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(('kind', 'identity', 'number'), [
     ('invoice', '345', 'INV/3'),
     ('quote', '346', 'EST-3'),
@@ -127,7 +140,9 @@ async def test_no_email_creates_real_books_document_and_downloads_native_pdf_onc
 ])
 async def test_source_document_updates_existing_books_document_without_creating_duplicate(tmp_path, kind, identity, number):
     service, books = setup(tmp_path)
-    request = body(type=kind, source_document_id=identity, source_document_number=number)
+    request = body(type=kind, source_document_id=identity, source_document_number=number,
+                   line_items=[{'item_id': '123', 'quantity': 2, 'rate': 1000, 'discount': 200,
+                                'discount_type': 'fixed', 'tax_id': '999'}])
     result = await service.create(request)
     replay = await service.create(request)
 
@@ -139,6 +154,7 @@ async def test_source_document_updates_existing_books_document_without_creating_
     assert books.updated[1] == identity
     assert len(books.created) == 0
     assert 'reference_number' not in books.updated[2]
+    assert books.updated[2]['line_items'][0]['tax_id'] == '999'
 
 
 @pytest.mark.asyncio
@@ -150,6 +166,14 @@ async def test_missing_mail_configuration_does_not_block_native_zoho_email_then_
     assert books.created and books.email_call[0] == 'invoice'
     assert books.email_call[3]['to_mail_ids'] == ['customer@example.test']
     assert (await service.create(body()))['delivery']['status'] == 'not_requested'
+
+
+@pytest.mark.asyncio
+async def test_zoho_email_uses_books_template_without_subject_or_message(tmp_path):
+    service, books = setup(tmp_path, configured=False)
+    result = await service.create(body(delivery='email', recipient='customer@example.test', subject='', message=''))
+    assert result['delivery']['status'] == 'accepted'
+    assert books.email_call[3] == {'to_mail_ids': ['customer@example.test']}
 
 
 @pytest.mark.asyncio
@@ -204,6 +228,22 @@ async def test_lost_email_ack_and_creation_ack_require_review_instead_of_automat
     assert retry_error.value.status_code == 409
     assert len(books.created) == 2
     assert 'unsafe-provider' not in str(error.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_zoho_tax_validation_is_definitive_and_does_not_become_uncertain(tmp_path):
+    service, books = setup(tmp_path)
+    books.create_error = httpx.HTTPStatusError(
+        'bad tax',
+        request=httpx.Request('POST', 'https://www.zohoapis.in/books/v3/invoices'),
+        response=httpx.Response(400, json={'code': 1016, 'message': 'Specified tax is not allowed.'}),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.create(body(line_items=[{'item_id': '123', 'quantity': 1, 'rate': 1000, 'tax_id': 'invalid'}]))
+    assert error.value.status_code == 422
+    assert error.value.detail['code'] == 'zoho_document_rejected'
+    assert error.value.detail['document_started'] is False
+    assert 'GST group' in error.value.detail['message']
 
 
 @pytest.mark.asyncio

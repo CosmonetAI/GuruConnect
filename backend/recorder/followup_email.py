@@ -25,6 +25,22 @@ router = APIRouter(prefix="/api/v1", tags=["follow-up-email"])
 internal_router = APIRouter(tags=["internal-follow-up-email"])
 log = logging.getLogger("recorder.followup_email")
 
+
+def _zoho_region_urls(row: dict, settings) -> tuple[str, str]:
+    """Return the OAuth and Mail endpoints for the connection's data center."""
+    region = str(row.get("zoho_region") or "").strip().lower()
+    if region == "in":
+        return "https://accounts.zoho.in", "https://mail.zoho.in"
+    if region == "us":
+        return "https://accounts.zoho.com", "https://mail.zoho.com"
+    api_domain = str(row.get("api_domain") or "").lower()
+    if api_domain.endswith(".in"):
+        return "https://accounts.zoho.in", "https://mail.zoho.in"
+    return (
+        str(getattr(settings, "zoho_accounts_url", "https://accounts.zoho.com") or "https://accounts.zoho.com").rstrip("/"),
+        str(getattr(settings, "zoho_mail_api_domain", "https://mail.zoho.com") or "https://mail.zoho.com").rstrip("/"),
+    )
+
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SESSION_NOT_STARTED = "Session not started"
 NOTHING_USEFUL_DETECTED = "Nothing useful detected"
@@ -145,9 +161,10 @@ async def _refresh_token(database, row: dict, settings) -> str:
     if not refresh_token or not client_id or not client_secret:
         fail("zoho_not_connected", 409, "Reconnect Zoho with ZohoMail.accounts.READ and ZohoMail.messages.CREATE")
     try:
+        accounts_url, _ = _zoho_region_urls(row, settings)
         async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
             response = await client.post(
-                f"{settings.zoho_accounts_url.rstrip('/')}/oauth/v2/token",
+                f"{accounts_url}/oauth/v2/token",
                 data={"grant_type": "refresh_token", "client_id": client_id,
                       "client_secret": client_secret, "refresh_token": refresh_token},
             )
@@ -181,7 +198,7 @@ async def send_zoho_mail(database, settings, row: dict, *, to_address: str,
     if expires_at and expires_at <= datetime.now(timezone.utc) + timedelta(minutes=5):
         token = await _refresh_token(database, row, settings)
     headers = {"Authorization": f"Zoho-oauthtoken {token}", "Accept": "application/json"}
-    mail_api_domain = str(getattr(settings, "zoho_mail_api_domain", "https://mail.zoho.com") or "https://mail.zoho.com").rstrip("/")
+    _, mail_api_domain = _zoho_region_urls(row, settings)
     async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         for attempt in range(2):
             try:
@@ -251,7 +268,7 @@ async def _missed_visitor(connection, context: Workspace, visit_id: str) -> dict
         select m.*, coalesce(au.email, '') as sender_email,
                coalesce(p.display_name, '') as sender_name, coalesce(p.phone, '') as sender_phone,
                z.access_token, z.refresh_token, z.client_id, z.client_secret,
-               z.expires_at, z.status as zoho_status, z.member_id, z.mail_account_id
+               z.expires_at, z.status as zoho_status, z.member_id, z.mail_account_id, z.zoho_region, z.api_domain
         from public.guruconnect_missed_visitors m
         left join auth.users au on au.id=%s
         left join public.profiles p on p.id=%s
@@ -341,7 +358,7 @@ async def dispatch_follow_up_emails(request: Request,
                    m.assigned_agent_id, m.registered_by,
                    coalesce(m.assigned_agent_id,m.registered_by) as member_id,
                    z.access_token, z.refresh_token, z.client_id, z.client_secret,
-                   z.expires_at, z.mail_account_id, coalesce(au.email, '') as sender_email,
+                    z.expires_at, z.mail_account_id, z.zoho_region, z.api_domain, coalesce(au.email, '') as sender_email,
                    coalesce(p.display_name, '') as sender_name, coalesce(p.phone, '') as sender_phone
             from public.guruconnect_missed_visitors m
             join public.zoho_connections z

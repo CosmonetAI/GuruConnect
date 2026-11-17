@@ -183,6 +183,12 @@
 .live-session-workspace .lws-discount > small { display: block; margin-top: 5px; color: #08a26a; font-size: 10px; font-weight: 650; }
 .live-session-workspace .lws-remove-item { width: 22px; }
 .live-session-workspace .lws-remove-item:hover { background: #fff0f0; color: #bd4b4b; }
+.live-session-workspace .lws-tax-rule { display:flex; align-items:flex-end; gap:8px; margin:0 13px 12px; padding:10px 11px; border:1px solid #dbe7f5; border-radius:9px; background:#f8fbff; }
+.live-session-workspace .lws-tax-rule label { display:grid; flex:1; gap:5px; color:#557092; font-size:10px; font-weight:750; }
+.live-session-workspace .lws-tax-rule select { width:100%; padding:7px 9px; border:1px solid #cbdced; border-radius:6px; background:#fff; color:#18375f; font-size:11px; }
+.live-session-workspace .lws-tax-rule .lws-icon-button { width:29px; height:30px; border:1px solid #cbdced; background:#fff; }
+.live-session-workspace .lws-spin { animation:lws-spin .8s linear infinite; }
+@keyframes lws-spin { to { transform:rotate(360deg); } }
 .live-session-workspace .lws-cart-bottom { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 15px; padding: 17px 13px 0; }
 .live-session-workspace .lws-another-product { min-height: 32px; font-size: 10px; }
 .live-session-workspace .lws-order-totals { display: flex; flex: 1 1 220px; flex-direction: column; gap: 10px; max-width: 320px; margin-left: auto; }

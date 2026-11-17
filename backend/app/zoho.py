@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 import logging
 import asyncio, httpx
 from contextvars import ContextVar
@@ -6,11 +7,38 @@ import re
 from urllib.parse import urlsplit
 from sqlalchemy import text
 from .db import require_db, row_dict, now
-from .settings import settings
 
 _organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
 _member_id: ContextVar[str | None] = ContextVar('zoho_member_id', default=None)
 log = logging.getLogger(__name__)
+
+ZOHO_REGIONS = {
+    'us': {
+        'label': 'USA',
+        'accounts_url': 'https://accounts.zoho.com',
+        'api_domain': 'https://www.zohoapis.com',
+        'mail_api_domain': 'https://mail.zoho.com',
+        'api_console_url': 'https://api-console.zoho.com/',
+    },
+    'in': {
+        'label': 'India',
+        'accounts_url': 'https://accounts.zoho.in',
+        'api_domain': 'https://www.zohoapis.in',
+        'mail_api_domain': 'https://mail.zoho.in',
+        'api_console_url': 'https://api-console.zoho.in/',
+    },
+}
+
+
+def zoho_region(value):
+    region = str(value or 'us').strip().lower()
+    if region not in ZOHO_REGIONS:
+        raise ValueError('Unsupported Zoho data center')
+    return region
+
+
+def zoho_endpoints(value):
+    return ZOHO_REGIONS[zoho_region(value)]
 
 def set_organisation_id(value: str | None):
     _organisation_id.set(value)
@@ -50,14 +78,43 @@ class ZohoClient:
     def status(self):
         c=self._connection()
         if not c: return {'status':'not_connected','connected':False}
-        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'mail_account_id':c.get('mail_account_id'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
+        region = zoho_region(c.get('zoho_region') or 'in')
+        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'mail_account_id':c.get('mail_account_id'),'zoho_region':region,'zoho_region_label':zoho_endpoints(region)['label'],'zoho_taxes_updated_at':c.get('zoho_taxes_updated_at'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
     def configuration(self):
         c=self._connection() or {}
-        return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
-    async def save_configuration(self, client_id, client_secret):
+        region = zoho_region(c.get('zoho_region') or 'in')
+        endpoints = zoho_endpoints(region)
+        return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret')),'zoho_region':region,'zoho_region_label':endpoints['label'],'zoho_accounts_url':endpoints['accounts_url'],'zoho_api_domain':endpoints['api_domain'],'zoho_mail_api_domain':endpoints['mail_api_domain'],'zoho_api_console_url':endpoints['api_console_url']}
+    async def save_region(self, region):
         self._member()
+        region = zoho_region(region or 'in')
         with require_db() as db:
-            existing=db.execute(text("select client_secret from zoho_connections where tenant_key=:tenant limit 1"), {'tenant': self._tenant_key()}).first()
+            existing = db.execute(text("""select zoho_region from zoho_connections
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              limit 1"""), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
+            if not existing:
+                db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,member_id,zoho_region,status)
+                  values(:tenant,cast(:org as uuid),cast(:member as uuid),:region,'not_connected')"""), {
+                    'tenant': self._tenant_key(), 'org': _organisation_id.get(), 'member': _member_id.get(), 'region': region,
+                })
+            elif zoho_region(existing[0]) != region:
+                # A token is tied to the selected data center. Reconnecting is
+                # required when the user deliberately switches regions.
+                db.execute(text("""update zoho_connections set zoho_region=:region,
+                  access_token=null,refresh_token=null,expires_at=null,organization_id=null,
+                  currency=null,mail_account_id=null,api_domain=null,zoho_taxes='[]'::jsonb,
+                  zoho_taxes_updated_at=null,status='not_connected',
+                  last_error=null,updated_at=now()
+                  where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), {
+                    'region': region, 'org': _organisation_id.get(), 'member': _member_id.get(),
+                })
+            db.commit()
+        return self.status()
+    async def save_configuration(self, client_id, client_secret, region=None):
+        self._member()
+        region = zoho_region(region or 'in')
+        with require_db() as db:
+            existing=db.execute(text("select client_secret from zoho_connections where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
             if not client_secret:
                 client_secret=existing[0] if existing and existing[0] else None
             if not client_secret:
@@ -66,14 +123,16 @@ class ZohoClient:
               values(:tenant,cast(:org as uuid),cast(:member as uuid),:client_id,:client_secret,'not_connected')
               on conflict (organisation_id,member_id) where organisation_id is not null and member_id is not null
               do update set tenant_key=excluded.tenant_key,
-                client_id=excluded.client_id,client_secret=excluded.client_secret,updated_at=now()"""),
-              {'tenant':self._tenant_key(),'org':_organisation_id.get(),'member':_member_id.get(),'client_id':client_id,'client_secret':client_secret}); db.commit()
+                client_id=excluded.client_id,client_secret=excluded.client_secret,zoho_region=:region,
+                zoho_taxes='[]'::jsonb,zoho_taxes_updated_at=null,updated_at=now()"""),
+              {'tenant':self._tenant_key(),'org':_organisation_id.get(),'member':_member_id.get(),'client_id':client_id,'client_secret':client_secret,'region':region}); db.commit()
         return self.configuration()
     async def exchange_code(self, code):
         c=self._connection() or {}
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'authorization_code','client_id':c['client_id'],'client_secret':c['client_secret'],'code':code}
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{settings.zoho_accounts_url}/oauth/v2/token',data=data)
+        accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
+        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
         response.raise_for_status(); payload=response.json(); await self._save_tokens(payload); return self.status()
     async def refresh(self, force=False):
         c=self._connection()
@@ -81,24 +140,28 @@ class ZohoClient:
         if not force and c.get('expires_at') and c['expires_at'] > now()+timedelta(minutes=10): return True
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'refresh_token','client_id':c['client_id'],'client_secret':c['client_secret'],'refresh_token':c['refresh_token']}
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{settings.zoho_accounts_url}/oauth/v2/token',data=data)
+        accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
+        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
         response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
     async def _save_tokens(self,payload):
         self._member()
         with require_db() as db:
+            region = zoho_region((db.execute(text("select zoho_region from zoho_connections where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"), {'org': _organisation_id.get(), 'member': _member_id.get()}).first() or ['us'])[0])
             db.execute(text("""update zoho_connections set api_domain=:domain,access_token=:access,
               refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()
               where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
-              {'org':_organisation_id.get(),'member':_member_id.get(),'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
+              {'org':_organisation_id.get(),'member':_member_id.get(),'domain':zoho_endpoints(region)['api_domain'],'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
     async def request(self,method,path,*,params=None,json=None,form=None):
         await self.refresh(); c=self._connection()
         if not c or not c.get('access_token'): raise RuntimeError('Zoho is not connected')
         headers={'Authorization':f"Zoho-oauthtoken {c['access_token']}"}
+        api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
         async with httpx.AsyncClient(timeout=30) as client:
-            response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
+            response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
             if response.status_code==401:
                 await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
-                response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
+                api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
+                response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
         response.raise_for_status(); return response.json() if response.content else {'ok': True}
 
     async def mail_accounts(self):
@@ -107,7 +170,7 @@ class ZohoClient:
         connection = self._connection()
         if not connection or not connection.get('access_token'):
             raise RuntimeError('Zoho is not connected')
-        domain = str(settings.zoho_mail_api_domain or 'https://mail.zoho.com').rstrip('/')
+        domain = zoho_endpoints(connection.get('zoho_region'))['mail_api_domain'].rstrip('/')
         headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/json'}
         for attempt in range(2):
             async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
@@ -179,7 +242,7 @@ class ZohoClient:
                 raise RuntimeError('Zoho is not connected')
             if str(connection.get('organization_id') or '') != str(org):
                 raise PermissionError('Select the connected Zoho Books organization before downloading')
-            domain = str(connection.get('api_domain') or settings.zoho_api_domain).rstrip('/')
+            domain = str(connection.get('api_domain') or zoho_endpoints(connection.get('zoho_region'))['api_domain']).rstrip('/')
             parsed = urlsplit(domain)
             if (parsed.scheme != 'https' or parsed.hostname not in allowed_hosts
                     or parsed.username or parsed.password or parsed.port not in (None, 443)
@@ -263,10 +326,74 @@ class ZohoClient:
         if not currency_code:
             raise RuntimeError('Zoho Books did not return a base currency for the selected organization')
         with require_db() as db:
-            db.execute(text("""update zoho_connections set organization_id=:selected,currency=:currency,updated_at=now()
+            db.execute(text("""update zoho_connections set organization_id=:selected,currency=:currency,
+              zoho_taxes='[]'::jsonb,zoho_taxes_updated_at=null,updated_at=now()
               where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
               {'selected':organization_id,'currency':currency_code,'org':_organisation_id.get(),'member':_member_id.get()}); db.commit()
+        connection = self._connection() or {}
+        if zoho_region(connection.get('zoho_region') or 'in') == 'in':
+            try:
+                await self.refresh_taxes()
+            except Exception as error:
+                log.warning('zoho_india_taxes_initial_fetch_failed exception_type=%s', type(error).__name__)
         return self.status()
+
+    def cached_taxes(self):
+        connection = self._connection() or {}
+        region = zoho_region(connection.get('zoho_region') or 'in')
+        raw = connection.get('zoho_taxes')
+        taxes = raw if isinstance(raw, list) else (raw.get('taxes', []) if isinstance(raw, dict) else [])
+        return {
+            'taxes': [tax for tax in taxes if isinstance(tax, dict)],
+            'zoho_region': region,
+            'zoho_region_label': zoho_endpoints(region)['label'],
+            'organization_id': connection.get('organization_id'),
+            'updated_at': connection.get('zoho_taxes_updated_at'),
+            'cached': bool(connection.get('zoho_taxes_updated_at')),
+            'available': bool(connection.get('organization_id') and connection.get('refresh_token')),
+        }
+
+    async def refresh_taxes(self):
+        self._member()
+        connection = self._connection() or {}
+        org = connection.get('organization_id')
+        if not connection.get('refresh_token') or not org:
+            raise RuntimeError('Connect Zoho and select a Books organization first')
+        payload = await self.list_books_taxes(org)
+        taxes = payload.get('taxes') or payload.get('data') or []
+        if not isinstance(taxes, list):
+            taxes = []
+        with require_db() as db:
+            db.execute(text("""update zoho_connections set zoho_taxes=cast(:taxes as jsonb),zoho_taxes_updated_at=now(),updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), {
+                'taxes': json.dumps([tax for tax in taxes if isinstance(tax, dict)], ensure_ascii=False),
+                'org': _organisation_id.get(), 'member': _member_id.get(),
+            }); db.commit()
+        result = self.cached_taxes()
+        result.update({'refreshed': True, 'page_context': payload.get('page_context', {})})
+        return result
+
+    async def taxes_for_documents(self, org):
+        connection = self._connection() or {}
+        region = zoho_region(connection.get('zoho_region') or 'in')
+        if region == 'in':
+            cached = self.cached_taxes()
+            result = cached if cached.get('updated_at') else await self.refresh_taxes()
+            taxes = result.get('taxes') or []
+            # India GST document endpoints reject legacy/custom tax rows that
+            # have no GST specification, including standalone CGST/SGST rows.
+            # Keep those rows visible in Settings, but only expose document-
+            # ready GST groups to invoice/quote/order pickers.
+            document_taxes = [
+                tax for tax in taxes
+                if isinstance(tax, dict)
+                and not tax.get('is_inactive')
+                and str(tax.get('status') or 'Active').lower() == 'active'
+                and str(tax.get('tax_type') or '').lower() == 'tax_group'
+                and str(tax.get('tax_specification') or '').lower() in {'intra', 'inter'}
+            ]
+            return {**result, 'taxes': document_taxes}
+        return await self.list_books_taxes(org)
     async def list_bigin_contacts(self, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
         return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':50, 'page':page})

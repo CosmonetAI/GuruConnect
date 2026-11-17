@@ -320,15 +320,17 @@ describe('session sales document workflow', () => {
 
   it('allows PDF download after a definitive SMTP pre-creation failure', async () => {
     let attempts = 0
-    installLiveApi((path, options) => path.endsWith('/sales-documents') && options.method === 'POST' ? ++attempts === 1 ? Promise.reject(Object.assign(new Error('SMTP2GO is not configured'), { status: 503, details: { document_started: false } })) : pdfResult() : undefined)
+    installLiveApi((path, options) => path.endsWith('/sales-documents') && options.method === 'POST' ? ++attempts === 1 ? Promise.reject(Object.assign(new Error('SMTP2GO is not configured'), { status: 503, details: { document_started: false } })) : pdfResult('accepted') : undefined)
     await reviewCart()
     fireEvent.click(screen.getByRole('button', { name: 'Create & send' }))
     await screen.findByText('SMTP2GO is not configured')
     expect(screen.queryByRole('textbox', { name: 'Email subject' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Download PDF instead of emailing' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Create & download PDF' }))
-    await screen.findByText('Invoice INV-1 created')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Download PDF of invoice too' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create, email & download PDF' }))
+    await screen.findByText('Invoice INV-1 created and downloaded')
     expect(attempts).toBe(2)
+    const writes = mocks.call.mock.calls.filter(([path, options]) => path.endsWith('/sales-documents') && options.method === 'POST')
+    expect(JSON.parse(writes.at(-1)![1].body)).toMatchObject({ delivery: 'email', recipient: 'qa@example.test' })
   })
 
   it('resumes the same failed document after closing and reopening its unchanged cart', async () => {
