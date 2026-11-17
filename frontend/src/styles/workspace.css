@@ -17,7 +17,76 @@ h3 { font-size: 16px; }
 input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .app-main { position: relative; min-width: 0; }
 .app-content { width: 100%; max-width: 1392px; padding: 72px 32px 32px; margin: 0 auto; }
-.platform-bar { position: absolute; top: 16px; right: 32px; z-index: 30; display: flex; justify-content: flex-end; align-items: flex-start; gap: 8px; max-width: calc(100% - 64px); flex-wrap: wrap; }
+.platform-bar { position: fixed; top: 16px; right: 32px; z-index: 1000; display: flex; justify-content: flex-end; align-items: flex-start; gap: 8px; max-width: calc(100% - 64px); flex-wrap: wrap; }
+.inventory-import-trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid #b9d2ff; border-radius: 999px; background: #f5f8ff; color: #175cd3; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; box-shadow: 0 2px 8px rgba(26, 66, 104, .05); }
+.inventory-import-trigger:hover { border-color: #8fb4f5; background: #eaf1ff; }
+.inventory-import-trigger.has-inventory { border-color: #b9e1d7; color: #117c67; background: #effbf7; }
+.inventory-import-trigger.has-inventory:hover { border-color: #8fcdbb; background: #e6f8f2; }
+.inventory-import-trigger:focus-visible { outline: 3px solid #b7d3ff; outline-offset: 2px; }
+.inventory-overlay-layer { position: fixed; inset: 0; z-index: 1200; pointer-events: none; }
+.inventory-window { position: fixed; display: flex; flex-direction: column; width: min(1180px, calc(100vw - 36px)); max-height: calc(100vh - 96px); overflow: hidden; border: 1px solid #cbd9e8; border-radius: 16px; background: #fff; box-shadow: 0 28px 90px rgba(12, 38, 72, .28); pointer-events: auto; }
+.inventory-resize-handle { position: absolute; z-index: 8; touch-action: none; }
+.inventory-resize-n, .inventory-resize-s { right: 12px; left: 12px; height: 8px; cursor: ns-resize; }
+.inventory-resize-n { top: 0; }.inventory-resize-s { bottom: 0; }
+.inventory-resize-e, .inventory-resize-w { top: 12px; bottom: 12px; width: 8px; cursor: ew-resize; }
+.inventory-resize-e { right: 0; }.inventory-resize-w { left: 0; }
+.inventory-resize-ne, .inventory-resize-sw, .inventory-resize-nw, .inventory-resize-se { width: 12px; height: 12px; }
+.inventory-resize-ne { top: 0; right: 0; cursor: nesw-resize; }.inventory-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.inventory-resize-nw { top: 0; left: 0; cursor: nwse-resize; }.inventory-resize-se { right: 0; bottom: 0; cursor: nwse-resize; }
+.inventory-window-minimized { width: min(390px, calc(100vw - 36px)); max-height: none; }
+.inventory-window-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 66px; padding: 12px 16px 12px 18px; border-bottom: 1px solid #e2eaf2; background: linear-gradient(120deg, #f8fbff, #fff); cursor: move; user-select: none; }
+.inventory-window-title { display: flex; align-items: center; gap: 10px; min-width: 0; color: #173d70; }
+.inventory-window-title > svg { flex: 0 0 auto; color: #2563eb; }
+.inventory-window-title div { display: grid; gap: 3px; min-width: 0; }
+.inventory-window-title strong { font-size: 14px; }
+.inventory-window-title span { overflow: hidden; color: #7890ad; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-window-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.inventory-window-actions button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: #65809f; background: transparent; cursor: pointer; }
+.inventory-window-actions button:hover { color: #173d70; background: #eaf1fb; }
+.inventory-window-actions button:last-child:hover { color: #b42318; background: #ffebe9; }
+.inventory-window-body { display: flex; flex-direction: column; min-height: 0; padding: 16px; }
+.inventory-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inventory-file-button { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid #bad6ca; border-radius: 9px; color: #117c67; background: #effbf7; font-size: 12px; font-weight: 750; cursor: pointer; }
+.inventory-file-button:hover { background: #e6f8f2; }
+.inventory-file-button input { display: none; }
+.inventory-download-button { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid #cbdcff; border-radius: 9px; color: #175cd3; background: #f5f8ff; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.inventory-download-button:hover { border-color: #9dbff2; background: #eaf1ff; }
+.inventory-search { display: flex; align-items: center; flex: 1 1 320px; min-width: 240px; gap: 8px; min-height: 36px; padding: 0 10px; border: 1px solid #d2dfec; border-radius: 9px; color: #6d86a4; background: #fbfdff; }
+.inventory-search:focus-within { border-color: #8bb2ee; box-shadow: 0 0 0 3px #e9f1ff; }
+.inventory-search input { min-width: 0; flex: 1; padding: 0; border: 0; outline: 0; background: transparent; color: #173d70; font-size: 12px; }
+.inventory-search kbd { padding: 3px 5px; border: 1px solid #dce6f1; border-radius: 5px; color: #8ba0b8; background: #f4f7fb; font-size: 9px; white-space: nowrap; }
+.inventory-error { margin: 12px 0 0; padding: 10px 12px; border: 1px solid #f3c4bf; border-radius: 8px; color: #a53d3d; background: #fff1ef; font-size: 12px; }
+.inventory-empty { display: grid; place-items: center; gap: 8px; min-height: 300px; padding: 30px; color: #6f86a3; text-align: center; }
+.inventory-empty svg { color: #7ea6e7; }
+.inventory-empty h3 { margin: 0; color: #173d70; font-size: 17px; }
+.inventory-empty p { max-width: 450px; margin: 0; font-size: 12px; line-height: 1.55; }
+.inventory-empty-upload { margin-top: 6px; }
+.inventory-empty-small { min-height: 180px; }
+.inventory-summary { display: flex; flex: 0 0 auto; justify-content: space-between; gap: 12px; margin: 16px 0 10px; color: #7185a1; font-size: 11px; }
+.inventory-summary strong { color: #173d70; }
+.inventory-sheet-tabs { position: relative; z-index: 5; display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 38px; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; }
+.inventory-sheet-tabs button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 30px; padding: 0 10px; border: 1px solid #d6e2ee; border-radius: 8px; color: #466383; background: #fff; font: inherit; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.inventory-sheet-tabs button:hover { background: #f5f9ff; }
+.inventory-sheet-tabs button.selected { border-color: #9dbff2; color: #175cd3; background: #edf4ff; }
+.inventory-sheet-tabs button span { color: #8da2b9; font-size: 10px; font-variant-numeric: tabular-nums; }
+.inventory-grid-wrap { position: relative; flex: 1 1 auto; min-height: 220px; max-height: min(590px, calc(100vh - 300px)); overflow: auto; border: 1px solid #dce6f0; border-radius: 10px; background: #fff; }
+.inventory-grid { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; color: #2e496a; font-size: 11px; }
+.inventory-grid th, .inventory-grid td { min-width: 132px; max-width: 360px; padding: 8px 9px; border-right: 1px solid #e6edf4; border-bottom: 1px solid #e6edf4; vertical-align: top; text-align: left; }
+.inventory-grid thead th { position: sticky; top: 0; z-index: 3; min-width: 132px; padding: 8px 9px; border-bottom-color: #cbd9e8; color: #557394; background: #f5f9fd; font-size: 10px; font-weight: 800; letter-spacing: .06em; }
+.inventory-grid tbody tr:nth-child(even) td, .inventory-grid tbody tr:nth-child(even) .inventory-row-number { background: #fbfdff; }
+.inventory-grid tbody tr:hover td, .inventory-grid tbody tr:hover .inventory-row-number { background: #f1f7ff; }
+.inventory-grid .inventory-row-number { position: sticky; left: 0; z-index: 2; width: 46px; min-width: 46px; max-width: 46px; padding-inline: 8px; color: #8aa0b8; background: #f7faff; font-size: 10px; font-weight: 700; text-align: center; }
+.inventory-grid thead .inventory-row-number { z-index: 4; }
+.inventory-cell-value { display: inline; overflow-wrap: anywhere; white-space: pre-wrap; }
+.inventory-copy-cell { display: inline-grid; place-items: center; width: 22px; height: 22px; margin: -3px -4px -4px 7px; padding: 0; border: 0; border-radius: 5px; color: #89a1bc; background: transparent; vertical-align: top; cursor: pointer; opacity: 0; }
+.inventory-grid td:hover .inventory-copy-cell, .inventory-copy-cell:focus-visible { opacity: 1; }
+.inventory-copy-cell:hover { color: #175cd3; background: #eaf1ff; }
+.inventory-no-results { position: absolute; inset: 54px 0 0; display: grid; place-items: center; padding: 22px; color: #7185a1; background: #ffffffeb; font-size: 12px; }
+.inventory-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 2px 0; color: #7185a1; font-size: 11px; }
+.inventory-pagination > div { display: flex; align-items: center; gap: 7px; }
+.inventory-pagination button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid #d4e0ec; border-radius: 7px; color: #315580; background: #fff; cursor: pointer; }
+.inventory-pagination button:disabled { cursor: not-allowed; opacity: .45; }
+@media (max-width: 768px) { .platform-bar { top: 12px; right: 12px; max-width: calc(100% - 24px); gap: 6px; }.inventory-import-trigger { min-height: 34px; padding-inline: 10px; }.inventory-import-trigger svg { display: none; }.inventory-window { width: calc(100vw - 20px); max-height: calc(100vh - 70px); }.inventory-window-body { padding: 10px; }.inventory-summary { align-items: flex-start; flex-direction: column; gap: 5px; }.inventory-grid-wrap { max-height: calc(100vh - 300px); } }
 .availability-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid #bce8cc; border-radius: 999px; background: #e8f8ef; color: #18794e; }
 .availability-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .availability-pill select { appearance: none; border: 0; padding: 0 15px 0 0; background: transparent; color: inherit; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 6px) 50%, 100% 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }

@@ -5,12 +5,15 @@ import { Eye } from 'lucide-react'
 import Sidebar from '../components/Sidebar/Sidebar'
 import OrganisationPill from '../components/OrganisationPill'
 import AvailabilityPill from '../components/AvailabilityPill'
+import InventoryImportOverlay, { type InventoryImportData } from '../components/InventoryImportOverlay'
 import { useOffice } from '../contexts/OfficeContext'
 
 export default function AppLayout() {
   const { user, workspace, readOnly } = useOffice()
   const location = useLocation()
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [inventoryOpen, setInventoryOpen] = useState(false)
+  const [inventoryData, setInventoryData] = useState<InventoryImportData>({ fileName: '', fileType: '', fileBytes: null, sheets: [] })
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [location.pathname])
   useEffect(() => { setMobileSidebarOpen(false) }, [location.pathname])
   useEffect(() => {
@@ -27,7 +30,7 @@ export default function AppLayout() {
       {mobileSidebarOpen && <button type="button" className="mobile-sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileSidebarOpen(false)} />}
       <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
       <div className="app-main">
-        <div className="platform-bar">{readOnly && <span className="read-only-pill"><span className="availability-pill-dot" />Read-only</span>}<AvailabilityPill />{workspace?.role !== 'receptionist' && <OrganisationPill />}</div>
+        <div className="platform-bar">{readOnly && <span className="read-only-pill"><span className="availability-pill-dot" />Read-only</span>}<button type="button" className={`inventory-import-trigger${inventoryData.sheets.length ? ' has-inventory' : ''}`} onClick={() => setInventoryOpen(true)}><Eye size={16} />Quick look</button><AvailabilityPill />{workspace?.role !== 'receptionist' && <OrganisationPill />}</div>
         <main
           className="app-content"
           id="main-content"
@@ -65,6 +68,7 @@ export default function AppLayout() {
           <Outlet key={`${user?.id}/${workspace?.id}/${workspace?.member_id ?? user?.id}`} />
         </main>
       </div>
+      {inventoryOpen && <InventoryImportOverlay data={inventoryData} onDataChange={setInventoryData} onClose={() => setInventoryOpen(false)} />}
     </div>
   )
 }
