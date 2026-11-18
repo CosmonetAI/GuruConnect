@@ -788,15 +788,21 @@
 
 /* Saved enquiry detail layout: keep the page inside the viewport and reserve
    the long transcript/recovery workflow for its explicit modal. */
-.app-content:has(.enquiry-detail-page) { padding-top: 38px; }
+.app-content:has(.enquiry-detail-page) { padding-top: 82px; }
 .enquiry-detail-page { max-width: 1320px; overflow: visible; }
-.enquiry-detail-page .enquiry-page-header { margin-bottom: 12px; }
+.enquiry-detail-page .enquiry-topline { margin-bottom: 6px; }
+.enquiry-detail-page .enquiry-page-header { gap: 12px; margin-bottom: 10px; }
 .enquiry-detail-page .enquiry-header-actions { min-width: 0; max-width: 720px; }
 .enquiry-detail-page .enquiry-assignment-bar { width: min(360px, 100%); min-width: 0; margin: 0 0 14px auto; }
 .enquiry-detail-page .assignment-picker { width: 100%; min-width: 0; }
 .enquiry-detail-page .assignment-trigger { width: 100%; min-width: 0; }
 .enquiry-detail-page .conversation-actions { align-items: stretch; }
 .enquiry-detail-page .conversation-actions .button { min-width: 0; flex: 1 1 150px; justify-content: center; white-space: nowrap; }
+.enquiry-detail-page .conversation-side-card > p { color: #435866; }
+.enquiry-detail-page .conversation-side-card .recording-state-pill,
+.enquiry-detail-page .conversation-side-card .office-status { opacity: 1; }
+.enquiry-detail-page .conversation-side-card .recording-state-pill.status-complete { color: #17816e; }
+.enquiry-detail-page .conversation-side-card .office-status-success { color: #1d4ed8; }
 .enquiry-transcript-dialog { width: min(1120px, calc(100vw - 32px)); max-width: 1120px; padding: 0; overflow: hidden; }
 .enquiry-transcript-dialog > .office-row:first-child { flex: 0 0 auto; padding: 18px 24px; border-bottom: 1px solid #e5edf6; background: #fbfdff; }
 .enquiry-transcript-dialog > .office-row:first-child h2 { color: #132b4d; }
@@ -804,7 +810,7 @@
 .office-processing-compact { margin: 0; gap: 16px; }
 .office-processing-compact .office-panel { padding: 20px; }
 @media (max-width: 760px) {
-  .app-content:has(.enquiry-detail-page) { padding-top: 24px; }
+  .app-content:has(.enquiry-detail-page) { padding-top: 96px; }
   .enquiry-transcript-dialog { width: calc(100vw - 20px); }
   .enquiry-transcript-dialog > .office-row:first-child { padding: 14px 16px; }
   .enquiry-transcript-dialog > .office-processing { max-height: calc(100dvh - 82px); padding: 14px 16px 20px; }

@@ -1546,6 +1546,13 @@ export default function VoiceSessions() {
   };
   return (
     <section className="voice-sessions-page">
+      <header className="flow-page-header voice-sessions-page-header">
+        <div>
+          <div className="page-kicker">SALES DESK / SESSIONS</div>
+          <h1 className="page-title">Customer conversations</h1>
+          <p>Start and manage customer voice sessions.</p>
+        </div>
+      </header>
       {error && (
         <div className="error" role="alert">
           {error}

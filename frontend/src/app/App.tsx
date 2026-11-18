@@ -54,11 +54,11 @@ export default function App() {
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="enquiries" element={<EnquiriesList />} />
-        <Route path="walkins" element={<RoleRoute roles={['owner', 'salesperson', 'receptionist']} ownerOverride={false}><WalkinsOverview /></RoleRoute>} />
-        <Route path="walkins/new" element={<RoleRoute roles={['owner', 'salesperson', 'receptionist']} ownerOverride={false}><WalkinRegistration /></RoleRoute>} />
-        <Route path="walkins/mine" element={<RoleRoute roles={['owner', 'salesperson', 'receptionist']} ownerOverride={false}><MyWalkins /></RoleRoute>} />
-        <Route path="walkins/history" element={<RoleRoute roles={['owner', 'salesperson', 'receptionist']} ownerOverride={false}><WalkinHistory /></RoleRoute>} />
-        <Route path="walkins/:id" element={<RoleRoute roles={['owner', 'salesperson', 'receptionist']} ownerOverride={false}><WalkinDetail /></RoleRoute>} />
+        <Route path="walkins" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinsOverview /></RoleRoute>} />
+        <Route path="walkins/new" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinRegistration /></RoleRoute>} />
+        <Route path="walkins/mine" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><MyWalkins /></RoleRoute>} />
+        <Route path="walkins/history" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinHistory /></RoleRoute>} />
+        <Route path="walkins/:id" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinDetail /></RoleRoute>} />
         <Route path="enquiries/register" element={<RoleRoute roles={['owner','salesperson']}><WalkinRegistration enquiryMode /></RoleRoute>} />
         <Route path="enquiries/new" element={<Navigate to="/enquiries/register" replace />} />
         <Route path="enquiries/:id/edit" element={<Navigate to="/enquiries" replace />} />

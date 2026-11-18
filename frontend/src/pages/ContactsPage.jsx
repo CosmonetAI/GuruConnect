@@ -17,11 +17,10 @@ const emptyForm = () => ({
   notes: 'Contact created through Cosmonet AI', billing_address: emptyAddress(), shipping_address: emptyAddress(),
 });
 
-export function ContactsPage({ setError }) {
-  const [query, setQuery] = useState('\uFEFF');
+export function ContactsPage({ setError, showCreate, setShowCreate }) {
+  const [query, setQuery] = useState('');
   const [contacts, setContacts] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
   const [created, setCreated] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [contactPersons, setContactPersons] = useState([]);
@@ -65,6 +64,7 @@ export function ContactsPage({ setError }) {
 
   useEffect(() => {
     if (!showCreate) return undefined;
+    setCreated(false); setFieldErrors({}); setForm(emptyForm()); setContactPersons([]); setCustomFields([]); setTags([]); setTagOptions({});
     call('/documents/options').then(result => setReportingTags(result.reporting_tags || [])).catch(e => setError(e.message));
     return undefined;
   }, [showCreate, setError]);
@@ -118,9 +118,8 @@ export function ContactsPage({ setError }) {
   const addressFields = (kind, label) => <div className="contact-subsection"><div className="form-section-heading"><div><h4>{label}</h4><p>Optional address information</p></div></div><div className="form-two contact-address-grid">{[['attention', 'Attention'], ['address', 'Address'], ['street2', 'Address line 2'], ['city', 'City'], ['state', 'State'], ['zip', 'Postal code'], ['country', 'Country'], ['phone', 'Phone'], ['fax', 'Fax']].map(([key, placeholder]) => <label className="contact-field" key={key}><span>{placeholder} <small>Optional</small></span><input maxLength={key === 'phone' || key === 'fax' ? 14 : 255} placeholder={placeholder} value={form[kind][key]} onChange={e => setAddress(kind, key, e.target.value)} /></label>)}</div></div>;
 
   return <section className="products-page">
-    <div className="products-heading"><div><small>CUSTOMER DIRECTORY</small><h2>Customer directory</h2><p>Keep customer and supplier details ready for conversations, quotations, orders, and follow-up.</p></div><button className="primary" onClick={() => { setShowCreate(true); setCreated(false); setFieldErrors({}); setForm(emptyForm()); setContactPersons([]); setCustomFields([]); setTags([]); setTagOptions({}); }}>Add contact</button></div>
     {created && <div className="success">Contact added successfully.</div>}
-    <form className="product-search" onSubmit={search}><input maxLength={255} value={query} onChange={e => setQuery(sanitizeTextInput(e.target.value))} placeholder="Search by name, company, phone, or email…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search directory'}</button></form>
+    <form className="product-search" data-search-label="Search by contact name, company, phone, or email" onSubmit={search}><input maxLength={255} value={query} onChange={e => setQuery(sanitizeTextInput(e.target.value))} placeholder="Search by name, company, phone, or email…" /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search directory'}</button></form>
     {query && !busy && <p className="product-count">{contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'} found</p>}
     {!query.trim() && busy ? <PageLoader kind="contacts" label="Loading customer directory" detail="Bringing the latest people and organisations into view." /> : !query.trim() && !contacts.length ? <div className="product-empty">Search the customer directory by name, company, phone number, or email.</div> : !busy && !contacts.length ? <div className="product-empty">{query.trim() ? `No contacts matched “${query.trim()}”.` : 'No recent contacts found.'}</div> : <div className="contacts-grid">{contacts.map(contact => <ContactCard contact={contact} key={`${contact.__source || 'unknown'}-${contact.id || contact.contact_id}`} />)}</div>}
     {showCreate && <div className="modal-backdrop" onClick={() => setShowCreate(false)}><form className="contact-modal" noValidate onSubmit={create} onClick={e => e.stopPropagation()}>

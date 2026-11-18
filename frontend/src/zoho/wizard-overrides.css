@@ -74,7 +74,7 @@
 .identity .phone-field select option { font-size: 13px; }
 .identity .phone-field input { min-width: 0; }
 @media (max-width: 900px) { .identity { grid-template-columns: 1fr; } }
-.products-page { background: #fff; border: 1px solid #e3eaf2; border-radius: 16px; padding: 30px; min-height: 650px; }
+.products-page { background: #fff; border: 1px solid #e3eaf2; border-radius: 16px; padding: 18px 30px 30px; min-height: 650px; }
 .products-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .products-heading > .primary { min-height: 44px; padding: 0 20px; border-radius: 10px; font-size: 13px; letter-spacing: .01em; white-space: nowrap; box-shadow: 0 5px 12px rgba(18, 90, 156, .16); transition: transform .15s ease, box-shadow .15s ease, background .15s ease; }
 .products-heading-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
@@ -93,14 +93,8 @@
 .products-heading h2 { margin: 8px 0; color: #13243c; }
 .products-heading p { color: #71839b; margin-top: 0; }
 .live-badge { color: #14845d; background: #ecfbf4; padding: 8px 12px; border-radius: 20px; font-size: 12px; white-space: nowrap; }
-.product-search { display: flex; flex-wrap: wrap; gap: 10px; margin: 28px 0 18px; }
-.product-search::before { flex: 0 0 100%; color: #71839b; font-size: 12px; font-weight: 600; }
-.product-search:has(input[placeholder*="products"])::before { content: 'Search by: product name, item name, description, or SKU'; }
-.product-search:has(input[placeholder*="phone"])::before { content: 'Search by: contact name, email, or phone'; }
-.product-search:has(input[placeholder*="quote"])::before { content: 'Search by: quote number, customer name, or reference number'; }
-.product-search:has(input[placeholder*="order"])::before { content: 'Search by: sales order number, customer name, or reference number'; }
-.product-search:has(input[placeholder*="purchase order"])::before { content: 'Search by: purchase-order number, vendor name, or reference number'; }
-.product-search:has(input[placeholder*="invoice"])::before { content: 'Search by: invoice number, customer name, or reference number'; }
+.product-search { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+.product-search::before { content: attr(data-search-label); flex: 0 0 100%; color: #71839b; font-size: 12px; font-weight: 600; }
 .product-search input { flex: 1; }
 .product-search .primary { min-height: 46px; }
 .product-count { color: #71839b; font-size: 13px; }

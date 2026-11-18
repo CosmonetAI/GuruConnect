@@ -506,7 +506,7 @@ export default function Settings() {
     zohoRegion === "in" &&
     (workspace?.role === "owner" || workspace?.role === "salesperson");
   return (
-    <div>
+    <div className="settings-page">
       <header className="flow-page-header">
         <div>
           <div className="page-kicker">WORKSPACE PREFERENCES</div>
@@ -540,24 +540,8 @@ export default function Settings() {
           accounts are needed.
         </p>
       )}
-      <div className="settings-account-actions">
-        <button
-          type="button"
-          className="button button-secondary"
-          disabled={busy || localMode}
-          onClick={() => void resetPassword()}
-        >
-          <KeyRound size={16} /> Reset password
-        </button>
-        <button
-          type="button"
-          className="button button-quiet"
-          disabled={busy || localMode}
-          onClick={() => void logout()}
-        >
-          <LogOut size={18} />
-        </button>
-        {canViewZohoTaxes && (
+      {canViewZohoTaxes && (
+        <div className="settings-account-actions settings-tax-actions">
           <button
             type="button"
             className="button button-secondary settings-taxes-button"
@@ -566,8 +550,8 @@ export default function Settings() {
           >
             <ReceiptText size={16} /> GST &amp; tax rules
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {taxesOpen && (
         <div
           className="zoho-taxes-backdrop"
@@ -634,11 +618,34 @@ export default function Settings() {
         </div>
       )}
       <section className="flow-panel">
+        <div className="settings-profile-heading">
+          <div>
         <h2>Your profile</h2>
         <p>
           {localMode ? "Local account" : user?.email} · {workspace?.name} ·{" "}
           {workspace?.role}
         </p>
+          </div>
+          <div className="settings-account-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy || localMode}
+              onClick={() => void resetPassword()}
+            >
+              <KeyRound size={16} /> Reset password
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              disabled={busy || localMode}
+              onClick={() => void logout()}
+              aria-label="Log out"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
+        </div>
         {profile.loading && (
           <PageLoader
             kind="settings"

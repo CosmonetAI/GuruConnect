@@ -73,3 +73,28 @@
 .opportunity-modal>a{padding:0 28px 24px}
 @media(max-width:760px){.opportunity-modal>.eyebrow,.opportunity-modal>h3{margin-left:20px;margin-right:58px}.opportunity-details{padding:0 16px 4px}.opportunity-summary{padding:15px}.opportunity-status{align-self:flex-start}.opportunity-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.opportunity-content{grid-template-columns:1fr}.opportunity-modal>.deal-actions{padding:14px 16px 10px}.opportunity-modal>a{padding:0 16px 20px}}
 @media(max-width:460px){.opportunity-summary{align-items:flex-start;flex-wrap:wrap}.opportunity-status{margin-left:60px}.additional-field-grid{grid-template-columns:1fr}.opportunity-metric{padding:14px 12px}}
+
+/* Keep pipeline controls together with the selector instead of using a second row. */
+.pipeline-toolbar { align-items: center; }
+.pipeline-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-left: auto; flex: 0 0 auto; }
+.pipeline-toolbar-actions .recycle-button { white-space: nowrap; }
+.pipeline-toolbar-actions .sync-meta { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.pipeline-toolbar-actions .sync-meta > span { display: inline-flex; align-items: center; gap: 6px; color: #7b8ba0; font-size: 12px; }
+@media (max-width: 700px) {
+  .pipeline-toolbar { align-items: stretch; flex-wrap: wrap; }
+  .pipeline-toolbar-actions { width: 100%; margin-left: 0; justify-content: stretch; flex-wrap: wrap; }
+  .pipeline-toolbar-actions .recycle-button { flex: 1 1 150px; width: auto; justify-content: center; }
+  .pipeline-toolbar-actions .sync-meta { flex: 1 1 260px; justify-content: space-between; }
+}
+
+/* Keep the count beside search and give every toolbar control one height. */
+.pipeline-select,
+.pipeline-search,
+.pipeline-toolbar-actions .recycle-button,
+.pipeline-toolbar-actions .sync-button {
+  height: 54px;
+  min-height: 54px;
+}
+.pipeline-search { flex: 1 1 480px; }
+.pipeline-search input { min-height: 34px; }
+.record-count { margin-left: 0; flex: 0 0 auto; white-space: nowrap; }

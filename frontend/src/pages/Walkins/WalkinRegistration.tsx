@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { useNavigate, useBlocker } from 'react-router-dom'
+import { useNavigate, useBlocker, type NavigateOptions } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput, type WalkinAgent } from '../../types/walkin'
@@ -66,7 +66,8 @@ function RotatingPrompt({ prompt }: { prompt: keyof typeof rotatingPrompts }) {
 
 export default function WalkinRegistration({ enquiryMode = false }: { enquiryMode?: boolean }) {
   const { user, workspace, setCaptureBusy } = useOffice()
-  const navigate = useNavigate()
+  const routeNavigate = useNavigate()
+  const navigate = (path: string, options?: NavigateOptions) => routeNavigate(enquiryMode && path === '/walkins' ? '/enquiries' : path, options)
   const [form, setForm] = useState(initialValues)
   const [errors, setErrors] = useState<FormErrors>({})
   const [error, setError] = useState('')
@@ -85,7 +86,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const [previewOpen, setPreviewOpen] = useState(false)
   const [pendingValues, setPendingValues] = useState<FormValues | null>(null)
   const blocker = useBlocker(() => !allowLeave.current && (voiceBusy || saving))
-  const selfAssignSalesperson = !enquiryMode && workspace?.role === 'salesperson'
+  const selfAssignSalesperson = workspace?.role === 'salesperson'
   const selfAssignOwner = workspace?.role === 'owner'
   const currentDisplayName = user?.user_metadata?.display_name || user?.email || 'Salesperson'
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
@@ -224,8 +225,8 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
         if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ } }
       }
       allowLeave.current = true
-      navigate(enquiryMode && visit.convertedEnquiryReference
-        ? `/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}`
+      navigate(enquiryMode
+        ? (visit.convertedEnquiryReference ? `/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}` : '/enquiries')
         : '/walkins', { replace: true })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')

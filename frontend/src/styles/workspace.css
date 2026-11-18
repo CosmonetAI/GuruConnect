@@ -18,6 +18,55 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .app-main { position: relative; min-width: 0; }
 .app-content { width: 100%; max-width: 1392px; padding: 72px 32px 32px; margin: 0 auto; }
 .platform-bar { position: fixed; top: 16px; right: 32px; z-index: 1000; display: flex; justify-content: flex-end; align-items: flex-start; gap: 8px; max-width: calc(100% - 64px); flex-wrap: wrap; }
+@media (min-width: 769px) {
+  /* Keep the workspace controls in a compact header strip, like mobile. */
+  .app-root::before { content: ''; position: fixed; z-index: 998; top: 0; right: 0; left: 248px; height: 124px; border-bottom: 1px solid #e1e7f0; background: #f4f6fa; pointer-events: none; }
+  .platform-bar { position: fixed; top: 16px; }
+  .app-root .app-content { padding-top: 84px; }
+  .settings-page { padding-top: 16px; }
+  .flow-page-header { position: relative; z-index: 999; min-height: 100px; margin-top: -84px; margin-bottom: 16px; padding: 16px 0 8px; align-items: flex-start; }
+  .flow-page-header > div:first-child { position: fixed; z-index: 999; top: 16px; left: 280px; right: 420px; }
+  .settings-page > .flow-page-header { position: relative; height: auto; margin: -84px 0 16px; padding: 16px 0 8px; }
+  .analytics-page > .analytics-header { position: relative; z-index: 999; min-height: 100px; margin-top: -84px; margin-bottom: 16px; padding: 16px 0 8px; }
+  .analytics-page > .analytics-header > div:first-child { position: fixed; z-index: 999; top: 16px; left: 280px; right: 520px; }
+  .zoho-feedback-scope .setup-page > .setup-hero { position: relative; z-index: 999; min-height: 140px; margin-top: -110px; padding: 16px 0 8px; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child { position: fixed; z-index: 999; top: 16px; left: 280px; right: 460px; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > small { display: block; color: #3563a0; font-size: 11px; font-weight: 800; letter-spacing: .13em; line-height: 1.2; text-transform: uppercase; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > h2 { color: #102d52; font-family: "Segoe UI Variable", "Aptos Display", Inter, ui-sans-serif, system-ui, sans-serif; font-size: clamp(30px, 3.2vw, 40px); line-height: 1.08; letter-spacing: -.045em; margin: 8px 0 11px; font-weight: 760; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p { color: #62738c; font-size: 15px; line-height: 1.55; margin: 0; }
+  .app-root:has(.zoho-feedback-scope)::before { height: 124px; }
+  .app-root:has(.zoho-feedback-scope) .zoho-feedback-scope .setup-page > .setup-hero { min-height: 124px; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child { position: fixed; z-index: 999; top: 64px; right: 32px; width: auto; }
+  .zoho-feedback-scope .setup-status { display: flex; align-items: center; min-width: 0; height: auto; gap: 6px; padding: 0; background: transparent; white-space: nowrap; }
+  .zoho-feedback-scope .setup-status small { display: inline; margin-top: 0; white-space: nowrap; }
+  .zoho-feedback-scope .setup-page { margin-top: 16px; padding-top: 0; }
+  .zoho-feedback-scope .setup-page { border-top-color: transparent; }
+  .zoho-feedback-scope .setup-page > .steps { margin-top: 16px; padding-top: 0; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child p { max-width: 900px; overflow: hidden; font-size: 0; white-space: nowrap; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child p::after { content: 'Select your Zoho region and connect.'; color: #647890; font-size: 14px; }
+  .settings-page > .flow-page-header .page-title { margin: 4px 0 3px; }
+  .settings-page > .flow-page-header p { margin: 0; }
+  .analytics-page > .analytics-header .analytics-filters { position: fixed; z-index: 999; top: 64px; right: 32px; margin: 0; }
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions { position: fixed; z-index: 999; top: 64px; right: 32px; width: auto; margin: 0; }
+  .flow-page-header > .button { position: fixed; z-index: 999; top: 64px; right: 32px; }
+  .app-content:has(.gg-page-header) { padding-top: 140px; }
+  .gg-page-header { position: fixed; z-index: 999; top: 0; right: 32px; left: 280px; height: 124px; margin: 0; padding: 16px 0 8px; align-items: flex-start; background: transparent; }
+  .gg-page-header > div:first-child > small { display: block; color: #3563a0; font-size: 11px; font-weight: 800; letter-spacing: .13em; line-height: 1.2; text-transform: uppercase; }
+  .gg-page-header h1 { color: #102d52; font-family: "Segoe UI Variable", "Aptos Display", Inter, ui-sans-serif, system-ui, sans-serif; font-size: clamp(30px, 3.2vw, 40px); line-height: 1.08; letter-spacing: -.045em; margin: 8px 0 0; font-weight: 760; }
+  .gg-page-header > .pill { position: fixed; z-index: 999; top: 64px; right: 32px; }
+  .app-content:has(.pipelines-page) { padding-top: 140px; }
+  .pipelines-page > .pipelines-hero { position: fixed; z-index: 999; top: 0; right: 32px; left: 280px; height: 124px; margin: 0; padding: 16px 0 8px; align-items: flex-start; background: transparent; }
+  .pipelines-page > .pipelines-hero .eyebrow { color: #3563a0; font-size: 11px; letter-spacing: .13em; }
+  .pipelines-page > .pipelines-hero h2 { color: #102d52; font-family: "Segoe UI Variable", "Aptos Display", Inter, ui-sans-serif, system-ui, sans-serif; font-size: clamp(30px, 3.2vw, 40px); line-height: 1.08; letter-spacing: -.045em; margin: 8px 0 11px; font-weight: 760; }
+  .pipelines-page > .pipelines-hero p { color: #62738c; font-size: 15px; line-height: 1.55; }
+  .pipelines-page > .pipelines-hero .sync-meta { position: fixed; z-index: 999; top: 64px; right: 32px; }
+  .app-content:has(.walkin-header) { padding-top: 140px; }
+  .walkin-header { position: fixed; z-index: 999; top: 0; right: 32px; left: 280px; height: 124px; margin: 0; padding: 16px 0 8px; align-items: flex-start; background: transparent; }
+  .walkin-header .walkin-kicker { color: #3563a0; }
+  .walkin-header h1 { color: #102d52; font-family: "Segoe UI Variable", "Aptos Display", Inter, ui-sans-serif, system-ui, sans-serif; font-size: clamp(30px, 3.2vw, 40px); line-height: 1.08; letter-spacing: -.045em; margin: 8px 0 11px; font-weight: 760; }
+  .walkin-header p { color: #62738c; margin: 0; }
+  .walkin-header .walkin-header-actions { position: fixed; z-index: 999; top: 64px; right: 32px; }
+}
 .inventory-import-trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid #b9d2ff; border-radius: 999px; background: #f5f8ff; color: #175cd3; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; box-shadow: 0 2px 8px rgba(26, 66, 104, .05); }
 .inventory-import-trigger:hover { border-color: #8fb4f5; background: #eaf1ff; }
 .inventory-import-trigger.has-inventory { border-color: #b9e1d7; color: #117c67; background: #effbf7; }
@@ -359,6 +408,12 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .settings-form .button { justify-self: start; }
 .settings-account-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 22px; align-items: center; }
 .settings-account-actions button { display: inline-flex; align-items: center; gap: 8px; }
+.settings-profile-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.settings-profile-heading > div:first-child { min-width: 0; }
+.settings-profile-heading h2 { margin-bottom: 8px; }
+.settings-profile-heading p { margin-bottom: 0; }
+.settings-profile-heading .settings-account-actions { flex: 0 0 auto; margin: 0; }
+.settings-tax-actions { margin: 0 0 14px; }
 .settings-taxes-button { margin-left: auto; }
 .zoho-taxes-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #0d1d3588; }
 .zoho-taxes-modal { width: min(620px, 100%); max-height: min(720px, 90vh); overflow: auto; border: 1px solid #dbe5f2; border-radius: 18px; background: #fff; box-shadow: 0 28px 80px #0d1d3533; padding: 24px; }
@@ -457,6 +512,15 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .skip-navigation { position: fixed; top: -100px; left: 16px; padding: 12px; border-radius: 8px; background: white; color: #2563eb; z-index: 1100; }
 .skip-navigation:focus { top: 16px; }
 .app-content:focus { outline: none; }
+/* Mobile navigation must sit above the fixed platform pills and overlays. */
+@media (max-width: 768px) {
+  .app-root .mobile-sidebar-toggle { z-index: 1301; }
+  .app-root .mobile-sidebar-backdrop { z-index: 1300; }
+  .app-root .sidebar.mobile-open { z-index: 1302; }
+  .platform-bar .organisation-id-pill { display: none; }
+  .app-root::before { content: ''; position: fixed; z-index: 998; top: 0; right: 0; left: 0; height: 68px; border-bottom: 1px solid #e1e7f0; background: #f4f6fa; pointer-events: none; }
+  .sidebar-nav .nav-group-trigger { width: 100%; margin-left: 0; }
+}
 @media (max-width: 1100px) { .topbar { padding: 16px 24px; }.app-content { padding: 24px; }.flow-steps { gap: 12px; }.flow-steps li { padding: 16px; grid-template-columns: 26px 1fr; column-gap: 8px; }.flow-steps strong { font-size: 13px; } }
 @media (max-width: 768px) {
   .app-root { flex-direction: row; }.sidebar { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 1001; width: min(288px, calc(100vw - 48px)); height: 100dvh; max-height: 100dvh; padding: 20px 14px; overflow-y: auto; box-shadow: 18px 0 42px rgba(9, 27, 54, .24); transform: translateX(-105%); transition: transform .2s ease; }.sidebar.mobile-open { transform: translateX(0); }.mobile-sidebar-toggle { display: inline-flex; position: fixed; top: 16px; left: 16px; z-index: 999; width: 40px; height: 40px; min-height: 40px; align-items: center; justify-content: center; padding: 0; border: 1px solid #dbe3ef; border-radius: 10px; background: #fff; color: #173d69; box-shadow: 0 8px 20px rgba(26, 66, 104, .12); }.mobile-sidebar-toggle:hover { transform: none; box-shadow: 0 8px 20px rgba(26, 66, 104, .18); }.mobile-sidebar-close { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; min-height: 34px; margin-left: auto; padding: 0; border: 0; border-radius: 8px; color: #bbcae0; background: transparent; }.mobile-sidebar-close:hover { transform: none; box-shadow: none; color: white; background: #ffffff12; }.mobile-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 1000; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: rgba(8, 23, 44, .42); }.mobile-sidebar-backdrop:hover { transform: none; box-shadow: none; }
@@ -466,3 +530,338 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
   .list-pagination { align-items: flex-start; flex-direction: column; }.recent-enquiry-row { flex-wrap: wrap; }.recent-enquiry-row span:last-child { max-width: 100%; overflow-wrap: anywhere; }.welcome-page { gap: 28px; flex-direction: column; padding: 32px 16px; }.welcome-story { width: 100%; max-width: 430px; }.welcome-brand { margin-bottom: 24px; }.welcome-story h1 { font-size: 32px; }.welcome-story > p { font-size: 14px; }.welcome-steps { display: none; }.welcome-card { padding: 24px; }.local-mode-badge { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Shared desktop page header contract. Keep this last so page-specific styles
+   cannot push content underneath the fixed workspace header. */
+@media (min-width: 769px) {
+  .app-root::before {
+    content: '';
+    position: fixed;
+    z-index: 998;
+    top: 0;
+    right: 0;
+    left: 248px;
+    height: 124px;
+    border-bottom: 1px solid #e1e7f0;
+    background: #f4f6fa;
+    pointer-events: none;
+  }
+
+  .platform-bar { position: fixed; top: 16px; right: 32px; z-index: 1000; }
+  .app-root .app-content { padding-top: 140px; }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    position: fixed;
+    z-index: 999;
+    top: 0;
+    right: 32px;
+    left: 280px;
+    height: 124px;
+    min-height: 124px;
+    margin: 0;
+    padding: 16px 0 8px;
+    align-items: flex-start;
+    background: transparent;
+  }
+
+  .flow-page-header > div:first-child,
+  .analytics-page > .analytics-header > div:first-child,
+  .gg-page-header > div:first-child,
+  .pipelines-page > .pipelines-hero > div:first-child,
+  .walkin-header > div:first-child,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    min-width: 0;
+    max-width: min(900px, calc(100% - 360px));
+  }
+
+  .page-kicker,
+  .walkin-kicker,
+  .pipelines-page > .pipelines-hero .eyebrow,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > small,
+  .gg-page-header > div:first-child > small {
+    display: block;
+    color: #3563a0;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .13em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .flow-page-header .page-title,
+  .analytics-page > .analytics-header .page-title,
+  .gg-page-header h1,
+  .pipelines-page > .pipelines-hero h2,
+  .walkin-header h1,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > h2 {
+    color: #102d52;
+    font-family: "Segoe UI Variable", "Aptos Display", Inter, ui-sans-serif, system-ui, sans-serif;
+    font-size: clamp(30px, 3.2vw, 40px);
+    line-height: 1.08;
+    letter-spacing: -.045em;
+    margin: 8px 0 11px;
+    font-weight: 760;
+  }
+
+  .flow-page-header p,
+  .analytics-page > .analytics-header p,
+  .pipelines-page > .pipelines-hero p,
+  .walkin-header p,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    color: #62738c;
+    font-size: 15px;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .settings-page { padding-top: 16px; }
+  .settings-page > .flow-page-header { position: fixed; margin: 0; }
+
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions,
+  .flow-page-header > .button,
+  .analytics-page > .analytics-header .analytics-filters,
+  .pipelines-page > .pipelines-hero .sync-meta,
+  .walkin-header .walkin-header-actions,
+  .gg-page-header > .pill,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    position: fixed;
+    z-index: 1000;
+    top: 64px;
+    right: 32px;
+    width: auto;
+    margin: 0;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters { align-items: center; }
+  .zoho-feedback-scope .setup-page { margin-top: 16px; padding-top: 0; border-top-color: transparent; }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    max-width: 900px;
+    overflow: hidden;
+    font-size: 0;
+    white-space: nowrap;
+  }
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p::after {
+    content: 'Select your Zoho region and connect.';
+    color: #647890;
+    font-size: 14px;
+  }
+  .zoho-feedback-scope .setup-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    background: transparent;
+    white-space: nowrap;
+  }
+  .zoho-feedback-scope .setup-status small { display: inline; margin-top: 0; white-space: nowrap; }
+  .zoho-feedback-scope .setup-page > .steps { margin-top: 16px; padding-top: 0; }
+
+  .gg-page-header-kicker { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .gg-page-header-kicker small { display: block; color: #3563a0; font-size: 11px; font-weight: 800; letter-spacing: .13em; line-height: 1.2; text-transform: uppercase; }
+  .gg-page-header-kicker span { color: #7185a1; font-size: 10px; font-weight: 800; letter-spacing: .1em; line-height: 1.2; text-transform: uppercase; }
+  .gg-page-header h1 { margin: 8px 0 7px; }
+  .gg-page-header > div:first-child > p { max-width: 900px; margin: 0; color: #62738c; font-size: 14px; line-height: 1.45; }
+  .gg-page-header-actions { position: fixed; z-index: 1000; top: 64px; right: 32px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+  .gg-header-action-group { display: flex; align-items: center; gap: 10px; }
+  .gg-header-action-group .primary { min-height: 44px; white-space: nowrap; }
+  .gg-page-header-actions > .pill { position: static; }
+
+  .analytics-page > .analytics-header .analytics-filters {
+    top: 64px;
+    display: grid;
+    grid-template-columns: 140px 120px 140px;
+    align-items: end;
+    gap: 8px;
+    width: max-content;
+  }
+  .analytics-page > .analytics-header .analytics-filters label {
+    min-width: 0;
+    gap: 5px;
+    font-size: 10px;
+  }
+  .analytics-page > .analytics-header .analytics-filters select,
+  .analytics-page > .analytics-header .analytics-filters > .button {
+    width: 100%;
+    min-width: 0;
+    height: 38px;
+    min-height: 38px;
+    margin: 0;
+    border-radius: 8px;
+  }
+  .analytics-page > .analytics-header .analytics-filters select {
+    padding: 8px 12px;
+  }
+  .analytics-page > .analytics-header .analytics-filters > .button {
+    padding: 8px 14px;
+    white-space: nowrap;
+  }
+}
+
+/* Final shared header alignment: keep secondary controls inside the header
+   instead of letting them overlap the top platform pills or its border. */
+@media (min-width: 769px) {
+  .app-root:has(.zoho-feedback-scope)::before {
+    height: 140px;
+  }
+
+  .app-root:has(.zoho-feedback-scope) .app-content {
+    padding-top: 140px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    height: 140px;
+    min-height: 140px;
+  }
+
+  .app-root:has(.analytics-page)::before {
+    height: 160px;
+  }
+
+  .analytics-page > .analytics-header {
+    height: 160px;
+    min-height: 160px;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters {
+    top: 84px;
+  }
+
+  .analytics-page > .page-loader,
+  .analytics-page > .analytics-stat-grid {
+    margin-top: 16px;
+  }
+
+  .analytics-page > .page-loader {
+    margin-bottom: 16px;
+  }
+}
+
+/* The first Analytics panel follows the same 16px breathing room used by
+   Settings. Put the spacing on the page wrapper so it cannot collapse into
+   the fixed header or touch its bottom border. */
+@media (min-width: 769px) {
+  .analytics-page {
+    padding-top: 16px;
+  }
+
+  .analytics-page > .page-loader,
+  .analytics-page > .analytics-stat-grid {
+    margin-top: 0;
+  }
+
+  .analytics-page > .page-loader {
+    margin-bottom: 16px;
+  }
+}
+
+.zoho-feedback-scope .setup-status {
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 10px;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.zoho-feedback-scope .setup-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #b9e5d3;
+  border-radius: 999px;
+  background: #effbf6;
+  color: #155b42;
+  font-weight: 750;
+  box-shadow: 0 3px 10px rgba(26, 101, 74, .08);
+}
+
+.zoho-feedback-scope .setup-status-pill .dot {
+  flex: 0 0 auto;
+  margin-right: 0;
+}
+
+.zoho-feedback-scope .setup-status-pill .setup-region {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid #b9e5d3;
+  color: #3b745e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.zoho-feedback-scope .setup-status > small {
+  display: inline;
+  margin: 0;
+  color: #7185a1;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .analytics-page > .analytics-header {
+    min-height: 156px;
+    padding-bottom: 18px;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters {
+    margin-top: 2px;
+  }
+
+  .zoho-feedback-scope .setup-status {
+    align-items: center;
+  }
+}
+
+/* Keep every desktop page header the same height as Settings. Page-specific
+   content gets its spacing below this shared strip, never by stretching it. */
+@media (min-width: 769px) {
+  .app-root::before,
+  .app-root:has(.analytics-page)::before,
+  .app-root:has(.zoho-feedback-scope)::before {
+    height: 124px;
+  }
+
+  .app-root .app-content,
+  .app-root:has(.zoho-feedback-scope) .app-content {
+    padding-top: 140px;
+  }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    height: 124px;
+    min-height: 124px;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters {
+    top: 60px;
+  }
+
+  .analytics-page > .page-loader,
+  .analytics-page > .analytics-stat-grid {
+    margin-top: 16px;
+  }
+
+  .analytics-page > .page-loader {
+    margin-bottom: 16px;
+  }
+}

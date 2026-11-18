@@ -13,12 +13,11 @@ const config = {
   'purchase-order': { path: '/purchase-orders', key: 'purchase_orders', type: 'Purchase order', title: 'Purchase orders', loaderKind: 'purchase-orders', description: 'Coordinate supplier purchasing with clear items, quantities, and delivery terms.', empty: 'No recent purchase orders are available.' }
 };
 
-export default function BooksDocumentsPage({ type, setError }) {
+export default function BooksDocumentsPage({ type, setError, showCreate, setShowCreate }) {
   const meta = config[type];
   const [query, setQuery] = useState('');
   const [records, setRecords] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
   const [created, setCreated] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -43,9 +42,8 @@ export default function BooksDocumentsPage({ type, setError }) {
 
   const canCreate = can(type, 'create');
   return <section className="products-page">
-    <div className="products-heading"><div><small>{`COMMERCIAL WORKSPACE / ${meta.title.toUpperCase()}`}</small><h2>{meta.title}</h2><p>{meta.description}</p></div>{!permissionsLoading && canCreate && <button className="primary" onClick={() => { setShowCreate(true); setCreated(false); }}>Create {createLabel}</button>}</div>
     {created && <div className="success">{meta.type} created successfully.</div>}
-    <form className="product-search" onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search by ${meta.type.toLowerCase()}, customer, or reference…`} /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search records'}</button></form>
+    <form className="product-search" data-search-label={`Search by ${meta.type.toLowerCase()}, customer, or reference`} onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search by ${meta.type.toLowerCase()}, customer, or reference…`} /><button className="primary" disabled={busy}>{busy ? 'Searching…' : 'Search records'}</button></form>
     {query && !busy && <p className="product-count">{records.length} {records.length === 1 ? meta.type.toLowerCase() : `${meta.type.toLowerCase()}s`} found</p>}
     {!query.trim() && busy ? <PageLoader kind={meta.loaderKind} label={`Loading ${meta.title.toLowerCase()}`} detail="Preparing the latest commercial records for review." /> : !query.trim() && !records.length ? <div className="product-empty">{meta.empty}</div> : !busy && !records.length ? <div className="product-empty">{query.trim() ? `No ${meta.title.toLowerCase()} matched “${query.trim()}”.` : meta.empty}</div> : <div className="product-grid">{records.map(record => <RecordCard record={record} type={meta.type} permissions={permissions} key={record.estimate_id || record.salesorder_id || record.invoice_id || record.purchaseorder_id || record.estimate_number || record.salesorder_number || record.invoice_number || record.purchaseorder_number} />)}</div>}
     {showCreate && canCreate && <div className="modal-backdrop" onClick={() => setShowCreate(false)}><BooksDocumentForm type={type} setError={setError} onCreated={onCreated} /></div>}

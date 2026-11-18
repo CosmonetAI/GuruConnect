@@ -25,7 +25,7 @@ beforeEach(() => {
   mocks.register.mockResolvedValue({ id: 'v1', visitNumber: 'WI-1', ticket: { number: 3, token: 't' } })
   mocks.attach.mockResolvedValue({ ok: true })
 })
-function setup() { render(<MemoryRouter><WalkinRegistration /></MemoryRouter>) }
+function setup(props: { enquiryMode?: boolean } = {}) { render(<MemoryRouter><WalkinRegistration {...props} /></MemoryRouter>) }
 
 describe('WalkinRegistration voice assist', () => {
   it('never submits on its own and applies voice values only through the form', () => {
@@ -60,5 +60,10 @@ describe('WalkinRegistration voice assist', () => {
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled())
     expect(sessionStorage.getItem('guruconnect:walkin-audio:u1:w1:v1')).toBe('c1')
     expect(mocks.navigate).toHaveBeenCalledWith('/walkins', { replace: true })
+  })
+  it('returns enquiry registration to enquiries when no enquiry id is returned', async () => {
+    setup({ enquiryMode: true }); fill(); submit(); await confirm()
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalled())
+    expect(mocks.navigate).toHaveBeenCalledWith('/enquiries', { replace: true })
   })
 })

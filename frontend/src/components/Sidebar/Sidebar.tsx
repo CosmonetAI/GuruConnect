@@ -28,7 +28,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     }).catch(() => {})
     return () => { active = false }
   }, [profile.data?.avatar_path, avatarRefresh])
-  const roleItems = workspace?.role === 'receptionist' ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings') : navigationItems
+  const roleItems = workspace?.role === 'receptionist'
+    ? navigationItems.filter(item => item.to === '/walkins' || item.to === '/settings')
+    : navigationItems.filter(item => item.to !== '/walkins')
   const booksRoutes = new Set(['/contacts', '/products', '/quotes', '/sales-orders', '/purchase-orders', '/invoices'])
   const booksItems = roleItems.filter(item => booksRoutes.has(item.to))
   const primaryItems = roleItems.filter(item => !booksRoutes.has(item.to))
