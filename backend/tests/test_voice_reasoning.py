@@ -51,6 +51,23 @@ def test_document_mentions_become_topics_without_becoming_actions():
     assert derive_business_tags({'document_mentions': ['quotation', 'invoice']}) == ['Quote discussed', 'Invoice discussed']
 
 
+def test_plural_invoice_and_quotation_mentions_create_business_tags():
+    text = "Hey, I'm looking for, uh, some ceiling fans and switches. Along with that, can we also discuss if we have any previous pending, uh, invoices or any quotations which can be discussed out?"
+    assert document_mentions(text) == ['quotation', 'invoice']
+    assert derive_business_tags({'document_mentions': document_mentions(text)}) == ['Quote discussed', 'Invoice discussed']
+
+
+@pytest.mark.asyncio
+async def test_model_document_mentions_are_persisted_for_conversational_references(monkeypatch):
+    text = "Can we discuss any previous pending invoices or quotations?"
+    provider(monkeypatch, understanding(text, document_mentions=['invoice', 'quotation']))
+    orchestrator = VoiceConversationOrchestrator()
+    orchestrator.monitor = ConversationMonitorAgent(CONFIG)
+    result = await orchestrator.run(chunk={'english_text': text, 'fingerprint': 'document-discussion'}, durable_context={})
+    assert result['context']['document_mentions'] == ['invoice', 'quotation']
+    assert derive_business_tags(result['context'])[-2:] == ['Invoice discussed', 'Quote discussed']
+
+
 def provider(monkeypatch, value):
     seen = []
 

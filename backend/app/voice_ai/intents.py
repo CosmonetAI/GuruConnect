@@ -42,10 +42,10 @@ ROUTES = {
 
 
 _DOCUMENT_MENTION_PATTERNS = {
-    'quotation': r'\b(?:quote|quotation|estimate|written offer|boq|bill of quantities)\b',
-    'invoice': r'\b(?:invoice|tax invoice)\b',
-    'sales_order': r'\bsales order\b',
-    'purchase_order': r'\bpurchase order\b',
+    'quotation': r'\b(?:quotes?|quotations?|estimates?|written offers?|boq|bill of quantities)\b',
+    'invoice': r'\b(?:invoices?|tax invoices?)\b',
+    'sales_order': r'\bsales orders?\b',
+    'purchase_order': r'\bpurchase orders?\b',
 }
 
 
@@ -71,13 +71,13 @@ def classify_voice_intent(text: str, context: dict[str, Any]) -> Route:
         return re.search(pattern, positive) is not None
     if matches(r'\b(?:speak|talk|connect|transfer)\b.{0,25}\b(?:human|agent|salesperson)\b|\bcall me\b'):
         return ROUTES['human_handoff']
-    if matches(r'\b(?:send|prepare|create|need|want|issue)\b.{0,35}\b(?:invoice|tax invoice)\b|\bbill me\b'):
+    if matches(r'\b(?:send|prepare|create|need|want|issue)\b.{0,35}\b(?:invoices?|tax invoices?)\b|\bbill me\b'):
         return ROUTES['invoice_request']
-    if matches(r'\b(?:place|confirm)\s+(?:the\s+|my\s+)?order\b|\b(?:need|create|prepare)\b.{0,25}\bsales order\b'):
+    if matches(r'\b(?:place|confirm)\s+(?:the\s+|my\s+)?order\b|\b(?:need|create|prepare)\b.{0,25}\bsales orders?\b'):
         return ROUTES['sales_order_request']
-    if matches(r'\b(?:need|create|prepare|send|want)\b.{0,25}\bpurchase order\b'):
+    if matches(r'\b(?:need|create|prepare|send|want)\b.{0,25}\bpurchase orders?\b'):
         return ROUTES['purchase_order_request']
-    if matches(r'\b(?:send|prepare|create|need|want|give)\b.{0,35}\b(?:quote|quotation|estimate|written offer|boq|bill of quantities)\b'):
+    if matches(r'\b(?:send|prepare|create|need|want|give)\b.{0,35}\b(?:quotes?|quotations?|estimates?|written offers?|boq|bill of quantities)\b'):
         return ROUTES['quote_request']
     if matches(r'\b(?:discount|best price|reduce the price)\b'):
         return ROUTES['discount']

@@ -452,7 +452,7 @@ def _voice_history(db, session):
       from chat_recording_chunks r join chat_sessions s on s.id=r.session_id
       where r.session_id=cast(:session as uuid) and s.organisation_id=cast(:org as uuid)
         and s.member_id=cast(:member as uuid) order by r.chunk_index"""), params).all()]
-    recordings = [row_dict(row) for row in db.execute(text("""select c.id,c.title,c.created_at,c.updated_at,c.capture_state,c.upload_state,c.transcription_state,c.english_state,c.speaker_state,c.final_state,c.total_samples,c.duration_seconds,
+    recordings = [row_dict(row) for row in db.execute(text("""select c.id,c.title,c.audio_bucket,c.created_at,c.updated_at,c.capture_state,c.upload_state,c.transcription_state,c.english_state,c.speaker_state,c.final_state,c.total_samples,c.duration_seconds,
       vac.context as ai_context,vac.last_intent
       from conversations c left join voice_ai_contexts vac on vac.conversation_id=c.id and vac.organisation_id=c.organisation_id
       where c.customer_id=cast(:customer as uuid) and c.organisation_id=cast(:org as uuid)
@@ -461,6 +461,7 @@ def _voice_history(db, session):
     for recording in recordings:
         ai_context = recording.get('ai_context') or {}
         recording['intent'] = recording.get('last_intent') or ai_context.get('last_intent')
+        recording['recording_type'] = 'registration' if recording.get('audio_bucket') == 'walkin-audio' else 'live_session'
         recording['recommendations'] = ai_context.get('recent_recommendations') or []
         recording['tags'] = derive_business_tags(ai_context, current_intent=recording.get('last_intent'))
         recording.pop('ai_context', None)

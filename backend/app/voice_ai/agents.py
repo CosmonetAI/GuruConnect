@@ -78,6 +78,7 @@ class _Understanding(_StrictModel):
     intent_confidence: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
     intent_evidence: Evidence
     document_kind: Literal['quotation', 'written_offer', 'boq', 'invoice', 'sales_order', 'purchase_order'] | None
+    document_mentions: Annotated[list[Literal['quotation', 'invoice', 'sales_order', 'purchase_order']], Field(max_length=8)] = []
     requirements: Annotated[list[_Requirement], Field(max_length=30)]
     facts: Annotated[list[_Fact], Field(max_length=80)]
     budget: _NumberFact | None
@@ -486,7 +487,7 @@ def _normalize_understanding(understanding: _Understanding, payload: dict[str, A
                 normalized[field] = int(value) if field in {'quantity', 'budget'} and value.is_integer() else value
                 normalized['fact_evidence'][field] = fact['evidence']
         requirements.append(normalized)
-    result = {key: raw[key] for key in ('intent', 'intent_confidence', 'intent_evidence', 'document_kind', 'summary',
+    result = {key: raw[key] for key in ('intent', 'intent_confidence', 'intent_evidence', 'document_kind', 'document_mentions', 'summary',
                                        'missing_critical_fields', 'suggested_questions')}
     result.update(requirements=requirements, entities=[], fact_evidence={}, analysis_status='complete', analysis_source='model',
                   clarification_audience='agent', auto_execute=False)
@@ -654,7 +655,10 @@ product, even if the same chunk says to keep another product. 'Keep the motor' d
 Negated document requests are NOT document intents: 'no quotation, just prices' is pricing. 'Send a written offer'
 is quote_request/document_kind written_offer; 'need BOQ' or bill of quantities is quote_request/document_kind boq.
 An 'offer' can be a written quotation or a discount: understand the whole request. Invoice, sales order and
-purchase order requests have their own intent. Intent is a suggestion, never permission to create/send anything.
+purchase order requests have their own intent. Also populate document_mentions for positive semantic discussion or
+reference to an existing document, even when the customer is not asking to create or send one. Recognize natural
+variations such as invoices, quotations, bills, estimates, prior/pending documents, and indirect wording. Leave it
+empty for negated mentions such as "no quotation, just prices". Intent is a suggestion, never permission to create/send anything.
 Choose the most useful current intent for mixed requests and preserve every other supported product/fact.
 missing_critical_fields and suggested_questions are private suggestions for the sales agent ONLY. Suggest a few
 targeted questions when an unresolved reference, essential specification, quantity or use case prevents a useful

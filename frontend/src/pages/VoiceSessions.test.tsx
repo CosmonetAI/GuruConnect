@@ -159,6 +159,14 @@ describe('live session integration', () => {
     expect(mocks.unmounts).toBe(0)
   })
 
+  it('adds invoice and quote intent tags when the customer mentions them', async () => {
+    installLiveApi(path => path.endsWith('/live') ? { ...liveData(), transcript_preview: [{ ...liveTurn, english_text: 'Please share the pending invoices and latest quotations.' }], keywords: [], tags: ['Invoice discussed', 'Quote discussed'] } : undefined)
+    await openFirst()
+    await act(async () => mocks.recorder!.onConversationChange('clip-a'))
+    expect(await screen.findByText('Invoice discussed')).toBeVisible()
+    expect(screen.getByText('Quote discussed')).toBeVisible()
+  })
+
   it('retains the visible translation when Stop reports the same conversation ID', async () => {
     installLiveApi()
     await openFirst()
@@ -196,7 +204,7 @@ describe('live session integration', () => {
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
     expect(await screen.findByRole('button', { name: 'Add to cart Copper motor' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: 'View details' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Copper motor' }))
     const details = screen.getByRole('dialog', { name: 'Copper motor' })
     expect(details).not.toHaveTextContent('Needs confirmation')
     expect(details.querySelector('button.primary')).toBeEnabled()
@@ -221,7 +229,7 @@ describe('live session integration', () => {
     installLiveApi(path => path.endsWith('/live') ? { ...liveData(), recommendations: [candidate] } : undefined)
     await openFirst()
     await act(async () => mocks.recorder!.onConversationChange('clip-a'))
-    fireEvent.click(await screen.findByRole('button', { name: 'View details' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'View details for Copper motor' }))
     const details = screen.getByRole('dialog', { name: 'Copper motor' })
     expect(details.querySelector('button.primary')).toBeEnabled()
     candidate = { ...candidate, match_status: 'needs_confirmation', missing_specs: ['Voltage'] }

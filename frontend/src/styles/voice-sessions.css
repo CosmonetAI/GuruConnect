@@ -10,6 +10,8 @@
 .session-recording-history-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .session-recording-history-row strong { color: #294d6e; font-size: 11px; }
 .session-recording-history-row small { color: #7890a9; font-size: 10px; text-transform: capitalize; }
+.recording-source-pill { width: max-content; padding: 3px 7px; border-radius: 999px; background: #eef5ff; color: #35648f; font-size: 9px; font-weight: 800; line-height: 1.1; }
+.recording-source-pill::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #6c9be0; vertical-align: 1px; }
 .session-recording-history-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .session-recording-history-actions .button { min-height: 30px; padding: 0 9px; font-size: 10px; }
 .button-danger-quiet { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #efc5c1; border-radius: 8px; background: #fff8f7; color: #b24e46; cursor: pointer; }

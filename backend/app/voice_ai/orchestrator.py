@@ -28,10 +28,13 @@ class VoiceConversationOrchestrator:
                               'evidence': [], 'auto_execute': False, 'requires_agent_approval': True},
                     'agent_result': await self.recommendations.run(context.as_dict())}
         mentions = document_mentions(chunk.get('english_text') or chunk.get('source_text') or '')
-        if mentions:
+        model_mentions = extraction.get('document_mentions') or []
+        if mentions or model_mentions:
             # Keep discussion topics even when the model correctly routes the
             # sentence as requirements/follow-up instead of an action request.
-            extraction = {**extraction, 'document_mentions': mentions}
+            # The model owns semantic understanding; the local matcher is only
+            # a safe recovery path for common document vocabulary.
+            extraction = {**extraction, 'document_mentions': list(dict.fromkeys([*model_mentions, *mentions]))}
         route = model_route(extraction)
         context.merge_extraction(extraction, {
             'conversation_id': chunk.get('conversation_id'),

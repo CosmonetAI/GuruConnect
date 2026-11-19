@@ -210,6 +210,7 @@ export function Stock({ item }) {
   const review =
     ["needs_review", "unknown"].includes(item.availability_status) || !known;
   const unavailable = productOutOfStock(item);
+  if (review && !unavailable) return null;
   return (
     <span
       className={`lws-stock${unavailable ? " is-unavailable" : review ? " needs-review" : ""}`}
@@ -673,7 +674,18 @@ function Suggestions({
               >
                 <ProductImage item={item} />
                 <div className="lws-product-copy">
-                  <strong>{productName(item)}</strong>
+                  {onViewProduct ? (
+                    <button
+                      className="lws-product-name-link"
+                      type="button"
+                      aria-label={`View details for ${productName(item)}`}
+                      onClick={() => onViewProduct(item)}
+                    >
+                      {productName(item)}
+                    </button>
+                  ) : (
+                    <strong>{productName(item)}</strong>
+                  )}
                   <small>
                     {item.sku
                       ? `SKU: ${item.sku}`
@@ -683,15 +695,6 @@ function Suggestions({
                   <b className={priceAvailable ? "" : "lws-price-review"}>
                     {priceAvailable ? money(price) : "Price unavailable"}
                   </b>
-                  {onViewProduct && (
-                    <button
-                      className="lws-text-button lws-product-details"
-                      type="button"
-                      onClick={() => onViewProduct(item)}
-                    >
-                      {priceAvailable ? "View details" : "Price unavailable"}
-                    </button>
-                  )}
                   <ProductCartAction item={item} onAddToCart={onAddToCart} />
                 </div>
               </article>
