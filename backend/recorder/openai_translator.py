@@ -19,7 +19,7 @@ from .providers import ProviderError, _TERMS, bounded_request, language_code
 
 log = logging.getLogger("recorder.openai_translator")
 
-MODEL = "gpt-5.4-mini-2026-03-17"
+MODEL = "gpt-4o-mini"
 OPENAI_TRANSLATION_MODEL = MODEL
 SUPPORTED_TRANSLATION_MODELS = {MODEL, "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4.1-mini-2025-04-14", "gpt-4o-mini", "gpt-4o-mini-2024-07-18"}
 API_ORIGIN = "https://api.openai.com/v1"
@@ -31,7 +31,7 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 
 def validate_translation_model(value: str) -> str:
     if value not in SUPPORTED_TRANSLATION_MODELS:
-        raise ValueError("OPENAI_TRANSLATION_MODEL must be a supported text translation model")
+        raise ValueError("OPENAI_MODEL must be a supported text translation model")
     return value
 
 _DIGITS = re.compile(r"\d+(?:[.,]\d+)*")

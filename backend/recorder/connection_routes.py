@@ -36,7 +36,10 @@ def validate_connection_config(body: s.ConnectionCreate) -> None:
     if body.engine_id != "faster-whisper" and not body.credentials.get("api_key"):
         fail("provider_api_key_required")
     if body.engine_id == "openai-translator":
-        try: body.config["model"] = validate_translation_model(body.config.get("model", OPENAI_TRANSLATION_MODEL))
+        # Translation model selection is deployment-wide. Do not let an old
+        # workspace connection row or UI payload select another OpenAI model.
+        body.config["model"] = OPENAI_TRANSLATION_MODEL
+        try: validate_translation_model(body.config["model"])
         except ValueError: fail("openai_model_not_allowed")
     for key in {"source_pass", "finalisation_enabled"} & body.config.keys():
         if not isinstance(body.config[key], bool):
@@ -124,7 +127,7 @@ async def test(connection_id: UUID, body: s.TestConnection, request: Request, co
         if row["engine_id"] == "elevenlabs":
             smoke = await ElevenLabsAdapter(credentials.get("api_key", ""), model_id=request.app.state.settings.elevenlabs_transcription_model).test(functional=body.functional)
         elif row["engine_id"] == "openai-translator":
-            smoke = await OpenAITranslator(credentials.get("api_key", ""), model=row["config"].get("model", OPENAI_TRANSLATION_MODEL)).test(functional=body.functional)
+            smoke = await OpenAITranslator(credentials.get("api_key", ""), model=OPENAI_TRANSLATION_MODEL).test(functional=body.functional)
         else:
             if not workers["ready"]:
                 fail("inference_worker_unavailable", 409)

@@ -307,7 +307,7 @@ class LocalWorker:
         if not window or window.get("source_job_id") != payload.get("source_job_id"):
             self.mutate(job, "complete_job", {"superseded": True}); return
         credentials = self.credentials("openai-translator")
-        model = (self.store.connection("openai-translator") or {}).get("config", {}).get("model", OPENAI_TRANSLATION_MODEL)
+        model = self.settings.openai_translation_model
         turns = window["turns"]
         for turn in turns:
             if turn.get("english_text") is not None:
@@ -407,7 +407,7 @@ class LocalWorker:
         if not conversation or conversation.get("capture_state") == "deleted":
             raise ProviderError("permission_denied")
         credentials = self.credentials("openai-translator")
-        model = (self.store.connection("openai-translator") or {}).get("config", {}).get("model", OPENAI_TRANSLATION_MODEL)
+        model = self.settings.openai_translation_model
         transcript = self.store.get_transcript(conversation_id)
         version = transcript.get("version")
         if not version or not transcript.get("turns"):

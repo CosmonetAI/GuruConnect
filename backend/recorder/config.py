@@ -65,7 +65,10 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=120, ge=10, le=10000)
     elevenlabs_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
-    openai_translation_model: str = Field(default="gpt-5.4-mini-2026-03-17", validation_alias=AliasChoices("OPENAI_TRANSLATION_MODEL", "OPENAI_MODEL"))
+    # One OpenAI model is used for translation and walk-in extraction. Keep the
+    # public configuration name intentionally narrow so another legacy env var
+    # cannot silently select a different model.
+    openai_translation_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
     # Speech-to-text provider/model for short individual-field clips. Keep the
     # provider model in deployment configuration so it can be changed without
     # editing application code.

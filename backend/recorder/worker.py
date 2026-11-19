@@ -211,7 +211,9 @@ class MainWorker:
         if job["payload"].get("translation_provider", engine) != engine:
             raise ProviderError("connection_unavailable")
         is_openai = True
-        model = provider["config"].get("model", OPENAI_TRANSLATION_MODEL)
+        # The deployment environment is the single source of truth. Older
+        # workspace connection rows may still contain another model name.
+        model = self.settings.openai_translation_model
         emit("translation.started", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
              conversation_id=job.get("conversation_id"), job_id=job.get("id"),
              metadata={"provider": engine, "model": model})
