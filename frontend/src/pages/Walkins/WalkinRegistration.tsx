@@ -80,6 +80,10 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const agentPickerRef = useRef<HTMLDivElement | null>(null)
   const voiceConversation = useRef<string | null>(null)
+  // Once the receptionist edits a field, later progressive extraction must
+  // never put the model's value back into that field. This also protects an
+  // intentional clear, which is a valid manual decision.
+  const manuallyEditedFields = useRef(new Set<keyof FormValues>())
   const allowLeave = useRef(false)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const [voicePreview, setVoicePreview] = useState<WalkinVoicePreview | null>(null)
@@ -122,6 +126,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
           setForm(previous => {
             const next = { ...previous }
             for (const key of ['customerName', 'mobileNumber', 'email', 'companyName', 'projectName'] as const) {
+              if (manuallyEditedFields.current.has(key)) continue
               let value = fields[key]
               // The registration form stores the local number separately from
               // the selected country code. Accept a provider response that
@@ -132,7 +137,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
               }
               if (value && next[key] !== value) next[key] = value as never
             }
-            if (fields.customerType === 'vendor' && next.customerType !== 'vendor') next.customerType = 'vendor'
+            if (fields.customerType === 'vendor' && !manuallyEditedFields.current.has('customerType') && next.customerType !== 'vendor') next.customerType = 'vendor'
             return next
           })
         }
@@ -161,6 +166,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   }, [agentMenuOpen])
 
   const update = <K extends keyof FormValues>(field: K, value: FormValues[K]) => {
+    manuallyEditedFields.current.add(field)
     setForm((previous) => ({ ...previous, [field]: value }))
     setSaveKey(crypto.randomUUID())
     const nextValue = String(value)
@@ -199,7 +205,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   }
 
   const extractedFields = Object.entries(voicePreview?.fields || {}).filter(([, value]) => String(value || '').trim())
-  const fieldsApplied = extractedFields.every(([key, value]) => form[key as keyof FormValues] === value)
+  const fieldsApplied = extractedFields.every(([key, value]) => manuallyEditedFields.current.has(key as keyof FormValues) || form[key as keyof FormValues] === value)
   // A progressive transcript can contain a name long before the phone,
   // email, organisation, or requirement arrives. Never use the presence of
   // one extracted field as evidence that the recording is fully processed.
@@ -301,7 +307,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             <span>01</span>
             <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
             <div className="walkin-registration-recorder">
-              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
+              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { manuallyEditedFields.current.clear(); setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
             </div>
           </div>
           {voiceId && <div className="walkin-live-results" aria-live="polite">

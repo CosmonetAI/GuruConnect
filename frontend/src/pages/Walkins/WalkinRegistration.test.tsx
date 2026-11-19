@@ -3,12 +3,12 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  register: vi.fn(), attach: vi.fn(), navigate: vi.fn(), listAgents: vi.fn(), demo: false,
+  register: vi.fn(), attach: vi.fn(), navigate: vi.fn(), listAgents: vi.fn(), request: vi.fn(), demo: false,
   panel: null as null | { onConversationChange: (id: string | null) => void; onBusyChange: (busy: boolean) => void },
 }))
 vi.mock('react-router-dom', async () => ({ ...(await vi.importActual<object>('react-router-dom')), useNavigate: () => mocks.navigate, useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
 vi.mock('../../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u1' }, workspace: { id: 'w1', role: 'receptionist' }, setCaptureBusy: vi.fn() }) }))
-vi.mock('../../services/officeApi', () => ({ request: vi.fn().mockResolvedValue({}), message: (value: unknown) => String(value) }))
+vi.mock('../../services/officeApi', () => ({ request: mocks.request, message: (value: unknown) => String(value) }))
 vi.mock('../../services/walkinService', () => ({ registerWalkin: mocks.register, attachWalkinRecording: mocks.attach, listWalkinAgents: mocks.listAgents, isWalkinDemoMode: () => mocks.demo }))
 vi.mock('../Enquiries/ConversationRecorder', () => ({ default: (props: NonNullable<typeof mocks.panel>) => { mocks.panel = props; return <div>compact recorder</div> } }))
 import WalkinRegistration from './WalkinRegistration'
@@ -21,7 +21,7 @@ function fill() {
 const submit = () => fireEvent.click(screen.getByRole('button', { name: /register visitor/i }))
 const confirm = async () => fireEvent.click(await screen.findByRole('button', { name: /confirm and register/i }))
 beforeEach(() => {
-  vi.clearAllMocks(); sessionStorage.clear(); mocks.demo = false; mocks.listAgents.mockResolvedValue([])
+  vi.clearAllMocks(); sessionStorage.clear(); mocks.demo = false; mocks.listAgents.mockResolvedValue([]); mocks.request.mockResolvedValue({})
   mocks.register.mockResolvedValue({ id: 'v1', visitNumber: 'WI-1', ticket: { number: 3, token: 't' } })
   mocks.attach.mockResolvedValue({ ok: true })
 })
@@ -53,6 +53,14 @@ describe('WalkinRegistration voice assist', () => {
     await waitFor(() => expect(mocks.attach).toHaveBeenCalledWith('w1', 'v1', 'c1'))
     expect(mocks.navigate).toHaveBeenCalledWith('/walkins', { replace: true })
     expect(sessionStorage.length).toBe(0)
+  })
+  it('keeps a manually edited field when progressive extraction refreshes', async () => {
+    mocks.request.mockResolvedValue({ fields: { customerName: 'Extracted Name' } })
+    setup()
+    fireEvent.change(screen.getByLabelText(/customer full name/i), { target: { value: 'Manual Name' } })
+    act(() => mocks.panel!.onConversationChange('c1'))
+    await waitFor(() => expect(mocks.request).toHaveBeenCalled())
+    expect(screen.getByLabelText(/customer full name/i)).toHaveValue('Manual Name')
   })
   it('stages audio and still navigates when the backend refuses the link', async () => {
     mocks.attach.mockRejectedValue(new Error('walkin_assigned_agent_required'))

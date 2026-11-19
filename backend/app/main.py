@@ -635,7 +635,11 @@ def open_voice_session(payload: VoiceSessionIn, request: Request, background_tas
                 row = db.execute(text("""insert into chat_sessions(customer_id,title,identity_phone,identity_email,organisation_id,member_id)
                   values(cast(:customer as uuid),:title,:phone,:email,cast(:org as uuid),cast(:member as uuid)) returning *"""), params).first()
             session = row_dict(row)
-            persist_activity(db, 'session.started', {'customer_id': customer.get('id')}, session['id'])
+            # A newly opened sales session does not have a recorder
+            # conversation yet. Do not pass the chat_sessions id as
+            # audit_events.conversation_id: that column references
+            # conversations(id), so PostgreSQL correctly rejects the insert.
+            persist_activity(db, 'session.started', {'customer_id': customer.get('id')}, session.get('conversation_id'))
             db.commit()
             background_tasks.add_task(_warm_voice_catalogue, sales_workspace.get())
             return {**_voice_history(db, session), 'customer': customer}
@@ -1101,7 +1105,7 @@ def add_voice_session_note(session_id: UUID, payload: VoiceSessionNoteIn, reques
           {**scope_parameters(), 'session': str(session['id']), 'content': content}).first()
         if not note:
             raise HTTPException(404, 'Session not found')
-        persist_activity(db, 'session.note_saved', {'note_id': note['id']}, session_id)
+        persist_activity(db, 'session.note_saved', {'note_id': note['id']}, session.get('conversation_id'))
         db.commit()
         return {'note': row_dict(note)}
 
@@ -1126,7 +1130,7 @@ def update_voice_session_context(session_id: UUID, payload: VoiceSessionContextI
         if not row:
             raise HTTPException(404, 'Session not found')
         persist_activity(db, 'session.context_saved', {
-            'requirements_count': len(payload.product_requirements), 'cart_count': len(payload.cart)}, session_id)
+            'requirements_count': len(payload.product_requirements), 'cart_count': len(payload.cart)}, session.get('conversation_id'))
         db.commit()
         return {'product_requirements': payload.product_requirements, 'cart': payload.cart}
 
@@ -2425,7 +2429,7 @@ async def chat(payload: ChatIn):
           from chat_sessions s where e.session_id=s.id and s.id=cast(:session as uuid)
             and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)"""),
           {**params, 'data':json.dumps({'intent':result.get('intent'),'language':result.get('language'),'entities':result.get('entities',{}),'tool_results':result.get('tool_results',[])},default=str)})
-        persist_activity(db, 'chat.message_processed', {'intent': result.get('intent')}, session['id'])
+        persist_activity(db, 'chat.message_processed', {'intent': result.get('intent')}, session.get('conversation_id'))
         db.commit()
     return {'session_id':str(session['id']),'customer':customer,'intent':result['intent'],'answer':result['answer']}
 
