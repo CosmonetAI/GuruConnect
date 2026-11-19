@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 Hash = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 Id = Annotated[UUID, Field(strict=False)]
-Engine = Literal["elevenlabs", "faster-whisper", "azure-translator", "openai-translator"]
+Engine = Literal["elevenlabs", "faster-whisper", "openai-translator"]
 
 
 class Input(BaseModel):

@@ -92,7 +92,6 @@ class Capabilities:
 REGISTRY = {
     "elevenlabs": Capabilities("elevenlabs", "scribe_v2", False, True, "source_word"),
     "faster-whisper": Capabilities("faster-whisper", "large-v3/community-1", True, True, "segment"),
-    "azure-translator": Capabilities("azure-translator", "standard-v3", True, False, "source_turn"),
     "openai-translator": Capabilities("openai-translator", "gpt-5.4-mini-2026-03-17", True, False, "source_turn"),
 }
 
@@ -300,8 +299,8 @@ class PlainText(HTMLParser):
         self.fragments.append(data)
 
 
-class AzureTranslator:
-    capabilities = REGISTRY["azure-translator"]
+class LegacyTranslatorDisabled:
+    capabilities = Capabilities("legacy-translator", "legacy", True, False, "source_turn")
     def __init__(self, key: str, region: str):
         self.key = _credential(key, "translator_unconfigured")
         if not isinstance(region, str) or len(region) > 64 or (region and not re.fullmatch(r"[a-z0-9-]+", region)):
@@ -309,6 +308,7 @@ class AzureTranslator:
         self.region = region
 
     async def test(self, functional: bool = False) -> dict:
+        raise ProviderError("provider_removed")
         # Public languages endpoint proves reachability only, not credentials.
         if not functional:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
@@ -318,6 +318,7 @@ class AzureTranslator:
         return {"connected": bool(text), "functional": True, "accuracy_tested": False, "note": "Charged standard text translation smoke test."}
 
     async def translate(self, text: str, source_language: str | None = None) -> str:
+        raise ProviderError("provider_removed")
         if not isinstance(text, str) or len(text) > MAX_TRANSCRIPT_CHARS:
             raise ProviderError("translator_input_too_large")
         try:

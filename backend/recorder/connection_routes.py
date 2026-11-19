@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from . import schemas as s
 from .db import one, many
 from .errors import fail
-from .providers import ElevenLabsAdapter, AzureTranslator, ProviderError
+from .providers import ElevenLabsAdapter, ProviderError
 from .openai_translator import OpenAITranslator, OPENAI_TRANSLATION_MODEL, validate_translation_model
 from .provider_bootstrap import ensure_managed_providers, server_credentials
 from .routes import audit
@@ -28,7 +28,7 @@ def validate_connection_config(body: s.ConnectionCreate) -> None:
     allowed = {"model", "max_concurrency"} if body.engine_id == "openai-translator" else {"model_revision", "source_pass", "device", "compute_type", "finalisation_enabled", "max_concurrency", "region"}
     if set(body.config) - allowed or len(json.dumps(body.config)) > 5000:
         fail("invalid_engine_configuration")
-    credentials_allowed = {"elevenlabs": {"api_key"}, "azure-translator": {"api_key", "region"}, "openai-translator": {"api_key"}, "faster-whisper": set()}[body.engine_id]
+    credentials_allowed = {"elevenlabs": {"api_key"}, "openai-translator": {"api_key"}, "faster-whisper": set()}[body.engine_id]
     if set(body.credentials) - credentials_allowed:
         fail("unsupported_credential_field")
     if any(not value or len(value) > 2000 for value in body.credentials.values()):
@@ -56,7 +56,7 @@ async def connections(request: Request, context: Workspace = Depends(workspace))
         await ensure_managed_providers(connection, context.id, request.app.state.settings)
         rows = await many(connection, "select c.*,(select max(last_seen_at) from inference_workers w where w.connection_id=c.id and w.revoked_at is null) as worker_last_seen,(select count(*) from processing_jobs j where j.connection_id=c.id and j.state in ('queued','retry','blocked')) as queued_jobs,(select count(*) from processing_jobs j where j.connection_id=c.id and j.state='running' and j.lease_until>now()) as inflight_jobs from engine_connections c where c.organisation_id=%s order by engine_id", (context.id,))
     configured = {row["engine_id"]: safe_connection(row) for row in rows}
-    for engine_id in ("elevenlabs", "faster-whisper", "azure-translator", "openai-translator"):
+    for engine_id in ("elevenlabs", "faster-whisper", "openai-translator"):
         configured.setdefault(engine_id, {"id": None, "engine_id": engine_id, "state": "disconnected", "generation": None, "config": {}, "tested_at": None, "last_error_code": "not_configured"})
     return {"items": list(configured.values()), "next_cursor": None}
 
@@ -91,7 +91,7 @@ async def connect(body: s.ConnectionCreate, request: Request, context: Workspace
             await connection.execute("insert into provider_secrets(connection_id,encrypted_value,encryption_key_version) values(%s,%s,%s) on conflict(connection_id) do update set encrypted_value=excluded.encrypted_value,encryption_key_version=excluded.encryption_key_version,updated_at=now()", (row["id"], ciphertext, request.app.state.settings.credential_key_version))
         await connection.execute("update engine_connections set max_concurrency=%s where id=%s", (body.config.get("max_concurrency", 2), row["id"]))
         row["max_concurrency"] = body.config.get("max_concurrency", 2)
-        if body.engine_id in {"azure-translator", "openai-translator"}:
+        if body.engine_id == "openai-translator":
             await connection.execute("update workspace_engine_settings set translator_connection_id=%s where organisation_id=%s", (row["id"], context.id))
         await audit(connection, context, "connection.configured", {"connection_id": str(row["id"]), "engine_id": body.engine_id, "generation": row["generation"]})
     return safe_connection(row)
@@ -123,8 +123,6 @@ async def test(connection_id: UUID, body: s.TestConnection, request: Request, co
         credentials = SecretBox(request.app.state.settings).decrypt(secret["encrypted_value"]) if secret else {}
         if row["engine_id"] == "elevenlabs":
             smoke = await ElevenLabsAdapter(credentials.get("api_key", ""), model_id=request.app.state.settings.elevenlabs_transcription_model).test(functional=body.functional)
-        elif row["engine_id"] == "azure-translator":
-            smoke = await AzureTranslator(credentials.get("api_key", ""), credentials.get("region") or row["config"].get("region", "")).test(functional=body.functional)
         elif row["engine_id"] == "openai-translator":
             smoke = await OpenAITranslator(credentials.get("api_key", ""), model=row["config"].get("model", OPENAI_TRANSLATION_MODEL)).test(functional=body.functional)
         else:

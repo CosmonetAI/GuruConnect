@@ -74,9 +74,6 @@ class Settings(BaseSettings):
     processing_shutdown_seconds: float = Field(default=15, gt=0, le=25)
     processing_concurrency: int = Field(default=4, ge=1, le=20)
     managed_provider_concurrency: int = Field(default=4, ge=1, le=20)
-    azure_translator_key: SecretStr | None = None
-    azure_translator_region: str = ""
-    azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
     app_timezone: str = "Asia/Kolkata"
     # Used by the server-side Zoho Mail follow-up sender and the Supabase
     # weekday cron callback. The token itself remains in zoho_connections.

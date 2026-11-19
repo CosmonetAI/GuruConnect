@@ -160,7 +160,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
     const provenance = r.provenance as Record<string, unknown> | undefined;
     const snapshot = (r.config_snapshot as Record<string, unknown> | undefined)?.translation as Record<string, unknown> | undefined;
     const actual = provenance?.translation;
-    const strategy = typeof actual === 'string' && actual.startsWith('openai-') ? 'openai' : actual === 'azure-standard-v3' ? 'azure' : r.translation_strategy;
+    const strategy = typeof actual === 'string' && actual.startsWith('openai-') ? 'openai' : r.translation_strategy;
     const model = provenance?.translation_model ?? (snapshot?.config as Record<string, unknown> | undefined)?.model ?? r.translator_model;
     return { translation_strategy: strategy, translator_model: model };
   };

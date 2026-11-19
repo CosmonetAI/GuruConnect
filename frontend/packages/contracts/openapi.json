@@ -6683,7 +6683,6 @@
             "enum": [
               "elevenlabs",
               "faster-whisper",
-              "azure-translator",
               "openai-translator"
             ],
             "title": "Engine Id"

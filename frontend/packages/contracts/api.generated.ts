@@ -1324,7 +1324,7 @@ export interface components {
              * Engine Id
              * @enum {string}
              */
-            engine_id: "elevenlabs" | "faster-whisper" | "azure-translator" | "openai-translator";
+            engine_id: "elevenlabs" | "faster-whisper" | "openai-translator";
             /** Credentials */
             credentials?: {
                 [key: string]: string;

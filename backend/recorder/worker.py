@@ -22,7 +22,7 @@ from .db import Database, many, one
 from .processing import publish_result, schedule
 from .openai_translator import OPENAI_TRANSLATION_MODEL, OpenAITranslator, validate_translation_model
 from .provider_bootstrap import server_credentials
-from .providers import AzureTranslator, ElevenLabsAdapter, ProviderError, protect_terms
+from .providers import ElevenLabsAdapter, ProviderError
 from .security import SecretBox
 from .storage import Storage
 from .logging_config import configure_logging
@@ -72,8 +72,6 @@ class MainWorker:
         if row["config"].get("platform_managed"):
             if row["engine_id"] == "elevenlabs" and self.settings.elevenlabs_api_key:
                 return {"api_key": self.settings.elevenlabs_api_key.get_secret_value()}
-            if row["engine_id"] == "azure-translator" and self.settings.azure_translator_key:
-                return {"api_key": self.settings.azure_translator_key.get_secret_value(), "region": self.settings.azure_translator_region}
         raise ProviderError("invalid_credentials")
 
     async def audio(self, job: dict) -> tuple[bytes, dict]:
@@ -191,12 +189,12 @@ class MainWorker:
         if not provider or provider["generation"] != job["connection_generation"]:
             raise ProviderError("connection_unavailable")
         engine = provider["engine_id"]
-        if engine not in {"openai-translator", "azure-translator"}:
+        if engine != "openai-translator":
             raise ProviderError("invalid_result")
         if job["payload"].get("translation_provider", engine) != engine:
             raise ProviderError("connection_unavailable")
-        is_openai = engine == "openai-translator"
-        model = provider["config"].get("model", OPENAI_TRANSLATION_MODEL) if is_openai else "standard-v3"
+        is_openai = True
+        model = provider["config"].get("model", OPENAI_TRANSLATION_MODEL)
         emit("translation.started", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
              conversation_id=job.get("conversation_id"), job_id=job.get("id"),
              metadata={"provider": engine, "model": model})
@@ -208,7 +206,7 @@ class MainWorker:
             except ValueError: raise ProviderError("provider_model_access_denied") from None
             if job["payload"].get("translator_model", model) != model:
                 raise ProviderError("provider_model_access_denied")
-        strategy = f"openai-{model}/translate-v1" if is_openai else "standard-v3/protect-v1"
+        strategy = f"openai-{model}/translate-v1"
         credentials = await self.credentials(job["connection_id"])
         await self.begin_submission(job)
         result = dict(source_job["result"]); source, english = [], []
@@ -227,7 +225,7 @@ class MainWorker:
                     cached = await one(connection, "select english_text from translations where run_id=%s and cache_key=%s and state='complete'", (job["run_id"],cache_key))
                 if cached: text = cached["english_text"]
                 else:
-                    await self.usage(job, f"turn-{turn['ordinal']}", characters=len(turn["source_text"]) if is_openai else len(protect_terms(turn["source_text"])[0]))
+                    await self.usage(job, f"turn-{turn['ordinal']}", characters=len(turn["source_text"]))
                     if is_openai:
                         chunk_index = 0
                         async def account_call(usage):
@@ -237,9 +235,6 @@ class MainWorker:
                             await self.usage(job, f"turn-{turn['ordinal']}-chunk-{chunk_index}", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, provider_model=usage.model)
                         translated = await OpenAITranslator(credentials.get("api_key"), usage_callback=account_call, model=model).translate(turn["source_text"], turn["source_language"])
                         text = translated.text
-                    else:
-                        text = await AzureTranslator(credentials.get("api_key") or credentials.get("key"), credentials.get("region", self.settings.azure_translator_region)).translate(turn["source_text"])
-                        paid = True
                     async with self.db.connection() as connection:
                         await connection.execute("insert into translations(conversation_id,run_id,source_turn_id,cache_key,source_language,translator_config,english_text,state,character_count) values(%s,%s,%s,%s,%s,%s,%s,'complete',%s) on conflict(run_id,cache_key) do nothing", (job["conversation_id"],job["run_id"],turn["id"],cache_key,turn["source_language"],Jsonb({"connection":str(job["connection_id"]),"generation":job["connection_generation"],"provider":engine,"model":model,"strategy":strategy}),text,len(turn["source_text"])))
                 english.append({**source[-1],"text":text,"words":None})

@@ -622,8 +622,8 @@ async def create_run(connection, context: Workspace, conv: dict, engine_id: str,
     strategy = "native-english"
     snapshot = dict(conn["config"] if conn else {})
     if engine_id == "elevenlabs":
-        translator = await one(connection, "select c.* from workspace_engine_settings s join engine_connections c on c.id=s.translator_connection_id and c.organisation_id=s.organisation_id where s.organisation_id=%s and c.engine_id in ('azure-translator','openai-translator') for share of s,c", (context.id,))
-        strategy = "openai" if translator and translator["engine_id"] == "openai-translator" else "azure"
+        translator = await one(connection, "select c.* from workspace_engine_settings s join engine_connections c on c.id=s.translator_connection_id and c.organisation_id=s.organisation_id where s.organisation_id=%s and c.engine_id='openai-translator' for share of s,c", (context.id,))
+        strategy = "openai" if translator else "native-english"
         if translator:
             snapshot["translation"] = {"provider": translator["engine_id"], "config": translator["config"]}
     configured_model = ((conn.get("config") or {}).get("model") if conn else None) or (getattr(settings, "elevenlabs_transcription_model", "") if engine_id == "elevenlabs" and settings else "")
