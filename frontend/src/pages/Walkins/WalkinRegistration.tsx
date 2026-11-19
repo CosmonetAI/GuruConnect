@@ -80,7 +80,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const agentPickerRef = useRef<HTMLDivElement | null>(null)
   const voiceConversation = useRef<string | null>(null)
-  // Once the receptionist edits a field, later progressive extraction must
+  // Once the receptionist edits a field, later extraction refreshes must
   // never put the model's value back into that field. This also protects an
   // intentional clear, which is a valid manual decision.
   const manuallyEditedFields = useRef(new Set<keyof FormValues>())
@@ -206,9 +206,8 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
 
   const extractedFields = Object.entries(voicePreview?.fields || {}).filter(([, value]) => String(value || '').trim())
   const fieldsApplied = extractedFields.every(([key, value]) => manuallyEditedFields.current.has(key as keyof FormValues) || form[key as keyof FormValues] === value)
-  // A progressive transcript can contain a name long before the phone,
-  // email, organisation, or requirement arrives. Never use the presence of
-  // one extracted field as evidence that the recording is fully processed.
+  // Never use the presence of one extracted field as evidence that the
+  // recording is fully processed.
   const extractionPending = voicePreview?.extractions?.some(item => item.status === 'running') === true
   const finalState = voicePreview?.conversation?.final_state || ''
   const recordingProcessingComplete = finalState === 'complete'
@@ -307,15 +306,15 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             <span>01</span>
             <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
             <div className="walkin-registration-recorder">
-              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { manuallyEditedFields.current.clear(); setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
+              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { manuallyEditedFields.current.clear(); setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={6} audioBucket="walkin-audio" compact registrationOnly />
             </div>
           </div>
           {voiceId && <div className="walkin-live-results" aria-live="polite">
             <div className="walkin-live-results-header"><strong>Live registration details</strong><span>{voicePreview?.conversation?.english_state === 'complete' ? 'Translation complete' : 'Listening and extracting…'}</span></div>
             <div className="walkin-live-transcript" ref={liveTranscriptRef}>
-              {voicePreview?.transcript?.length ? voicePreview.transcript.map((turn, index) => <p key={`${turn.english_text || turn.source_text || 'turn'}-${index}`}>{turn.english_text || turn.source_text || 'Transcribing…'}</p>) : <p>Waiting for the translated conversation…</p>}
+              {voicePreview?.transcript?.length ? voicePreview.transcript.map((turn, index) => <p key={`${turn.english_text || turn.source_text || 'turn'}-${index}`}>{turn.english_text || turn.source_text || 'Transcribing…'}</p>) : <p>Waiting for the live transcription…</p>}
             </div>
-            {voicePreview?.fields && Object.keys(voicePreview.fields).length > 0 && <small>Form fields are being filled from the English translation as answers arrive.</small>}
+            <small>Live transcription is shown while recording. Visitor details are translated and extracted once after you end the recording.</small>
           </div>}
           <div className="walkin-form-grid">
             <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={voiceBusy} id="customerName" maxLength={150} autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', sanitizeTextInput(event.target.value, 150))} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerName', sanitizeTextInput(value, 150))} /></div></Field>

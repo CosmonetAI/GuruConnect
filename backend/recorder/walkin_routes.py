@@ -480,11 +480,10 @@ adjacency, first-person statements, corrections, and the meaning of the answer. 
 phrased differently every time. For example, a person saying only `Groovy` immediately after being asked
 which organisation they are from is a company answer even though the answer contains no word like company.
 
-The transcript is a progressive prefix, so the conversation may end in the middle of an answer. Preserve
-facts already stated and extract newly stated facts now; do not wait for the recording to finish. Later,
-explicit corrections supersede earlier values. A question without an answer is not a value. Do not fill a
-field from a greeting, acknowledgement, filler, the receptionist's own details, an email username/domain,
-or digits that are not answering the phone question.
+The transcript is the complete ordered conversation after recording has ended. Preserve facts stated in
+the conversation and let later explicit corrections supersede earlier values. A question without an answer
+is not a value. Do not fill a field from a greeting, acknowledgement, filler, the receptionist's own
+details, an email username/domain, or digits that are not answering the phone question.
 
 Language handling is essential: source speech may be Kannada, Hindi, English, or mixed speech, while an
 English translation may be present, delayed, imperfect, or absent. Use the English translation when it is
@@ -511,13 +510,7 @@ conversation, or an empty string when it is not available:
 
 
 async def _extract_walkin_registration_fields(request: Request, context: Workspace, conversation_id: UUID, turns: list[dict]) -> dict[str, str]:
-    """Extract the current cumulative registration prefix as it grows.
-
-    ElevenLabs owns speech recognition and translation in the normal worker
-    pipeline. OpenAI receives the translated prefix at each poll and runs once
-    per transcript fingerprint, so the first chunk can fill fields while later
-    chunks refine the same context.
-    """
+    """Extract the completed visitor registration once after recording stops."""
     # Translation can lag or fail after transcription. The source transcript
     # is still useful for registration extraction, so do not discard a turn
     # merely because english_text is null.
@@ -581,7 +574,7 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
 
 @router.get("/{conversation_id}/walkin-preview")
 async def walkin_preview(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
-    """Return the safe, progressively available transcript/extraction preview for registration."""
+    """Return live source transcription and final-only registration extraction."""
     async with request.app.state.db.connection() as connection:
         # Preview is read-only. A row lock here contends with every audio chunk
         # authorize/confirm update and can turn a healthy recording into a DB
@@ -609,22 +602,24 @@ async def walkin_preview(conversation_id: UUID, request: Request, context: Works
         extractions = await many(connection, "select status,data,created_at from public.conversation_extractions where conversation_id=%s order by created_at desc limit 20", (conversation_id,))
         context_row = await one(connection, "select context from public.voice_ai_contexts where conversation_id=%s", (conversation_id,))
     public_extractions = [{"status": row.get("status"), "data": row.get("data") or {}, "created_at": row.get("created_at")} for row in extractions]
-    fields = _walkin_extracted_fields(extractions, (context_row or {}).get("context") if context_row else {})
-    # Apply deterministic values from the ordered transcript available so far last so
-    # a partial live extraction cannot leave a wrong name, phone, or company
-    # in the form while the fallback/model catches up.
     dialogue = "\n".join(str(turn.get("english_text") or turn.get("source_text") or "").strip() for turn in turns if turn.get("english_text") or turn.get("source_text"))
-    fields = _merge_registration_fallback(fields, dialogue)
-    email_local = str(fields.get("email") or "").split("@", 1)[0].casefold() if "@" in str(fields.get("email") or "") else ""
-    email_domain = str(fields.get("email") or "").split("@", 1)[1].casefold() if "@" in str(fields.get("email") or "") else ""
-    if email_local and re.sub(r"[^a-z0-9]", "", str(fields.get("customerName") or "").casefold()) == re.sub(r"[^a-z0-9]", "", email_local):
-        fields.pop("customerName", None)
-    if email_domain and str(fields.get("companyName") or "").casefold().strip(" .") == email_domain:
-        fields.pop("companyName", None)
-    # Run on every new translated prefix, not only while required fields are
-    # missing. The fingerprint prevents duplicate model calls for the same
-    # prefix, while later chunks add/refine fields using the full context.
-    if turns:
+    finalized = recording.get("capture_state") in {"stopped", "interrupted"} and recording.get("final_state") in {"complete", "blocked", "failed", "uncertain"}
+    fields = {}
+    if finalized:
+        fields = _walkin_extracted_fields(extractions, (context_row or {}).get("context") if context_row else {})
+        # Apply deterministic values from the complete ordered transcript last
+        # so exact phone/email values remain grounded in the audio.
+        fields = _merge_registration_fallback(fields, dialogue)
+        email_local = str(fields.get("email") or "").split("@", 1)[0].casefold() if "@" in str(fields.get("email") or "") else ""
+        email_domain = str(fields.get("email") or "").split("@", 1)[1].casefold() if "@" in str(fields.get("email") or "") else ""
+        if email_local and re.sub(r"[^a-z0-9]", "", str(fields.get("customerName") or "").casefold()) == re.sub(r"[^a-z0-9]", "", email_local):
+            fields.pop("customerName", None)
+        if email_domain and str(fields.get("companyName") or "").casefold().strip(" .") == email_domain:
+            fields.pop("companyName", None)
+    # A visitor recording is intentionally transcript-only while capture is
+    # active. Once final processing reaches a terminal state, one fingerprinted
+    # extraction runs against the complete ordered transcript.
+    if finalized and turns:
         fallback = await _extract_walkin_registration_fields(request, context, conversation_id, turns)
         if fallback:
             # The fallback sees the whole ordered prefix, so a non-empty

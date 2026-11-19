@@ -58,6 +58,15 @@ class TranslationResult:
     request_id: str | None
 
 
+@dataclass(frozen=True)
+class BatchTranslationResult:
+    texts: list[str]
+    input_tokens: int
+    output_tokens: int
+    model: str
+    request_id: str | None
+
+
 UsageCallback = Callable[[TranslationResult], Awaitable[None]]
 
 
@@ -238,6 +247,66 @@ def _translated_text(body: dict, source: str) -> str:
     return translated
 
 
+def _translated_turns(body: dict, sources: list[str]) -> list[str]:
+    """Validate one structured translation response containing all turns."""
+    if body.get("status") == "incomplete":
+        raise ProviderError("translation_incomplete", uncertain=True)
+    if body.get("status") != "completed" or body.get("error") is not None:
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    output = body.get("output")
+    if not isinstance(output, list):
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    messages: list[dict] = []
+    for item in output:
+        if not isinstance(item, dict):
+            raise ProviderError("translator_invalid_response", uncertain=True)
+        if item.get("type") == "reasoning":
+            continue
+        if item.get("type") != "message" or item.get("role") != "assistant" or item.get("status") != "completed":
+            raise ProviderError("translator_invalid_response", uncertain=True)
+        messages.append(item)
+    if len(messages) != 1 or not isinstance(messages[0].get("content"), list):
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    content = messages[0]["content"]
+    if len(content) != 1 or not isinstance(content[0], dict) or content[0].get("type") != "output_text":
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    raw = content[0].get("text")
+    if not isinstance(raw, str) or len(raw) > MAX_RESPONSE_BYTES:
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    try:
+        def unique_object(pairs):
+            result = {}
+            for name, value in pairs:
+                if name in result:
+                    raise ValueError("duplicate JSON member")
+                result[name] = value
+            return result
+        parsed = json.loads(raw, object_pairs_hook=unique_object)
+    except ValueError:
+        raise ProviderError("translator_invalid_response", uncertain=True) from None
+    rows = parsed.get("translations") if isinstance(parsed, dict) and set(parsed) == {"translations"} else None
+    if not isinstance(rows, list) or len(rows) != len(sources):
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    by_index: dict[int, str] = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"index", "text"} or type(row.get("index")) is not int or not isinstance(row.get("text"), str):
+            raise ProviderError("translator_invalid_response", uncertain=True)
+        index, translated = row["index"], row["text"].strip()
+        if index in by_index or not 0 <= index < len(sources) or not translated or len(translated) > MAX_TRANSLATED_CHARS:
+            raise ProviderError("translator_invalid_response", uncertain=True)
+        try:
+            translated.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ProviderError("translator_invalid_response", uncertain=True) from None
+        if (_literal_terms(sources[index]) != _literal_terms(translated)
+                or Counter(_DIGITS.findall(sources[index])) != Counter(_DIGITS.findall(translated))):
+            raise ProviderError("translation_term_preservation_failed", uncertain=True)
+        by_index[index] = translated
+    if set(by_index) != set(range(len(sources))):
+        raise ProviderError("translator_invalid_response", uncertain=True)
+    return [by_index[index] for index in range(len(sources))]
+
+
 class OpenAITranslator:
     model = MODEL
 
@@ -302,6 +371,53 @@ class OpenAITranslator:
             output_tokens += result.output_tokens
             last_request_id = result.request_id
         return TranslationResult(" ".join(translated), input_tokens, output_tokens, self.model, last_request_id)
+
+    async def translate_turns(self, turns: list[dict]) -> BatchTranslationResult:
+        """Translate a visitor-registration transcript with one paid request."""
+        sources = [str(turn.get("text") or "") for turn in turns]
+        if not sources:
+            return BatchTranslationResult([], 0, 0, self.model, None)
+        data = [{"index": index, "source_text": text, "source_language": language_code(turns[index].get("source_language")),
+                 "preserved_terms": list(_TERMS.findall(text))}
+                for index, text in enumerate(sources)]
+        encoded = json.dumps(data, ensure_ascii=False)
+        if len(encoded) > MAX_SOURCE_CHARS:
+            raise ProviderError("translator_input_too_large")
+        payload = {
+            "model": self.model,
+            "instructions": _INSTRUCTIONS + " Translate every item in the supplied turns array and return exactly one translation per index.",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": encoded}]}],
+            "store": False,
+            "tools": [],
+            "max_output_tokens": 8192,
+            "text": {"format": {
+                "type": "json_schema", "name": "english_translation_turns", "strict": True,
+                "schema": {"type": "object", "properties": {"translations": {"type": "array", "items": {
+                    "type": "object", "properties": {"index": {"type": "integer"}, "text": {"type": "string"}},
+                    "required": ["index", "text"], "additionalProperties": False,
+                }}}, "required": ["translations"], "additionalProperties": False},
+            }},
+        }
+        if self.model.startswith("gpt-5.4-mini"):
+            payload["reasoning"] = {"effort": "none"}
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(90, connect=15), follow_redirects=False, trust_env=False) as client:
+                response = await bounded_request(client, "POST", f"{API_ORIGIN}/responses",
+                                                 max_bytes=MAX_RESPONSE_BYTES, paid=True, timeout=90,
+                                                 headers={"Authorization": f"Bearer {self.key}"}, json=payload)
+        except (httpx.TimeoutException, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError):
+            raise ProviderError("translator_execution_uncertain", uncertain=True) from None
+        except httpx.RequestError:
+            raise ProviderError("translator_unavailable", retryable=True) from None
+        body = _checked_response(response, paid=True)
+        usage = _response_usage(body, response, self.model)
+        if self.usage_callback is not None:
+            try:
+                await self.usage_callback(usage)
+            except Exception:
+                raise ProviderError("translation_usage_recording_failed", uncertain=True) from None
+        texts = _translated_turns(body, sources)
+        return BatchTranslationResult(texts, usage.input_tokens, usage.output_tokens, usage.model, usage.request_id)
 
     async def _translate_chunk(self, text: str, source_language: str | None) -> TranslationResult:
         data = {
