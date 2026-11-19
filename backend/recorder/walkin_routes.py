@@ -407,12 +407,27 @@ def _walkin_dialogue_fields(dialogue: object) -> dict[str, str]:
     ))
     if before_company:
         company = before_company[-1].group(1).strip(" \t,;:-")
+    project = _explicit_dialogue_value(
+        text,
+        r"project(?:\s+(?:requirement|require))?|requirement|require|need|looking\s+for|want|source|sourcing|purchase|buy",
+        prefer_last=True,
+    )
+    # Keep a complete first-person requirement sentence when the generic
+    # field-label parser encounters a disfluent list such as "we need ... for
+    # our organisation". The sentence itself is the strongest evidence.
+    requirement_sentence = re.search(
+        r"\b(?:we|i)\s+(?:need|require|want|am\s+(?:looking\s+for|sourcing))\s+([^.!?\n]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if requirement_sentence:
+        project = requirement_sentence.group(1).strip(" \t,;:-")
     fields = {
         "customerName": name,
         "mobileNumber": _phone_from_dialogue(text),
         "email": _email_value(text),
         "companyName": company,
-        "projectName": _explicit_dialogue_value(text, r"project(?:\s+(?:requirement|require))?|requirement|need|looking\s+for|want", prefer_last=True),
+        "projectName": project,
     }
     if re.search(r"\b(?:vendor|selling|sell)\b", text, flags=re.IGNORECASE):
         fields["customerType"] = "vendor"
@@ -480,6 +495,12 @@ adjacency, first-person statements, corrections, and the meaning of the answer. 
 phrased differently every time. For example, a person saying only `Groovy` immediately after being asked
 which organisation they are from is a company answer even though the answer contains no word like company.
 
+Extract exact contact values before doing broader semantic interpretation. If the ordered context contains
+an address matching `name@domain.tld`, return that literal address unchanged in `email` when it is clearly
+introduced as the visitor's email (for example, `my email address is ...`, `email id ...`, or `email ...`).
+Do not let a missing/failed model field or a nearby product sentence erase a literal email. Spoken forms
+such as `name at example dot com` must be converted exactly, but never autocorrect or invent characters.
+
 The transcript is the complete ordered conversation after recording has ended. Preserve facts stated in
 the conversation and let later explicit corrections supersede earlier values. A question without an answer
 is not a value. Do not fill a field from a greeting, acknowledgement, filler, the receptionist's own
@@ -506,6 +527,9 @@ conversation, or an empty string when it is not available:
 - companyName: the organisation/company/firm the visitor identifies with; a bare answer can be valid from context.
 - projectName: what the visitor needs, wants, is sourcing, or is planning to buy; preserve useful detail.
 - customerType: exactly `customer` for buying/customer/purchasing or `vendor` for selling/supplying; empty if unclear.
+For a disfluent requirement list, preserve the complete request rather than returning an empty value:
+`We need around uh, 20, 23 ceiling fans, some hand pumps and some switches` is a valid projectName
+because it explicitly states the visitor's need. Do not require the words `project` or `requirement`.
 """
 
 

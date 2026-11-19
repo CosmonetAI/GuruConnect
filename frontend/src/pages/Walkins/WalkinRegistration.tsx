@@ -40,6 +40,19 @@ const initialValues: FormValues = {
   customerType: 'customer',
 }
 
+const transcriptEmail = (transcript: WalkinVoicePreview['transcript'] = []) => {
+  const text = transcript.map(turn => `${turn.english_text || ''} ${turn.source_text || ''}`).join(' ')
+  const literal = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+  if (literal) return literal.toLowerCase()
+  const spoken = text.toLowerCase()
+    .replace(/\b(?:at the rate(?: of)?|at sign|at)\b/g, '@')
+    .replace(/\b(?:dot|period)\b/g, '.')
+    .replace(/\bunderscore\b/g, '_')
+    .replace(/\b(?:dash|hyphen)\b/g, '-')
+    .replace(/\s*([@._-])\s*/g, '$1')
+  return spoken.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0].replace(/[.]+$/, '') || ''
+}
+
 const countryCodes = [
   ['+91', 'India'], ['+93', 'Afghanistan'], ['+355', 'Albania'], ['+213', 'Algeria'], ['+1', 'American Samoa'], ['+376', 'Andorra'], ['+244', 'Angola'], ['+1', 'Anguilla'], ['+672', 'Antarctica'], ['+1', 'Antigua and Barbuda'], ['+54', 'Argentina'], ['+374', 'Armenia'], ['+297', 'Aruba'], ['+61', 'Australia'], ['+43', 'Austria'], ['+994', 'Azerbaijan'],
   ['+1', 'Bahamas'], ['+973', 'Bahrain'], ['+880', 'Bangladesh'], ['+1', 'Barbados'], ['+375', 'Belarus'], ['+32', 'Belgium'], ['+501', 'Belize'], ['+229', 'Benin'], ['+1', 'Bermuda'], ['+975', 'Bhutan'], ['+591', 'Bolivia'], ['+387', 'Bosnia and Herzegovina'], ['+267', 'Botswana'], ['+55', 'Brazil'], ['+246', 'British Indian Ocean Territory'], ['+1', 'British Virgin Islands'], ['+673', 'Brunei'], ['+359', 'Bulgaria'], ['+226', 'Burkina Faso'], ['+257', 'Burundi'],
@@ -123,7 +136,14 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
         const result = await request<WalkinVoicePreview>(`/walkins/${encodeURIComponent(voiceId)}/walkin-preview`, workspace.id, {}, workspace.member_id)
         if (!cancelled) {
           setVoicePreview(result)
-          const fields = result.fields || {}
+          const fields = { ...(result.fields || {}) }
+          // A literal address in the transcript is safer than a missing or
+          // partially parsed model field. This also fills the form while a
+          // delayed semantic extraction is still catching up.
+          if (!fields.email) {
+            const email = transcriptEmail(result.transcript)
+            if (email) fields.email = email
+          }
           setForm(previous => {
             const next = { ...previous }
             for (const key of ['customerName', 'mobileNumber', 'email', 'companyName', 'projectName'] as const) {

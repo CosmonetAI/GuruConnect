@@ -40,3 +40,16 @@ def test_source_transcript_can_supply_fields_when_translation_is_missing():
     assert fields["mobileNumber"] == "7840883484"
     assert fields["companyName"] == "Groovy"
     assert fields["projectName"] == "ceiling fans"
+
+
+def test_disfluent_requirement_list_and_literal_email_are_preserved():
+    dialogue = (
+        "Hi, my name is Akshat Saxena. My phone number is 7840883484. "
+        "My email address is akshat2211@gmail.com. We need around uh, 20, 23 ceiling fans, "
+        "some hand pumps and some switches for our organization."
+    )
+
+    fields = _walkin_dialogue_fields(dialogue)
+
+    assert fields["email"] == "akshat2211@gmail.com"
+    assert fields["projectName"] == "around uh, 20, 23 ceiling fans, some hand pumps and some switches for our organization"

@@ -660,6 +660,20 @@ reference to an existing document, even when the customer is not asking to creat
 variations such as invoices, quotations, bills, estimates, prior/pending documents, and indirect wording. Leave it
 empty for negated mentions such as "no quotation, just prices". Intent is a suggestion, never permission to create/send anything.
 Choose the most useful current intent for mixed requests and preserve every other supported product/fact.
+When a chunk mixes a product request with a document discussion, do BOTH: make product recommendation
+or product matching the primary intent when the customer is asking for products, and still emit every
+explicitly requested product as a separate requirement. Invoice, sales-order, quotation, and similar
+mentions are secondary monitoring topics only: populate document_mentions so the UI can show a pill, but
+do not let a discussion such as "we can also discuss pending invoices" replace the product-recommendation
+intent, route, or catalogue matching. A document mention is never permission to create or send anything.
+Treat natural speech disfluencies as punctuation: "we need around uh, 20, 23 ceiling fans, some hand
+pumps and some switches" contains three separate requested products: ceiling fan, hand pump, and switch.
+Attach a number only to the noun phrase it immediately qualifies. "some", "a few", "in bulk", and
+similar words mean the product is requested but quantity is unknown, so quantity is null. If a count is
+ambiguous or expressed as a range (for example "20, 23" or "20 to 23"), keep the product requirement
+with quantity null and preserve the count wording only as a grounded attribute when useful; never drop
+the product because the count is unclear. Split coordinated products after "and", commas, or "some"
+even when the sentence has fillers, and give each product its own product/category/search terms.
 missing_critical_fields and suggested_questions are private suggestions for the sales agent ONLY. Suggest a few
 targeted questions when an unresolved reference, essential specification, quantity or use case prevents a useful
 match/quotation. Do not ask the customer directly. Do not open, create, email, order, reserve or promise anything.
