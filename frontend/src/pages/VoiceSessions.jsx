@@ -602,7 +602,7 @@ function ProductRequirement({
 export default function VoiceSessions() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user, workspace, localMode, setCaptureBusy } = useOffice();
+  const { user, workspace, localMode, setCaptureBusy, setPresencePaused } = useOffice();
   const { permissions: documentPermissions } = useDocumentPermissions();
   const initialEnquiryId = searchParams.get("enquiryId");
   const initialIdentity = {
@@ -632,8 +632,7 @@ export default function VoiceSessions() {
     [selectedContact, setSelectedContact] = useState(null);
   const [sessionBusy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [contactBusy, setContactBusy] = useState(false),
-    [stageBusy, setStageBusy] = useState(false);
+    [contactBusy, setContactBusy] = useState(false);
   const [needsCollapsed, setNeedsCollapsed] = useState(false),
     [notesCollapsed, setNotesCollapsed] = useState(false);
   const [notes, setNotes] = useState([]),
@@ -731,6 +730,7 @@ export default function VoiceSessions() {
     return () => window.removeEventListener('beforeunload', preventLoss);
   }, [cartSaving, documentBusy]);
   useEffect(() => { setCaptureBusy(busy); return () => setCaptureBusy(false); }, [busy, setCaptureBusy]);
+  useEffect(() => { setPresencePaused?.(true); return () => setPresencePaused?.(false); }, [setPresencePaused]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; ++selection.current; controllers.current.forEach(controller => controller.abort()); }; }, []);
   const sessionCall = async (path, options = {}) => {
     const controller = new AbortController(); controllers.current.add(controller);
@@ -1482,36 +1482,6 @@ export default function VoiceSessions() {
     if (!selectedContact?.phone) return;
     try { await navigator.clipboard?.writeText(selectedContact.phone); } catch { /* Clipboard access is optional. */ }
   };
-  const changeEnquiryStage = async (stage) => {
-    if (!workspace || !selectedContact?.enquiry_id) return;
-    setStageBusy(true);
-    setError("");
-    try {
-      await recorderRequest(
-        `/enquiries/${encodeURIComponent(selectedContact.enquiry_id)}/state`,
-        workspace.id,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ stage }),
-        },
-        workspace.member_id,
-      );
-      setSelectedContact((current) =>
-        current ? { ...current, enquiry_stage: stage } : current,
-      );
-      setContacts((current) =>
-        current.map((contact) =>
-          contact.id === selectedContact.id
-            ? { ...contact, enquiry_stage: stage }
-            : contact,
-        ),
-      );
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setStageBusy(false);
-    }
-  };
   const currentRecordingSnapshot = recordingSnapshot || (recorderSessions.find((item) => item.id === conversationId) || null);
   const transcriptionUiStatus = liveProcessingStatus({ snapshot: currentRecordingSnapshot, captureState, turns: transcriptPreview, ...liveProcessing });
   const demoCatalogue = localMode && (catalogueNotices.some((notice) => notice.code === "local_demo_catalogue") || recommendations.some((item) => item.catalogue_source === "local-demo") || cart.some((item) => item.catalogue_source === "local-demo"));
@@ -1545,8 +1515,8 @@ export default function VoiceSessions() {
     } catch (e) { setError(e.message); }
   };
   return (
-    <section className="voice-sessions-page">
-      <header className="flow-page-header voice-sessions-page-header">
+    <section className={`voice-sessions-page${session ? " is-session-open" : ""}`}>
+      <header className={`flow-page-header voice-sessions-page-header${session ? " is-session-header-hidden" : ""}`} aria-hidden={session ? "true" : undefined}>
         <div>
           <div className="page-kicker">SALES DESK / SESSIONS</div>
           <h1 className="page-title">Customer conversations</h1>
@@ -1655,7 +1625,6 @@ export default function VoiceSessions() {
                   {demoCatalogue && <span className="live-header-pill status-ready" title={demoCatalogueNotice}>Demo catalogue</span>}
                   {transcriptionUiStatus.key === "failed" && <button type="button" className="link-button" onClick={() => void retryRecordingStage()}>Retry processing</button>}
                 </div>
-                {selectedContact.enquiry_id && <label className="session-stage-control"><span>Enquiry stage</span><select value={selectedContact.enquiry_stage || "new"} onChange={(event) => void changeEnquiryStage(event.target.value)} disabled={stageBusy}><option value="new">New enquiry</option><option value="in_process">In process</option><option value="closed">Closed</option><option value="customer_did_not_show">Customer didn’t show up</option></select></label>}
                 {cart.length > 0 && <button type="button" className="session-contacts-toggle" onClick={() => setCartOpen(!cartOpen)} aria-pressed={!cartOpen}><BookUser size={16} />{cartOpen ? "Show contacts" : "Focus cart"}</button>}
               </div>
               <nav className="live-session-tabs" aria-label="Customer session views">

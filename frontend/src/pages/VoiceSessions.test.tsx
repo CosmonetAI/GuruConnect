@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ call: vi.fn(), busy: vi.fn(), localMode: false, mounts: 0, unmounts: 0, recorder: null as null | { onBusyChange: (busy: boolean) => void; onCaptureChange: (state: { capture: string; elapsedSeconds: number }) => void; onConversationChange: (id: string | null) => Promise<void>; customerName: string } }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), busy: vi.fn(), presence: vi.fn(), localMode: false, mounts: 0, unmounts: 0, recorder: null as null | { onBusyChange: (busy: boolean) => void; onCaptureChange: (state: { capture: string; elapsedSeconds: number }) => void; onConversationChange: (id: string | null) => Promise<void>; customerName: string } }))
 vi.mock('react-router-dom', async original => ({ ...await original<typeof import('react-router-dom')>(), useBlocker: () => ({ state: 'unblocked', reset: vi.fn() }) }))
-vi.mock('../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u' }, workspace: { id: 'w', member_id: 'member' }, localMode: mocks.localMode, setCaptureBusy: mocks.busy }) }))
+vi.mock('../contexts/OfficeContext', () => ({ useOffice: () => ({ user: { id: 'u' }, workspace: { id: 'w', member_id: 'member' }, localMode: mocks.localMode, setCaptureBusy: mocks.busy, setPresencePaused: mocks.presence }) }))
 vi.mock('../zoho/shared/api.js', () => ({ call: mocks.call }))
 vi.mock('./Enquiries/ConversationRecorder', async () => {
   const { useEffect } = await import('react')
@@ -73,6 +73,17 @@ async function openFirst() {
 }
 
 describe('live session integration', () => {
+  it('hides the page header while a customer session is open', async () => {
+    installLiveApi()
+    render(<MemoryRouter><VoiceSessions /></MemoryRouter>)
+    expect(screen.getByRole('heading', { name: 'Customer conversations', level: 1 })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /Customer A/ }))
+    await waitFor(() => expect(mocks.recorder?.customerName).toBe('Customer A'))
+    expect(mocks.presence).toHaveBeenCalledWith(true)
+    expect(screen.queryByRole('heading', { name: 'Customer conversations', level: 1 })).not.toBeInTheDocument()
+    expect(screen.queryByText('Enquiry stage')).not.toBeInTheDocument()
+  })
+
   it('shows the Documents tab before CRM lead and opens its session drawer', async () => {
     installLiveApi()
     await openFirst()

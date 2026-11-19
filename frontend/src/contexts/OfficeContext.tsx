@@ -22,7 +22,7 @@ interface OfficeState {
   configured: boolean; localMode: boolean; session: Session | null; user: User | null; loading: boolean
   workspacesLoading: boolean; workspaces: Workspace[]; workspace: Workspace | null; readOnly: boolean; error: string
   setWorkspace(id: string): void; reloadWorkspaces(): Promise<void>
-  captureBusy: boolean; setCaptureBusy(busy: boolean): void
+  captureBusy: boolean; setCaptureBusy(busy: boolean): void; setPresencePaused(paused: boolean): void
 }
 const OfficeContext = createContext<OfficeState | null>(null)
 
@@ -34,6 +34,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('')
   const [workspacesLoading, setWorkspacesLoading] = useState(false)
   const [captureBusy, setCaptureBusy] = useState(false)
+  const [presencePaused, setPresencePaused] = useState(false)
   const identity = useRef<string | null>(null)
   const sequence = useRef(0)
   const reloadWorkspaces = useCallback(async () => {
@@ -65,7 +66,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
       if (!alive) return
       const userId = next?.user.id ?? null
       if (userId !== identity.current) {
-        ++sequence.current; setWorkspaces([]); setActive(null); setError(''); setCaptureBusy(false)
+        ++sequence.current; setWorkspaces([]); setActive(null); setError(''); setCaptureBusy(false); setPresencePaused(false)
         setWorkspacesLoading(!!next)
       }
       identity.current = userId; setSession(next); setLoading(false)
@@ -90,20 +91,20 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     if (selected) localStorage.setItem('guruconnect-active-organisation', selected.id)
   }, [active, workspaces, localMode])
   useEffect(() => {
-    if (!session || localMode) return
+    if (!session || localMode || presencePaused) return
     const ping = () => {
       void request('/presence', null, json('POST', { sessionId: presenceSessionId }))
         .catch(error => console.warn('Presence API heartbeat failed', error))
     }
     ping(); const timer = window.setInterval(ping, 30_000)
     return () => window.clearInterval(timer)
-  }, [session, localMode])
+  }, [session, localMode, presencePaused])
   const user = localMode ? localUser : session?.user ?? null
   const workspace = localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null
   const readOnly = !localMode && !!user && !!workspace?.member_id && workspace.member_id !== user.id
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
     workspaces: localMode ? [localWorkspace] : workspaces, workspace, readOnly, error, captureBusy, setCaptureBusy,
-    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) } }}>{children}</OfficeContext.Provider>
+    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) }, setPresencePaused }}>{children}</OfficeContext.Provider>
 }
 export function useOffice() {
   const state = useContext(OfficeContext)

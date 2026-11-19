@@ -16,7 +16,7 @@ import { OfficeProvider, useOffice } from './OfficeContext'
 function Probe() {
   const state = useOffice()
   return <div><output data-testid="identity">{state.user?.id || 'anonymous'}</output><output data-testid="workspace">{state.workspace?.name || 'none'}</output><output data-testid="mode">{state.configured ? 'available' : 'unconfigured'}:{state.localMode ? 'local' : 'cloud'}</output><output data-testid="busy">{String(state.captureBusy)}</output><output data-testid="read-only">{String(state.readOnly)}</output><output data-testid="error">{state.error}</output>
-    <button onClick={() => state.setCaptureBusy(true)}>Capture active</button><button onClick={() => state.setCaptureBusy(false)}>Capture stopped</button><button onClick={() => state.setWorkspace('workspace-b')}>Choose B</button>
+    <button onClick={() => state.setCaptureBusy(true)}>Capture active</button><button onClick={() => state.setCaptureBusy(false)}>Capture stopped</button><button onClick={() => state.setPresencePaused(true)}>Pause presence</button><button onClick={() => state.setPresencePaused(false)}>Resume presence</button><button onClick={() => state.setWorkspace('workspace-b')}>Choose B</button>
   </div>
 }
 const session = (id: string): Session => ({ user: { id, email: `${id}@example.test`, user_metadata: { display_name: id }, app_metadata: {}, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' }, access_token: `fixture-${id}`, refresh_token: `fixture-refresh-${id}`, expires_in: 3600, token_type: 'bearer' })
@@ -78,5 +78,14 @@ describe('workspace identity and explicit local mode', () => {
     expect(screen.getByTestId('read-only')).toHaveTextContent('true')
     act(() => { mocks.handler?.('SIGNED_OUT', null) })
     expect(screen.getByTestId('identity')).toHaveTextContent('anonymous'); expect(screen.getByTestId('workspace')).toHaveTextContent('none'); expect(screen.getByTestId('busy')).toHaveTextContent('false')
+  })
+  it('pauses and resumes the presence heartbeat on capture pages', async () => {
+    setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
+    await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A'))
+    await waitFor(() => expect(mocks.request.mock.calls.filter(([path]) => path === '/presence')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause presence' }))
+    const pausedCalls = mocks.request.mock.calls.filter(([path]) => path === '/presence').length
+    fireEvent.click(screen.getByRole('button', { name: 'Resume presence' }))
+    await waitFor(() => expect(mocks.request.mock.calls.filter(([path]) => path === '/presence')).toHaveLength(pausedCalls + 1))
   })
 })

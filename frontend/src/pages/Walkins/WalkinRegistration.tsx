@@ -66,7 +66,7 @@ function RotatingPrompt({ prompt }: { prompt: keyof typeof rotatingPrompts }) {
 }
 
 export default function WalkinRegistration({ enquiryMode = false }: { enquiryMode?: boolean }) {
-  const { user, workspace, setCaptureBusy } = useOffice()
+  const { user, workspace, setCaptureBusy, setPresencePaused } = useOffice()
   const routeNavigate = useNavigate()
   const navigate = (path: string, options?: NavigateOptions) => routeNavigate(enquiryMode && path === '/walkins' ? '/enquiries' : path, options)
   const [form, setForm] = useState(initialValues)
@@ -96,6 +96,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const selfAssignOwner = workspace?.role === 'owner'
   const currentDisplayName = user?.user_metadata?.display_name || user?.email || 'Salesperson'
   useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
+  useEffect(() => { setPresencePaused?.(true); return () => setPresencePaused?.(false) }, [setPresencePaused])
   useEffect(() => {
     if (!workspace || selfAssignSalesperson) return
     let active = true
