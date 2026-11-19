@@ -165,7 +165,7 @@ class MainWorker:
             result["english_state"] = "complete" if job["kind"] == "finalise" else "available"
         else: result["english_state"] = "pending"
         job["_stage"] = "finish_job"
-        for finish_attempt in range(1, 4):
+        for finish_attempt in range(1, 6):
             try:
                 async with self.db.connection() as connection:
                     finished = await one(connection, "select finish_job(%s,%s,%s,%s,%s) as ok", (job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
@@ -177,9 +177,9 @@ class MainWorker:
                 break
             except DeadlockDetected:
                 log.warning("transcription_finish_deadlock_retry job_id=%s attempt=%s", job.get("id"), finish_attempt)
-                if finish_attempt == 3:
+                if finish_attempt == 5:
                     raise
-                await asyncio.sleep(0.25 * finish_attempt)
+                await asyncio.sleep(min(2.0, 0.5 * (2 ** (finish_attempt - 1))))
         emit("transcription.completed", organisation_id=conv.get("organisation_id"), member_id=conv.get("owner_id"),
              conversation_id=conv.get("id"), job_id=job.get("id"),
              metadata={"segments": len(result.get("source_segments") or []), "english_state": result.get("english_state")})
@@ -223,8 +223,6 @@ class MainWorker:
         if is_openai:
             try: validate_translation_model(model)
             except ValueError: raise ProviderError("provider_model_access_denied") from None
-            if job["payload"].get("translator_model", model) != model:
-                raise ProviderError("provider_model_access_denied")
         strategy = f"openai-{model}/translate-v1"
         credentials = await self.credentials(job["connection_id"])
         job["_stage"] = "begin_submission"
@@ -285,7 +283,7 @@ class MainWorker:
         result.update(source_segments=source,english_segments=english,english_state="complete" if job["payload"].get("final") else "available")
         result["provenance"] = {**result.get("provenance",{}),"translation":f"openai-{model}" if is_openai else "azure-standard-v3","translation_model":model,"translation_connection_id":str(job['connection_id']),"translation_generation":job['connection_generation'],"translated_word_alignment":None}
         job["_stage"] = "finish_job"
-        for finish_attempt in range(1, 4):
+        for finish_attempt in range(1, 6):
             try:
                 async with self.db.connection() as connection:
                     finished = await one(connection,"select finish_job(%s,%s,%s,%s,%s) as ok",(job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
@@ -295,9 +293,9 @@ class MainWorker:
                 break
             except DeadlockDetected:
                 log.warning("translation_finish_deadlock_retry job_id=%s attempt=%s", job.get("id"), finish_attempt)
-                if finish_attempt == 3:
+                if finish_attempt == 5:
                     raise
-                await asyncio.sleep(0.25 * finish_attempt)
+                await asyncio.sleep(min(2.0, 0.5 * (2 ** (finish_attempt - 1))))
         job["_stage"] = "completed"
         emit("translation.completed", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
              conversation_id=job.get("conversation_id"), job_id=job.get("id"),

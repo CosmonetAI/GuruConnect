@@ -132,7 +132,10 @@ def _phone_digits(value: object) -> str:
     text = str(value or "").strip().lower()
     direct = re.sub(r"\D", "", text)
     if len(direct) >= 7:
-        return direct[-15:]
+        digits = direct[-15:]
+        # The walk-in form stores the country code separately. Keep an Indian
+        # +91 number as the ten local digits it can accept.
+        return digits[2:] if len(digits) == 12 and digits.startswith("91") else digits
     tokens = [token.strip(".,;:!?।؟") for token in re.findall(r"\S+", text, flags=re.UNICODE)]
     spoken_parts = []
     index = 0
@@ -150,7 +153,8 @@ def _phone_digits(value: object) -> str:
             spoken_parts.append(digit)
         index += 1
     spoken = "".join(spoken_parts)
-    return spoken[-15:] if len(spoken) >= 7 else ""
+    digits = spoken[-15:] if len(spoken) >= 7 else ""
+    return digits[2:] if len(digits) == 12 and digits.startswith("91") else digits
 
 
 def _phone_from_dialogue(value: object) -> str:
@@ -182,7 +186,11 @@ def _explicit_dialogue_value(value: object, labels: str, *, prefer_last: bool = 
         prefix = text[max(0, match.start() - 32):match.start()]
         if re.search(r"(?:organisation|organization|company)\s+$", prefix, flags=re.IGNORECASE):
             continue
-        answer = re.split(r"\s+(?:(?:(?:and|with)\s+)?(?:my|मेरा|मेरी|ನನ್ನ)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:uh+|um+|erm+|hmm+)\s*[,;:-]?)", match.group(1), maxsplit=1, flags=re.IGNORECASE)[0]
+        # Speech-to-text often puts several answers in one turn without a
+        # full stop (for example, "Groovy and our project requirement is ...").
+        # Stop at the next first-person/possessive field label so one answer
+        # cannot consume the remainder of the registration dialogue.
+        answer = re.split(r"\s+(?:(?:(?:and|with)\s+)?(?:my|our|your|मेरा|मेरी|ನನ್ನ)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:name|email|phone|mobile|company|organisation|organization|number|project|requirement)|(?:and|with)\s+(?:uh+|um+|erm+|hmm+)\s*[,;:-]?)", match.group(1), maxsplit=1, flags=re.IGNORECASE)[0]
         answer = answer.strip(" \t,;:-")
         # An organisation answer may follow a broken turn boundary as
         # ``organization\nMy name is Groove``. Remove the nested field label
@@ -192,6 +200,8 @@ def _explicit_dialogue_value(value: object, labels: str, *, prefer_last: bool = 
         # label and the actual answer: ``organisation name is, uh, Groove``.
         answer = re.sub(r"^(?:uh+|um+|erm+|hmm+)\s*[,;:-]?\s*", "", answer, flags=re.IGNORECASE)
         answer = re.sub(r"\s+(?:and|with)\s*$", "", answer, flags=re.IGNORECASE).strip(" \t,;:-")
+        if re.search(r"project|requirement|need|looking\s+for|want", labels, flags=re.IGNORECASE):
+            answer = re.sub(r"^(?:require(?:ment)?|is|for)\s+", "", answer, flags=re.IGNORECASE).strip(" \t,;:-")
         if answer:
             candidate = answer
             if not prefer_last:
@@ -402,9 +412,43 @@ def _walkin_dialogue_fields(dialogue: object) -> dict[str, str]:
         "mobileNumber": _phone_from_dialogue(text),
         "email": _email_value(text),
         "companyName": company,
-        "projectName": _explicit_dialogue_value(text, r"project(?:\s+requirement)?|requirement|need|looking\s+for|want", prefer_last=True),
+        "projectName": _explicit_dialogue_value(text, r"project(?:\s+(?:requirement|require))?|requirement|need|looking\s+for|want", prefer_last=True),
     }
+    if re.search(r"\b(?:vendor|selling|sell)\b", text, flags=re.IGNORECASE):
+        fields["customerType"] = "vendor"
+    elif re.search(r"\b(?:customer|buying|buy|purchase)\b", text, flags=re.IGNORECASE):
+        fields["customerType"] = "customer"
     return {key: value for key, value in fields.items() if value}
+
+
+def _walkin_extraction_context(turns: list[dict]) -> str:
+    """Give the model ordered, multilingual context instead of trigger phrases."""
+    rows = []
+    for index, turn in enumerate(turns, start=1):
+        source = str(turn.get("source_text") or "").strip()
+        english = str(turn.get("english_text") or "").strip()
+        if not source and not english:
+            continue
+        speaker = str(turn.get("speaker_ref") or "unknown").strip()
+        parts = [f"Turn {index} | speaker={speaker}"]
+        if source:
+            parts.append(f"source: {source}")
+        if english and english.casefold() != source.casefold():
+            parts.append(f"english: {english}")
+        rows.append(" | ".join(parts))
+    return "\n".join(rows)
+
+
+def _merge_registration_fallback(fields: dict[str, str], dialogue: str) -> dict[str, str]:
+    """Use deterministic parsing only to fill gaps or exact contact values."""
+    grounded = _walkin_dialogue_fields(dialogue)
+    for key, value in grounded.items():
+        # The model is the semantic authority for names, organisations, and
+        # requirements. Exact phone/email normalization is safer from the
+        # transcript because models can accidentally alter those characters.
+        if not fields.get(key) or key in {"mobileNumber", "email"}:
+            fields[key] = value
+    return fields
 
 
 WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT = {
@@ -429,20 +473,41 @@ WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT = {
 }
 
 
-WALKIN_FULL_EXTRACTION_PROMPT = """Use the cumulative English translation available so far as chronological visitor dialogue.
-This is a progressive prefix, not necessarily the end of the recording. Preserve facts already stated,
-and extract newly stated facts from the latest part without waiting for the recording to finish.
-Return only facts explicitly spoken by the visitor. Map a bare answer to the nearest unanswered fixed
-question. A question and answer can be in one turn: `What is your name? Saumishri Patil` means the
-name is `Saumishri Patil`; a question-only turn such as `Your phone number?` has no phone value.
-Ignore receptionist questions, greetings, acknowledgements, and hesitation words such as uh or um.
-If one sentence contains multiple answers, split them independently: `my name is Akshat Saxena and
-my phone number is nine three double one...` supplies both name and phone. Never use an email username,
-email domain, or phone digits as a name; never use an email domain as a company. Keep names and company
-names in English/Latin letters for CRM search. Return phone as ASCII digits, preserving order and
-expanding zero/oh, double/triple, Hindi/Kannada number words, and common transliterations. Return email
-exactly after converting spoken at, dot, underscore, and hyphen words; never autocorrect. Return customerType
-as customer for buying/customer or vendor for selling/vendor, otherwise empty. Do not invent missing values."""
+WALKIN_FULL_EXTRACTION_PROMPT = """You are a careful sales-reception assistant completing a visitor registration from an ordered conversation.
+This is semantic understanding, not keyword matching. Read the whole available context and infer which
+answer belongs to which question the way a human salesperson would: use turn order, question-and-answer
+adjacency, first-person statements, corrections, and the meaning of the answer. The same field may be
+phrased differently every time. For example, a person saying only `Groovy` immediately after being asked
+which organisation they are from is a company answer even though the answer contains no word like company.
+
+The transcript is a progressive prefix, so the conversation may end in the middle of an answer. Preserve
+facts already stated and extract newly stated facts now; do not wait for the recording to finish. Later,
+explicit corrections supersede earlier values. A question without an answer is not a value. Do not fill a
+field from a greeting, acknowledgement, filler, the receptionist's own details, an email username/domain,
+or digits that are not answering the phone question.
+
+Language handling is essential: source speech may be Kannada, Hindi, English, or mixed speech, while an
+English translation may be present, delayed, imperfect, or absent. Use the English translation when it is
+available, use the source text to resolve names/digits/email spelling, understand Kannada/Hindi number
+words and natural transliteration, and return CRM text in English/Latin characters. Transliterate proper
+names and organisations; do not translate a proper name into a different name. Convert spoken email words
+such as at, dot, underscore, and hyphen exactly, without autocorrecting. Convert spoken phone digits in
+order, including zero/oh and double/triple words, without adding a country code.
+
+Use speaker labels only as evidence: do not assume a particular speaker id is always the visitor. Prefer
+values said by the visitor, but use a receptionist question to understand the expected answer when the
+visitor's response follows it. If a response is ambiguous between two fields, leave both empty rather
+than guessing.
+
+Return only the six requested fields. Each value must be a concise fact explicitly supported by the
+conversation, or an empty string when it is not available:
+- customerName: the visitor's full name, not a greeting or an email username.
+- mobileNumber: ASCII local digits only; preserve every spoken digit and do not use unrelated numbers.
+- email: the exact ASCII email address; never invent a domain or repair spelling.
+- companyName: the organisation/company/firm the visitor identifies with; a bare answer can be valid from context.
+- projectName: what the visitor needs, wants, is sourcing, or is planning to buy; preserve useful detail.
+- customerType: exactly `customer` for buying/customer/purchasing or `vendor` for selling/supplying; empty if unclear.
+"""
 
 
 async def _extract_walkin_registration_fields(request: Request, context: Workspace, conversation_id: UUID, turns: list[dict]) -> dict[str, str]:
@@ -453,8 +518,11 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
     per transcript fingerprint, so the first chunk can fill fields while later
     chunks refine the same context.
     """
-    english = [str(turn.get("english_text") or "").strip() for turn in turns]
-    dialogue = "\n".join(text for text in english if text)
+    # Translation can lag or fail after transcription. The source transcript
+    # is still useful for registration extraction, so do not discard a turn
+    # merely because english_text is null.
+    dialogue = "\n".join(str(turn.get("english_text") or turn.get("source_text") or "").strip() for turn in turns if turn.get("english_text") or turn.get("source_text"))
+    model_context = _walkin_extraction_context(turns)
     settings = request.app.state.settings
     if not dialogue or not settings.openai_api_key:
         return {}
@@ -485,8 +553,7 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
             response_format=WALKIN_FULL_EXTRACTION_RESPONSE_FORMAT,
             messages=[
                 {"role": "system", "content": WALKIN_FULL_EXTRACTION_PROMPT},
-                {"role": "system", "content": "Extract visitor registration details from the cumulative English translation available so far. Map each answer to the nearby question or explicit label. Never use an email username, email domain, or phone digit as a person's name. Never use an email domain as a company. Only fill customerName when the visitor explicitly gives a name (for example, 'my name is Akshat Saxena'); only fill companyName when the visitor explicitly gives a company or organisation; only fill mobileNumber from a phone/mobile answer. Ignore questions, greetings, and filler. Return only facts explicitly spoken by the visitor. Keep names and company names in English/Latin letters for CRM search. Return phone as ASCII digits only, preserving every spoken digit including double/triple words. Return email exactly as spoken after converting at/dot/underscore/hyphen words; never autocorrect. Return customerType as customer for buying/customer or vendor for selling/vendor; otherwise empty. Do not wait for the recording to finish and do not clear a fact just because it is absent from this prefix."},
-                {"role": "user", "content": f"Transcript:\n{dialogue[:30000]}"},
+                {"role": "user", "content": f"Ordered conversation context:\n{model_context[:30000]}"},
             ],
         ), "openai", "chat.completions.create", metadata={"model": settings.openai_translation_model, "component": "walkin_extraction"})
         raw = _completion_text(completion.choices[0].message)
@@ -494,7 +561,7 @@ async def _extract_walkin_registration_fields(request: Request, context: Workspa
         fields = {key: str(parsed.get(key) or "").strip() for key in ("customerName", "mobileNumber", "email", "companyName", "projectName", "customerType")}
         # Prefer values grounded in the complete dialogue over a model-only
         # guess. This is especially important for exact phone/email fields.
-        fields.update(_walkin_dialogue_fields(dialogue))
+        fields = _merge_registration_fallback(fields, dialogue)
         fields["mobileNumber"] = _phone_digits(fields["mobileNumber"])
         fields["email"] = _email_value(fields["email"])
         email_local = fields["email"].split("@", 1)[0].casefold() if "@" in fields["email"] else ""
@@ -546,8 +613,8 @@ async def walkin_preview(conversation_id: UUID, request: Request, context: Works
     # Apply deterministic values from the ordered transcript available so far last so
     # a partial live extraction cannot leave a wrong name, phone, or company
     # in the form while the fallback/model catches up.
-    dialogue = "\n".join(str(turn.get("english_text") or "").strip() for turn in turns if turn.get("english_text"))
-    fields.update(_walkin_dialogue_fields(dialogue))
+    dialogue = "\n".join(str(turn.get("english_text") or turn.get("source_text") or "").strip() for turn in turns if turn.get("english_text") or turn.get("source_text"))
+    fields = _merge_registration_fallback(fields, dialogue)
     email_local = str(fields.get("email") or "").split("@", 1)[0].casefold() if "@" in str(fields.get("email") or "") else ""
     email_domain = str(fields.get("email") or "").split("@", 1)[1].casefold() if "@" in str(fields.get("email") or "") else ""
     if email_local and re.sub(r"[^a-z0-9]", "", str(fields.get("customerName") or "").casefold()) == re.sub(r"[^a-z0-9]", "", email_local):

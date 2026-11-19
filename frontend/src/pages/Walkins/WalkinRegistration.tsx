@@ -122,7 +122,14 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
           setForm(previous => {
             const next = { ...previous }
             for (const key of ['customerName', 'mobileNumber', 'email', 'companyName', 'projectName'] as const) {
-              const value = fields[key]
+              let value = fields[key]
+              // The registration form stores the local number separately from
+              // the selected country code. Accept a provider response that
+              // includes India's +91 prefix without making the form invalid.
+              if (key === 'mobileNumber' && value) {
+                const digits = String(value).replace(/\D/g, '')
+                value = (digits.length === 12 && digits.startsWith('91')) ? digits.slice(2) : digits.length > 10 ? digits.slice(-10) : digits
+              }
               if (value && next[key] !== value) next[key] = value as never
             }
             if (fields.customerType === 'vendor' && next.customerType !== 'vendor') next.customerType = 'vendor'
@@ -193,13 +200,22 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
 
   const extractedFields = Object.entries(voicePreview?.fields || {}).filter(([, value]) => String(value || '').trim())
   const fieldsApplied = extractedFields.every(([key, value]) => form[key as keyof FormValues] === value)
-  const extractionComplete = voicePreview?.extractions?.some(item => item.status === 'complete') === true
-    || (extractedFields.length > 0 && voicePreview?.transcript?.some(turn => String(turn.english_text || '').trim()) === true)
+  // A progressive transcript can contain a name long before the phone,
+  // email, organisation, or requirement arrives. Never use the presence of
+  // one extracted field as evidence that the recording is fully processed.
+  const extractionPending = voicePreview?.extractions?.some(item => item.status === 'running') === true
+  const finalState = voicePreview?.conversation?.final_state || ''
+  const recordingProcessingComplete = finalState === 'complete'
+  const processingTerminal = ['complete', 'failed', 'blocked', 'uncertain'].includes(finalState)
+  const processingFailed = processingTerminal && finalState !== 'complete'
+  const extractionComplete = processingTerminal && !extractionPending
   const transcriptionComplete = ['available', 'complete'].includes(voicePreview?.conversation?.transcription_state || '')
   const translationComplete = voicePreview?.conversation?.english_state === 'complete'
-  const processingStage = extractionComplete && fieldsApplied
+  const processingStage = processingFailed
+    ? 'failed'
+    : extractionComplete && fieldsApplied
     ? 'completed'
-    : extractedFields.length > 0
+    : extractedFields.length > 0 && fieldsApplied && recordingProcessingComplete
       ? 'filling'
       : !transcriptionComplete
         ? 'transcribing'
@@ -211,7 +227,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
               ? 'filling'
               : 'completed'
   useEffect(() => {
-    if (processingStage !== 'completed' || processingModalDismissed) return
+    if (!['completed', 'failed'].includes(processingStage) || processingModalDismissed) return
     const timer = window.setTimeout(() => setProcessingModalDismissed(true), 1400)
     return () => window.clearTimeout(timer)
   }, [processingModalDismissed, processingStage])
@@ -339,14 +355,15 @@ const processingSteps = [
 
 function WalkinProcessingBanner({ stage }: { stage: string }) {
   const completed = stage === 'completed'
-  const activeIndex = completed ? processingSteps.length : Math.max(0, processingSteps.findIndex(([key]) => key === stage))
+  const failed = stage === 'failed'
+  const activeIndex = completed ? processingSteps.length : failed ? processingSteps.length - 1 : Math.max(0, processingSteps.findIndex(([key]) => key === stage))
   return <div className="walkin-processing-banner" role="status" aria-live="polite" aria-label="Registration processing">
-    <div className="walkin-processing-heading"><div><strong id="walkin-processing-title">{completed ? 'Visitor details completed' : 'Preparing visitor details'}</strong><span>{completed ? 'All available details were extracted and filled into the form.' : 'Please wait while the recording is processed.'}</span></div>{completed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : <LoaderCircle size={20} className="walkin-processing-spinner" />}</div>
-    <div className="walkin-processing-track" aria-hidden="true"><span style={{ width: `${completed ? 100 : Math.max(8, (activeIndex / (processingSteps.length - 1)) * 100)}%` }} /></div>
+    <div className="walkin-processing-heading"><div><strong id="walkin-processing-title">{completed ? 'Visitor details completed' : failed ? 'Processing needs attention' : 'Preparing visitor details'}</strong><span>{completed ? 'All available details were extracted and filled into the form.' : failed ? 'Audio was saved, but some details may need manual review.' : 'Please wait while the recording is processed.'}</span></div>{completed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : failed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : <LoaderCircle size={20} className="walkin-processing-spinner" />}</div>
+    <div className="walkin-processing-track" aria-hidden="true"><span style={{ width: `${completed || failed ? 100 : Math.max(8, (activeIndex / (processingSteps.length - 1)) * 100)}%` }} /></div>
     <div className="walkin-processing-steps">
       {processingSteps.map(([key, label, detail], index) => <div className={`walkin-processing-step${index < activeIndex ? ' is-complete' : index === activeIndex ? ' is-active' : ''}`} key={key}>
-        <span className="walkin-processing-step-icon">{index < activeIndex ? <Check size={13} /> : index === activeIndex ? <LoaderCircle size={13} className="walkin-processing-spinner" /> : index + 1}</span>
-        <span><strong>{label}</strong><small>{index === activeIndex ? detail : index < activeIndex ? 'Complete' : 'Waiting'}</small></span>
+        <span className="walkin-processing-step-icon">{index < activeIndex || failed ? <Check size={13} /> : index === activeIndex ? <LoaderCircle size={13} className="walkin-processing-spinner" /> : index + 1}</span>
+        <span><strong>{label}</strong><small>{failed ? (index === activeIndex ? 'Review required' : index < activeIndex ? 'Complete' : 'Not reached') : index === activeIndex ? detail : index < activeIndex ? 'Complete' : 'Waiting'}</small></span>
       </div>)}
     </div>
   </div>
