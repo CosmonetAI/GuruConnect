@@ -54,12 +54,31 @@ def get_organisation_id():
     return _organisation_id.get()
 
 
+def _zoho_response_metadata(response):
+    metadata = {'response_bytes': len(response.content)}
+    if response.status_code >= 400:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict):
+            # Keep provider diagnostics useful without logging the submitted
+            # contact payload or any other customer data.
+            if payload.get('code') is not None:
+                metadata['provider_code'] = str(payload['code'])[:80]
+            if payload.get('message'):
+                metadata['provider_message'] = str(payload['message'])[:240]
+    return metadata
+
+
 def _log_zoho_response(operation, started_at, response):
+    metadata = _zoho_response_metadata(response)
     external_completed('zoho', operation, started_at, status=response.status_code,
                        external_request_id=response.headers.get('x-request-id'),
-                       metadata={'response_bytes': len(response.content)})
+                       metadata=metadata)
     if response.status_code >= 400:
-        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'), status=response.status_code)
+        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'),
+                        status=response.status_code, metadata={key: value for key, value in metadata.items() if key != 'response_bytes'})
 
 class ZohoClient:
     def _tenant_key(self):
@@ -188,9 +207,12 @@ class ZohoClient:
                     api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
                     response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
             if response.status_code >= 400:
+                metadata = _zoho_response_metadata(response)
                 external_completed('zoho', operation, started_at, status=response.status_code,
-                                   external_request_id=response.headers.get('x-request-id'))
-                external_failed('zoho', operation, started_at, RuntimeError(f"zoho_http_{response.status_code}"), status=response.status_code)
+                                   external_request_id=response.headers.get('x-request-id'), metadata=metadata)
+                external_failed('zoho', operation, started_at, RuntimeError(f"zoho_http_{response.status_code}"),
+                                status=response.status_code,
+                                metadata={key: value for key, value in metadata.items() if key != 'response_bytes'})
             else:
                 external_completed('zoho', operation, started_at, status=response.status_code,
                                    external_request_id=response.headers.get('x-request-id'),
@@ -493,14 +515,22 @@ class ZohoClient:
                     return row
         display_name = (name or email or phone or 'Walk-in customer').strip()
         parts = display_name.split(maxsplit=1)
+        # Books accepts the visitor's local number in its contact fields. The
+        # registration form stores the country code together with the number,
+        # so strip a leading country prefix for the Books payload while still
+        # using the full value for matching existing contacts.
+        books_phone = phone[-10:] if len(phone) > 10 else phone
         payload = {
             'contact_name': display_name,
             'contact_type': contact_type,
+            'customer_sub_type' if contact_type == 'customer' else 'vendor_sub_type': 'business',
+            'email': email or None,
+            'mobile': books_phone or None,
             'company_name': (company or '').strip() or None,
             'notes': (notes or '').strip() or None,
             'contact_persons': [{
                 'first_name': parts[0], 'last_name': parts[1] if len(parts) > 1 else '',
-                'email': email, 'mobile': phone or None, 'is_primary_contact': True,
+                'email': email or None, 'mobile': books_phone or None, 'is_primary_contact': True,
             }],
         }
         result = await self.create_books_contact(org, {key: value for key, value in payload.items() if value not in (None, '')})

@@ -617,7 +617,7 @@
 .walkin-processing-step.is-complete .walkin-processing-step-icon { border-color: #a8dfcf; background: #e8f8f3; }
 .walkin-processing-step.is-complete small { color: #6e9b8d; }
 @keyframes walkin-processing-spin { to { transform: rotate(360deg); } }
-.walkin-preview-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(15, 35, 65, .38); }
+.walkin-preview-backdrop { position: fixed; inset: 0; z-index: 1400; display: grid; place-items: center; padding: 24px; background: rgba(15, 35, 65, .38); }
 .walkin-preview-modal { width: min(720px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: auto; border: 1px solid #d8e2ef; border-radius: 18px; background: #fff; box-shadow: 0 24px 70px rgba(15, 35, 65, .25); }
 .walkin-preview-header { padding: 24px 26px 18px; border-bottom: 1px solid #e5edf6; }
 .walkin-preview-header h2 { margin: 5px 0 4px; color: #10294c; font-size: 24px; }

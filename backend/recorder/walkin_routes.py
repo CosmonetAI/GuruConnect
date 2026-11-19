@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -830,6 +830,33 @@ async def fetch_walkin_crm(body: WalkinCreate, books_contact=None):
         return None, type(error).__name__
 
 
+async def sync_walkin_crm(request: Request, context: Workspace, visit_id, enquiry_id, body: WalkinCreate):
+    """Synchronize Zoho after the local visitor registration is returned."""
+    books_contact = {}
+    try:
+        books_contact = await ensure_walkin_books_contact(body, context) or {}
+    except Exception as error:
+        # A Books rejection must not prevent the local visitor or Bigin lead
+        # from being available. Passing an empty dict also prevents the CRM
+        # provisioning helper from repeating the same failing Books call.
+        log.warning("walkin_books_contact_unavailable visit_id=%s exception_type=%s", visit_id, type(error).__name__)
+    books_contact_id = books_contact.get("contact_id") or books_contact.get("id")
+    if books_contact_id:
+        async with request.app.state.db.connection() as connection:
+            await connection.execute("update public.guruconnect_enquiries set books_contact_id=%s where id=%s and organisation_id=%s", (str(books_contact_id), enquiry_id, context.id))
+    crm_result, crm_error = await fetch_walkin_crm(body, books_contact=books_contact)
+    crm_persisted = False
+    if crm_result:
+        async with request.app.state.db.connection() as connection:
+            if isinstance(await persist_walkin_crm(connection, context, enquiry_id, body, crm_result), dict):
+                crm_persisted = True
+    if crm_result and not crm_persisted:
+        crm_error = crm_error or "identity_persist_failed"
+    if crm_error:
+        async with request.app.state.db.connection() as connection:
+            await connection.execute("update public.guruconnect_enquiries set crm_sync_error=%s where id=%s and organisation_id=%s", (crm_error, enquiry_id, context.id))
+
+
 async def persist_walkin_crm(connection, context, enquiry_id, body, crm_result):
     """Persist provider identity after the local visitor/enquiry transaction committed."""
     if not isinstance(crm_result, dict):
@@ -1110,7 +1137,7 @@ async def list_visits(request: Request, context: Workspace = Depends(workspace),
 
 
 @router.post("", status_code=201)
-async def register_visit(body: WalkinCreate, request: Request, response: Response, context: Workspace = Depends(workspace),
+async def register_visit(body: WalkinCreate, request: Request, response: Response, background_tasks: BackgroundTasks, context: Workspace = Depends(workspace),
                          idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=128)):
     if not idempotency_key or not re.fullmatch(r"[A-Za-z0-9_.:-]{8,128}", idempotency_key):
         fail("idempotency_key_required", 400)
@@ -1212,39 +1239,13 @@ async def register_visit(body: WalkinCreate, request: Request, response: Respons
         saved = await visit(connection, context, row["id"])
         enquiry_id = enquiry["id"]
 
-    # Do not hold the local transaction open while Books/Bigin respond. The
-    # database uses an idle-in-transaction timeout, while CRM calls can take
-    # longer during token refreshes or provider latency.
-    books_contact = None
-    try:
-        books_contact = await ensure_walkin_books_contact(body, context)
-    except Exception as error:
-        # Visitor registration remains available when Books is disconnected or temporarily unavailable.
-        log.warning("walkin_books_contact_unavailable visit_id=%s exception_type=%s", saved["id"], type(error).__name__)
-    books_contact_id = (books_contact or {}).get("contact_id") or (books_contact or {}).get("id")
-    if books_contact_id:
-        async with request.app.state.db.connection() as connection:
-            await connection.execute("update public.guruconnect_enquiries set books_contact_id=%s where id=%s and organisation_id=%s", (str(books_contact_id), enquiry_id, context.id))
-    crm_result, crm_error = await fetch_walkin_crm(body, books_contact=books_contact)
-    crm_persisted = False
-    if crm_result:
-        async with request.app.state.db.connection() as connection:
-            if isinstance(await persist_walkin_crm(connection, context, enquiry_id, body, crm_result), dict):
-                crm_persisted = True
-                saved = await visit(connection, context, saved["id"])
-        if not crm_persisted:
-            crm_error = crm_error or "identity_persist_failed"
-    if crm_error:
-        async with request.app.state.db.connection() as connection:
-            await connection.execute("update public.guruconnect_enquiries set crm_sync_error=%s where id=%s and organisation_id=%s", (crm_error, enquiry_id, context.id))
+    # Return the committed local registration immediately. Zoho/Bigin are
+    # best-effort integrations and must not hold the browser request open
+    # long enough for the frontend's save timeout to fire.
+    background_tasks.add_task(sync_walkin_crm, request, context, saved["id"], enquiry_id, body)
     result = serialize_visit(saved)
     result["ticket"] = {"number": format_ticket_number(ticket_day, daily_sequence), "token": tracking_token, "stage": "new"}
-    if crm_result:
-        result["crm"] = {"status": "synced" if crm_persisted else "failed",
-                          "contactId": str(crm_result["contact"].get("id")) if crm_persisted else None,
-                          "leadId": str(crm_result["record"].get("id")) if crm_persisted else None}
-    elif crm_error:
-        result["crm"] = {"status": "failed"}
+    result["crm"] = {"status": "pending"}
     return result
 
 

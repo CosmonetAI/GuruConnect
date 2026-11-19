@@ -52,13 +52,16 @@ async def test_books_create_payload_includes_walkin_company_and_notes():
         {
             "contact_name": "Akshat Saxena",
             "contact_type": "customer",
+            "customer_sub_type": "business",
+            "email": "akshat@example.com",
+            "mobile": "7840000345",
             "company_name": "Cosmonet",
             "notes": "Needs a project quotation",
             "contact_persons": [{
                 "first_name": "Akshat",
                 "last_name": "Saxena",
                 "email": "akshat@example.com",
-                "mobile": "917840000345",
+                "mobile": "7840000345",
                 "is_primary_contact": True,
             }],
         },
