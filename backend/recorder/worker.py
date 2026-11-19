@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from psycopg import Error as DatabaseError
+from psycopg.errors import DeadlockDetected
 from psycopg.types.json import Jsonb
 
 from .audio import MAX_SESSION_SAMPLES, assemble_wav, validate_wav
@@ -163,13 +164,22 @@ class MainWorker:
             result["english_segments"] = [dict(segment) for segment in result["source_segments"]]
             result["english_state"] = "complete" if job["kind"] == "finalise" else "available"
         else: result["english_state"] = "pending"
-        async with self.db.connection() as connection:
-            finished = await one(connection, "select finish_job(%s,%s,%s,%s,%s) as ok", (job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
-            if not finished["ok"]: return
-            await connection.execute("insert into inference_artifacts(conversation_id,run_id,job_id,kind,object_path,sha256,bytes,provenance) values(%s,%s,%s,'provider-response',%s,%s,%s,%s) on conflict(object_path) do nothing", (conv["id"],job["run_id"],job["id"],path,hashlib.sha256(artifact).hexdigest(),len(artifact),Jsonb(result["provenance"])))
-            version_id = await publish_result(connection, job, result)
-            if not reliably_english and result["source_segments"]:
-                await schedule(connection, conv["id"],job["run_id"],"translate",f"translate:{job['id']}",{**job["payload"],"source_job_id":str(job["id"]),"source_version_id":str(version_id),"final":job["kind"]=="finalise"},job.get("window_id"),job["priority"])
+        job["_stage"] = "finish_job"
+        for finish_attempt in range(1, 4):
+            try:
+                async with self.db.connection() as connection:
+                    finished = await one(connection, "select finish_job(%s,%s,%s,%s,%s) as ok", (job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
+                    if not finished["ok"]: return
+                    await connection.execute("insert into inference_artifacts(conversation_id,run_id,job_id,kind,object_path,sha256,bytes,provenance) values(%s,%s,%s,'provider-response',%s,%s,%s,%s) on conflict(object_path) do nothing", (conv["id"],job["run_id"],job["id"],path,hashlib.sha256(artifact).hexdigest(),len(artifact),Jsonb(result["provenance"])))
+                    version_id = await publish_result(connection, job, result)
+                    if not reliably_english and result["source_segments"]:
+                        await schedule(connection, conv["id"],job["run_id"],"translate",f"translate:{job['id']}",{**job["payload"],"source_job_id":str(job["id"]),"source_version_id":str(version_id),"final":job["kind"]=="finalise"},job.get("window_id"),job["priority"])
+                break
+            except DeadlockDetected:
+                log.warning("transcription_finish_deadlock_retry job_id=%s attempt=%s", job.get("id"), finish_attempt)
+                if finish_attempt == 3:
+                    raise
+                await asyncio.sleep(0.25 * finish_attempt)
         emit("transcription.completed", organisation_id=conv.get("organisation_id"), member_id=conv.get("owner_id"),
              conversation_id=conv.get("id"), job_id=job.get("id"),
              metadata={"segments": len(result.get("source_segments") or []), "english_state": result.get("english_state")})
@@ -178,6 +188,10 @@ class MainWorker:
                                     job_id=job.get("id"), metadata={"segments": len(result.get("source_segments") or [])})
 
     async def translate(self, job):
+        # This is deliberately an in-memory diagnostic marker. It never enters
+        # the durable job payload/result and lets the outer handler identify
+        # which side effect failed without logging customer speech or secrets.
+        job["_stage"] = "load_inputs"
         async with self.db.connection() as connection:
             conv = await one(connection, "select organisation_id,owner_id from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
             provider = await one(connection, "select engine_id,config,generation from engine_connections where id=%s and organisation_id=%s", (job["connection_id"],job["organisation_id"]))
@@ -185,6 +199,9 @@ class MainWorker:
             turns = await many(connection, "select t.* from transcript_turns t join transcript_versions v on v.id=t.version_id where v.id=%s and v.conversation_id=%s and v.run_id=%s and (%s::uuid is null or t.window_id=%s::uuid) order by t.ordinal", (job["payload"]["source_version_id"],job["conversation_id"],job["run_id"],job.get("window_id"),job.get("window_id")))
             words = await many(connection, "select w.turn_id,w.word,w.start_seconds,w.end_seconds from transcript_words w join transcript_turns t on t.id=w.turn_id join transcript_versions v on v.id=t.version_id where v.id=%s and v.conversation_id=%s and v.run_id=%s and (%s::uuid is null or t.window_id=%s::uuid) order by w.start_seconds,w.end_seconds,w.id", (job["payload"]["source_version_id"],job["conversation_id"],job["run_id"],job.get("window_id"),job.get("window_id")))
         if not source_job: raise ProviderError("invalid_result")
+        log.info("translation_inputs_loaded job_id=%s conversation_id=%s turns=%s words=%s model=%s",
+                 job.get("id"), job.get("conversation_id"), len(turns), len(words),
+                 (provider or {}).get("config", {}).get("model") if provider else None)
         update_context(organisation_id=str((conv or {}).get("organisation_id")), member_id=str((conv or {}).get("owner_id")))
         if not provider or provider["generation"] != job["connection_generation"]:
             raise ProviderError("connection_unavailable")
@@ -208,7 +225,10 @@ class MainWorker:
                 raise ProviderError("provider_model_access_denied")
         strategy = f"openai-{model}/translate-v1"
         credentials = await self.credentials(job["connection_id"])
+        job["_stage"] = "begin_submission"
         await self.begin_submission(job)
+        log.info("translation_submission_marked job_id=%s conversation_id=%s request_reference=%s",
+                 job.get("id"), job.get("conversation_id"), job.get("id"))
         result = dict(source_job["result"]); source, english = [], []
         offset = job["payload"].get("sample_start",0)/16000
         source_words = {}
@@ -221,22 +241,39 @@ class MainWorker:
                 source.append({"start":turn["start_seconds"]-offset,"end":turn["end_seconds"]-offset,"text":turn["source_text"],"speaker":turn["speaker_ref"],"speaker_confidence":turn["speaker_confidence"],"words":source_words.get(turn["id"],[])})
                 # Include provider, fixed model, prompt revision and credential generation.
                 cache_key = hashlib.sha256(json.dumps([turn["source_text"], "auto", str(job["connection_id"]),job["connection_generation"],strategy],ensure_ascii=False).encode()).hexdigest()
+                job["_stage"] = "translation_cache_lookup"
                 async with self.db.connection() as connection:
                     cached = await one(connection, "select english_text from translations where run_id=%s and cache_key=%s and state='complete'", (job["run_id"],cache_key))
-                if cached: text = cached["english_text"]
+                if cached:
+                    text = cached["english_text"]
+                    log.info("translation_cache_hit job_id=%s turn_ordinal=%s source_chars=%s",
+                             job.get("id"), turn["ordinal"], len(turn["source_text"]))
                 else:
+                    job["_stage"] = "usage_recording"
                     await self.usage(job, f"turn-{turn['ordinal']}", characters=len(turn["source_text"]))
+                    log.info("translation_usage_recorded job_id=%s turn_ordinal=%s source_chars=%s",
+                             job.get("id"), turn["ordinal"], len(turn["source_text"]))
                     if is_openai:
                         chunk_index = 0
                         async def account_call(usage):
                             nonlocal chunk_index, paid
                             paid = True
                             chunk_index += 1
+                            job["_stage"] = "provider_usage_recording"
                             await self.usage(job, f"turn-{turn['ordinal']}-chunk-{chunk_index}", input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, provider_model=usage.model)
+                            log.info("translation_provider_usage_recorded job_id=%s turn_ordinal=%s chunk=%s input_tokens=%s output_tokens=%s provider_model=%s",
+                                     job.get("id"), turn["ordinal"], chunk_index, usage.input_tokens,
+                                     usage.output_tokens, usage.model)
+                        job["_stage"] = "provider_request"
                         translated = await OpenAITranslator(credentials.get("api_key"), usage_callback=account_call, model=model).translate(turn["source_text"], turn["source_language"])
                         text = translated.text
+                        log.info("translation_provider_completed job_id=%s turn_ordinal=%s source_chars=%s translated_chars=%s provider_model=%s",
+                                 job.get("id"), turn["ordinal"], len(turn["source_text"]), len(text), translated.model)
+                    job["_stage"] = "translation_insert"
                     async with self.db.connection() as connection:
                         await connection.execute("insert into translations(conversation_id,run_id,source_turn_id,cache_key,source_language,translator_config,english_text,state,character_count) values(%s,%s,%s,%s,%s,%s,%s,'complete',%s) on conflict(run_id,cache_key) do nothing", (job["conversation_id"],job["run_id"],turn["id"],cache_key,turn["source_language"],Jsonb({"connection":str(job["connection_id"]),"generation":job["connection_generation"],"provider":engine,"model":model,"strategy":strategy}),text,len(turn["source_text"])))
+                    log.info("translation_persisted job_id=%s turn_ordinal=%s source_chars=%s",
+                             job.get("id"), turn["ordinal"], len(turn["source_text"]))
                 english.append({**source[-1],"text":text,"words":None})
         except ProviderError as exc:
             # A later turn can fail after earlier chunks have already incurred charges.
@@ -245,9 +282,21 @@ class MainWorker:
             raise
         result.update(source_segments=source,english_segments=english,english_state="complete" if job["payload"].get("final") else "available")
         result["provenance"] = {**result.get("provenance",{}),"translation":f"openai-{model}" if is_openai else "azure-standard-v3","translation_model":model,"translation_connection_id":str(job['connection_id']),"translation_generation":job['connection_generation'],"translated_word_alignment":None}
-        async with self.db.connection() as connection:
-            finished = await one(connection,"select finish_job(%s,%s,%s,%s,%s) as ok",(job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
-            if finished["ok"]: await publish_result(connection,job,result)
+        job["_stage"] = "finish_job"
+        for finish_attempt in range(1, 4):
+            try:
+                async with self.db.connection() as connection:
+                    finished = await one(connection,"select finish_job(%s,%s,%s,%s,%s) as ok",(job["id"],self.id,job["lease_token"],job["fence"],Jsonb(result)))
+                    log.info("translation_finish_result job_id=%s finished=%s turns=%s attempt=%s",
+                             job.get("id"), bool(finished and finished.get("ok")), len(english), finish_attempt)
+                    if finished["ok"]: await publish_result(connection,job,result)
+                break
+            except DeadlockDetected:
+                log.warning("translation_finish_deadlock_retry job_id=%s attempt=%s", job.get("id"), finish_attempt)
+                if finish_attempt == 3:
+                    raise
+                await asyncio.sleep(0.25 * finish_attempt)
+        job["_stage"] = "completed"
         emit("translation.completed", organisation_id=(conv or {}).get("organisation_id"), member_id=(conv or {}).get("owner_id"),
              conversation_id=job.get("conversation_id"), job_id=job.get("id"),
              metadata={"provider": engine, "model": model, "characters": sum(len(item.get("text") or "") for item in english)})
@@ -300,8 +349,12 @@ class MainWorker:
             elif isinstance(exc,ValueError): code,uncertain = "invalid_audio",False
             elif isinstance(exc,HTTPException): code,uncertain = exc.detail.get("code","worker_dependency_failed"),False
             else: code,uncertain = "worker_execution_failed",False
-            log.warning("job_failed job_id=%s kind=%s conversation_id=%s code=%s exception_type=%s",
-                        job["id"], job["kind"], job["conversation_id"], code, type(exc).__name__)
+            diagnostic = getattr(exc, "diag", None)
+            log.warning("job_failed job_id=%s kind=%s conversation_id=%s code=%s exception_type=%s sqlstate=%s stage=%s db_table=%s db_constraint=%s db_source_function=%s",
+                        job["id"], job["kind"], job["conversation_id"], code, type(exc).__name__,
+                        getattr(exc, "sqlstate", None), job.get("_stage", "dispatch"),
+                        getattr(diagnostic, "table_name", None), getattr(diagnostic, "constraint_name", None),
+                        getattr(diagnostic, "source_function", None))
             async with self.db.connection() as connection:
                 # Clear submission uncertainty only on a known pre-execution rejection.
                 if isinstance(exc,ProviderError) and not uncertain and code in TRANSLATION_BLOCKED_CODES | {"provider_rate_limited","provider_request_rejected","provider_connection_failed","translator_input_too_large","translator_invalid_input"}:

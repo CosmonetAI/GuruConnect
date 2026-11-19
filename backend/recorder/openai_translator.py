@@ -6,6 +6,7 @@ it never becomes an instruction, tool call, conversation state, or API option.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import unicodedata
 from collections import Counter
@@ -15,6 +16,8 @@ from dataclasses import dataclass, replace
 import httpx
 
 from .providers import ProviderError, _TERMS, bounded_request, language_code
+
+log = logging.getLogger("recorder.openai_translator")
 
 MODEL = "gpt-5.4-mini-2026-03-17"
 OPENAI_TRANSLATION_MODEL = MODEL
@@ -331,9 +334,19 @@ class OpenAITranslator:
             raise ProviderError("translator_unavailable", retryable=True) from None
         body = _checked_response(response, paid=True)
         usage = _response_usage(body, response, self.model)
+        log.info("translation_response_validated model=%s request_id=%s input_tokens=%s output_tokens=%s",
+                 usage.model, usage.request_id, usage.input_tokens, usage.output_tokens)
         if self.usage_callback is not None:
             try:
                 await self.usage_callback(usage)
             except Exception:
                 raise ProviderError("translation_usage_recording_failed", uncertain=True) from None
-        return replace(usage, text=_translated_text(body, text))
+        try:
+            translated = _translated_text(body, text)
+        except ProviderError as error:
+            log.warning("translation_response_rejected model=%s request_id=%s code=%s source_chars=%s",
+                        usage.model, usage.request_id, error.code, len(text))
+            raise
+        log.info("translation_response_parsed model=%s request_id=%s translated_chars=%s",
+                 usage.model, usage.request_id, len(translated))
+        return replace(usage, text=translated)

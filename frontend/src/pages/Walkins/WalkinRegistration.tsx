@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useBlocker, type NavigateOptions } from 'react-router-dom'
-import { CheckCircle2 } from 'lucide-react'
+import { Check, CheckCircle2, LoaderCircle } from 'lucide-react'
 import { z } from 'zod'
 import { type RegisterWalkinInput, type WalkinAgent } from '../../types/walkin'
 import { request } from '../../services/officeApi'
@@ -27,6 +27,7 @@ type WalkinVoicePreview = {
   conversation?: { transcription_state?: string; english_state?: string; final_state?: string }
   transcript?: Array<{ english_text?: string | null; source_text?: string | null }>
   fields?: Partial<Record<'customerName' | 'mobileNumber' | 'email' | 'companyName' | 'projectName' | 'customerType', string>>
+  extractions?: Array<{ status?: string; data?: Record<string, unknown> }>
 }
 
 const initialValues: FormValues = {
@@ -82,6 +83,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
   const allowLeave = useRef(false)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const [voicePreview, setVoicePreview] = useState<WalkinVoicePreview | null>(null)
+  const [processingModalDismissed, setProcessingModalDismissed] = useState(false)
   const liveTranscriptRef = useRef<HTMLDivElement | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [pendingValues, setPendingValues] = useState<FormValues | null>(null)
@@ -189,6 +191,33 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
     setPreviewOpen(true)
   }
 
+  const extractedFields = Object.entries(voicePreview?.fields || {}).filter(([, value]) => String(value || '').trim())
+  const fieldsApplied = extractedFields.every(([key, value]) => form[key as keyof FormValues] === value)
+  const extractionComplete = voicePreview?.extractions?.some(item => item.status === 'complete') === true
+    || (extractedFields.length > 0 && voicePreview?.transcript?.some(turn => String(turn.english_text || '').trim()) === true)
+  const transcriptionComplete = ['available', 'complete'].includes(voicePreview?.conversation?.transcription_state || '')
+  const translationComplete = voicePreview?.conversation?.english_state === 'complete'
+  const processingStage = extractionComplete && fieldsApplied
+    ? 'completed'
+    : extractedFields.length > 0
+      ? 'filling'
+      : !transcriptionComplete
+        ? 'transcribing'
+        : !translationComplete
+          ? 'translating'
+          : !extractionComplete
+            ? 'extracting'
+            : !fieldsApplied
+              ? 'filling'
+              : 'completed'
+  useEffect(() => {
+    if (processingStage !== 'completed' || processingModalDismissed) return
+    const timer = window.setTimeout(() => setProcessingModalDismissed(true), 1400)
+    return () => window.clearTimeout(timer)
+  }, [processingModalDismissed, processingStage])
+
+  const showProcessingModal = Boolean(voiceId && !voiceBusy && !processingModalDismissed)
+
   const confirmRegistration = async () => {
     if (!workspace || !pendingValues || saving) return
     setPreviewOpen(false)
@@ -243,15 +272,20 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
           <p>Capture just enough to direct the customer to the right person.</p>
         </div>
       </header>
+      {showProcessingModal && <div className="walkin-processing-backdrop" role="presentation">
+        <section className="walkin-processing-modal" role="dialog" aria-modal="true" aria-labelledby="walkin-processing-title">
+          <WalkinProcessingBanner stage={processingStage} />
+        </section>
+      </div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
-          <div className="walkin-section-heading">
+            <div className="walkin-section-heading">
             <span>01</span>
             <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
             <div className="walkin-registration-recorder">
-              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); if (!id) { setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
+              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={4} audioBucket="walkin-audio" compact registrationOnly />
             </div>
           </div>
           {voiceId && <div className="walkin-live-results" aria-live="polite">
@@ -294,6 +328,28 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
       </div>}
     </div>
   )
+}
+
+const processingSteps = [
+  ['transcribing', 'Transcribing', 'Converting the recording into speech text.'],
+  ['translating', 'Translating', 'Preparing the English conversation.'],
+  ['extracting', 'Extracting details', 'Finding visitor and enquiry information.'],
+  ['filling', 'Filling contact info', 'Applying the extracted values to the form.'],
+] as const
+
+function WalkinProcessingBanner({ stage }: { stage: string }) {
+  const completed = stage === 'completed'
+  const activeIndex = completed ? processingSteps.length : Math.max(0, processingSteps.findIndex(([key]) => key === stage))
+  return <div className="walkin-processing-banner" role="status" aria-live="polite" aria-label="Registration processing">
+    <div className="walkin-processing-heading"><div><strong id="walkin-processing-title">{completed ? 'Visitor details completed' : 'Preparing visitor details'}</strong><span>{completed ? 'All available details were extracted and filled into the form.' : 'Please wait while the recording is processed.'}</span></div>{completed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : <LoaderCircle size={20} className="walkin-processing-spinner" />}</div>
+    <div className="walkin-processing-track" aria-hidden="true"><span style={{ width: `${completed ? 100 : Math.max(8, (activeIndex / (processingSteps.length - 1)) * 100)}%` }} /></div>
+    <div className="walkin-processing-steps">
+      {processingSteps.map(([key, label, detail], index) => <div className={`walkin-processing-step${index < activeIndex ? ' is-complete' : index === activeIndex ? ' is-active' : ''}`} key={key}>
+        <span className="walkin-processing-step-icon">{index < activeIndex ? <Check size={13} /> : index === activeIndex ? <LoaderCircle size={13} className="walkin-processing-spinner" /> : index + 1}</span>
+        <span><strong>{label}</strong><small>{index === activeIndex ? detail : index < activeIndex ? 'Complete' : 'Waiting'}</small></span>
+      </div>)}
+    </div>
+  </div>
 }
 
 function PreviewValue({ label, value }: { label: string; value: string }) {

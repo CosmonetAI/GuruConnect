@@ -1048,7 +1048,7 @@ async def voice_session_live(session_id: UUID, request: Request):
                                          recommendations=context.get('recent_recommendations'),
                                          current_intent=fields.get('current_intent'),
                                          document_kind=fields.get('document_kind'),
-                                         payload={'summary': '\n'.join(str(turn.get('english_text') or '') for turn in turns)}),
+                                         payload={'summary': '\n'.join(str(turn.get('english_text') or '') for turn in snapshot['transcript_preview'])}),
             'analysis_status': status, 'analysis_error': analysis_error if status in {'failed', 'unavailable', 'waiting_for_ai'} else None,
             'catalogue_status': 'searching' if task else catalogue.get('status', 'waiting'),
             'notices': notices}
