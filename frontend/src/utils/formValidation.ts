@@ -34,6 +34,21 @@ export function validateEmail(value: string, required = false): string | undefin
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) ? undefined : 'Enter a valid email address.'
 }
 
+export function validateName(value: string, label: string, required = false): string | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return required ? `${label} is required.` : undefined
+  return /^[\p{L}][\p{L}\s.'-]*$/u.test(trimmed)
+    ? undefined
+    : `Please enter a valid ${label.toLowerCase()}.`
+}
+
+export function validateNumber(value: string, label: string, options: { required?: boolean; decimal?: boolean } = {}): string | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return options.required ? `${label} is required.` : undefined
+  const pattern = options.decimal ? /^\d+(?:\.\d+)?$/ : /^\d+$/
+  return pattern.test(trimmed) ? undefined : 'Please enter numbers only.'
+}
+
 export function validateText(value: string, label: string, options: { required?: boolean; maxLength?: number; minLength?: number } = {}): string | undefined {
   const trimmed = value.trim()
   if (!trimmed && options.required) return `${label} is required.`

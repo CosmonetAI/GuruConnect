@@ -3,7 +3,7 @@ import { call, withDate } from '../shared/api';
 import { useZohoDateFilter, useGlobalPager } from '../shared/hooks';
 import { ContactCard } from '../components/Records';
 import PageLoader from '../components/PageLoader';
-import { sanitizePhoneNumber, sanitizeTextInput, validateEmail, validatePhoneNumber, validateText } from '../utils/formValidation';
+import { sanitizePhoneNumber, sanitizeTextInput, validateEmail, validateName, validateNumber, validatePhoneNumber, validateText } from '../utils/formValidation';
 
 const emptyAddress = () => ({ attention: '', address: '', street2: '', city: '', state: '', zip: '', country: '', phone: '', fax: '' });
 const emptyContactPerson = () => ({ first_name: '', last_name: '', email: '', mobile: '', designation: '', is_primary_contact: false });
@@ -80,6 +80,17 @@ export function ContactsPage({ setError, showCreate, setShowCreate }) {
   const create = async event => {
     event.preventDefault(); setError(''); setCreated(false);
     const nextErrors = {};
+    const identityFields = ['contact_name', 'first_name', 'last_name', 'salutation', 'title', 'department'];
+    identityFields.forEach(key => {
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+      const error = validateName(form[key], label, key === 'first_name');
+      if (error) nextErrors[key] = error;
+    });
+    ['contact_number', 'payment_terms', 'credit_limit'].forEach(key => {
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+      const error = validateNumber(form[key], label, { decimal: key === 'credit_limit' });
+      if (error) nextErrors[key] = error;
+    });
     if (validateText(form.first_name, 'First name', { required: true })) nextErrors.first_name = validateText(form.first_name, 'First name', { required: true });
     if (validatePhoneNumber(form.mobile)) nextErrors.mobile = validatePhoneNumber(form.mobile);
     if (validateEmail(form.email)) nextErrors.email = validateEmail(form.email);
@@ -99,17 +110,21 @@ export function ContactsPage({ setError, showCreate, setShowCreate }) {
       setCreated(true); setShowCreate(false); setForm(emptyForm());
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
+  const validateField = (key, value) => {
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+    if (['contact_name', 'first_name', 'last_name', 'salutation', 'title', 'department'].includes(key)) {
+      return validateName(value, label, key === 'first_name');
+    }
+    if (['contact_number', 'payment_terms'].includes(key)) return validateNumber(value, label);
+    if (key === 'credit_limit') return validateNumber(value, label, { decimal: true });
+    if (key === 'mobile' || key === 'phone') return value ? validatePhoneNumber(value) : key === 'mobile' ? 'Mobile is required.' : undefined;
+    if (key === 'email') return validateEmail(value);
+    return undefined;
+  };
   const setField = (key, value) => {
-    const nextValue = typeof value !== 'string'
-      ? value
-      : key === 'mobile' || key === 'phone'
-        ? sanitizePhoneNumber(value, 13)
-        : key === 'notes' ? sanitizeTextInput(value, 2000) : sanitizeTextInput(value);
+    const nextValue = typeof value !== 'string' ? value : key === 'notes' ? sanitizeTextInput(value, 2000) : value.slice(0, key === 'mobile' || key === 'phone' ? 14 : 255);
     setForm(current => ({ ...current, [key]: nextValue }));
-    const validation = key === 'mobile' || key === 'phone'
-      ? (nextValue ? validatePhoneNumber(nextValue) : undefined)
-      : key === 'email' ? validateEmail(nextValue) : key === 'first_name' ? validateText(nextValue, 'First name', { required: true }) : undefined;
-    setFieldErrors(current => ({ ...current, [key]: validation }));
+    setFieldErrors(current => ({ ...current, [key]: validateField(key, nextValue) }));
   };
   const setAddress = (kind, key, value) => {
     const boundedValue = key === 'phone' || key === 'fax' ? sanitizePhoneNumber(value, 13) : sanitizeTextInput(value);
@@ -125,7 +140,7 @@ export function ContactsPage({ setError, showCreate, setShowCreate }) {
     {showCreate && <div className="modal-backdrop" onClick={() => setShowCreate(false)}><form className="contact-modal" noValidate onSubmit={create} onClick={e => e.stopPropagation()}>
       <div className="modal-heading"><h3>Add contact</h3><button type="button" onClick={() => setShowCreate(false)}>×</button></div><p>Add a customer or supplier record for use across the sales workflow.</p>
       <div className="form-section-heading"><div><h4>Contact identity</h4><p className="required-guidance"><strong className="required-copy">Required:</strong> first name and mobile. All other identity fields are optional.</p></div><span>Core customer details</span></div>
-      <div className="form-two contact-form-grid">{[['contact_name','Contact name'],['company_name','Company name'],['contact_number','Contact number'],['salutation','Salutation'],['first_name','First name'],['last_name','Last name'],['website','Website'],['language_code','Language code'],['email','Email'],['phone','Phone'],['mobile','Mobile'],['title','Designation'],['department','Department'],['payment_terms','Payment terms (days)'],['payment_terms_label','Payment terms label'],['credit_limit','Credit limit'],['pan_no','PAN number'],['gst_no','GST number']].map(([key, label]) => <label className="contact-field" key={key}><span>{label} <small>{key === 'first_name' || key === 'mobile' ? 'Required' : 'Optional'}</small></span><input aria-invalid={Boolean(fieldErrors[key])} required={key === 'first_name' || key === 'mobile'} maxLength={key === 'mobile' || key === 'phone' ? 14 : 255} type={key === 'email' ? 'email' : key === 'credit_limit' || key === 'payment_terms' ? 'number' : key === 'mobile' || key === 'phone' ? 'tel' : 'text'} inputMode={key === 'mobile' || key === 'phone' ? 'numeric' : undefined} placeholder={`Enter ${label.toLowerCase()}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} />{fieldErrors[key] && <small className="field-error" role="alert">{fieldErrors[key]}</small>}</label>)}</div>
+      <div className="form-two contact-form-grid">{[['contact_name','Contact name'],['company_name','Company name'],['contact_number','Contact number'],['salutation','Salutation'],['first_name','First name'],['last_name','Last name'],['website','Website'],['language_code','Language code'],['email','Email'],['phone','Phone'],['mobile','Mobile'],['title','Designation'],['department','Department'],['payment_terms','Payment terms (days)'],['payment_terms_label','Payment terms label'],['credit_limit','Credit limit'],['pan_no','PAN number'],['gst_no','GST number']].map(([key, label]) => <label className="contact-field" key={key}><span>{label} <small>{key === 'first_name' || key === 'mobile' ? 'Required' : 'Optional'}</small></span><input aria-invalid={Boolean(fieldErrors[key])} aria-describedby={fieldErrors[key] ? `${key}-error` : undefined} required={key === 'first_name' || key === 'mobile'} maxLength={key === 'mobile' || key === 'phone' ? 14 : 255} type={key === 'email' ? 'email' : 'text'} inputMode={key === 'contact_number' || key === 'payment_terms' || key === 'credit_limit' ? 'decimal' : key === 'mobile' || key === 'phone' ? 'numeric' : undefined} placeholder={`Enter ${label.toLowerCase()}`} value={form[key] || ''} onChange={e => setField(key, e.target.value)} />{fieldErrors[key] && <small id={`${key}-error`} className="field-error" role="alert">{fieldErrors[key]}</small>}</label>)}</div>
       <label className="checkbox-row"><input type="checkbox" checked={form.is_portal_enabled} onChange={e => setField('is_portal_enabled', e.target.checked)} /> Enable portal</label>
       <label className="checkbox-row"><input type="checkbox" checked={form.payment_reminder_enabled} onChange={e => setField('payment_reminder_enabled', e.target.checked)} /> Enable payment reminders</label>
       {addressFields('billing_address', 'Billing address')}{addressFields('shipping_address', 'Shipping address')}
