@@ -149,15 +149,15 @@ async def test_catalogue_failure_returns_nonblocking_notice_and_no_invented_prod
 
 
 @pytest.mark.asyncio
-async def test_catalogue_connector_uses_documented_books_search_and_active_filter():
+async def test_catalogue_connector_uses_documented_books_search_without_status_filter():
     class Client(ZohoClient):
         async def request(self, method, path, **kwargs):
             return {'method': method, 'path': path, **kwargs}
 
     result = await Client().search_books_items('selected-org', 'f' * 120, None, 2)
     assert result['method'] == 'GET' and result['path'] == '/books/v3/items'
-    assert result['params'] == {'organization_id': 'selected-org', 'filter_by': 'Status.Active',
-                                'per_page': 200, 'page': 2, 'search_text': 'f' * 100}
+    assert result['params'] == {'organization_id': 'selected-org', 'per_page': 40,
+                                'page': 2, 'search_text': 'f' * 100}
 
 
 @pytest.fixture

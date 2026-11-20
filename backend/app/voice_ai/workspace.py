@@ -91,13 +91,17 @@ def requirement_signature(context: dict[str, Any]) -> str:
 
 def retain_catalogue_recommendations(context: dict[str, Any], catalogue: dict[str, Any], previous: dict[str, Any]) -> None:
     """Keep failures honest when the customer's constraints changed during a call."""
+    def active(items):
+        return [item for item in items or [] if isinstance(item, dict)
+                and str(item.get('status', item.get('Status', 'active')) or 'active').strip().lower() in {'active', 'enabled'}]
+
     if catalogue.get('status') in {'ready', 'waiting'}:
-        context['recent_recommendations'] = catalogue.get('items') or []
+        context['recent_recommendations'] = active(catalogue.get('items'))
     elif catalogue.get('status') in {'syncing', 'stale'} and catalogue.get('items'):
         # A stale snapshot still has a real cached Zoho selling rate. Keep that
         # rate usable/displayable; only inventory freshness needs review.
         context['recent_recommendations'] = [{**item, 'availability_status': 'needs_review'}
-                                             for item in catalogue['items'] if isinstance(item, dict)]
+                                             for item in active(catalogue['items'])]
     elif requirement_signature(context) != requirement_signature(previous):
         context['recent_recommendations'] = []
     else:
@@ -106,7 +110,7 @@ def retain_catalogue_recommendations(context: dict[str, Any], catalogue: dict[st
              'availability_status': 'needs_review',
              'missing_specs': [*(item.get('missing_specs') or []),
                                *([] if 'catalogue_confirmation' in (item.get('missing_specs') or []) else ['catalogue_confirmation'])]}
-            for item in previous.get('recent_recommendations') or [] if isinstance(item, dict)
+            for item in active(previous.get('recent_recommendations'))
         ]
 
 

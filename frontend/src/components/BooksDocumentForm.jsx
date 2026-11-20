@@ -65,7 +65,7 @@ export default function BooksDocumentForm({ type, setError, onCreated }) {
   };
 
   const lookupItems = async value => {
-    try { const result = await call(value.trim() ? `/products?search=${encodeURIComponent(value.trim())}` : '/products?page=1'); setItems(result.items || []); }
+    try { const result = await call(value.trim() ? `/products?active_only=true&search=${encodeURIComponent(value.trim())}` : '/products?active_only=true&page=1'); setItems(result.items || []); }
     catch (error) { setError(error.message); }
   };
 

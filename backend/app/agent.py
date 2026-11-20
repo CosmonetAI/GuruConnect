@@ -264,6 +264,10 @@ def _extract_rows(payload: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def _active_catalogue_row(row: dict[str, Any]) -> bool:
+    return str(row.get('status', row.get('Status', 'active')) or 'active').strip().lower() in {'active', 'enabled'}
+
+
 def item_filters(entities: dict[str, Any]) -> dict[str, Any]:
     query = str(entities.get('product_query') or '').strip()
     query = re.sub(r'\b(show me|find|search for|search|looking for|do you have|what do you have|give me|please|products?|items?)\b', ' ', query, flags=re.I)
@@ -331,12 +335,12 @@ async def execute_node(state: AgentState) -> AgentState:
                 filters = item_filters(state.get('entities', {}))
                 payload = await zoho.books_items(org, filters=filters)
                 rows = _extract_rows(payload, 'items', 'products')
-                active_rows = [row for row in rows if str(row.get('status', '')).lower() == 'active']
+                active_rows = [row for row in rows if _active_catalogue_row(row)]
                 item_id = state.get('entities', {}).get('item_id')
                 if item_id and state.get('intent') == 'product_details':
                     detail = await zoho.books_item(org, item_id)
                     detail_rows = _extract_rows(detail, 'item', 'items', 'data')
-                    active_rows = [row for row in detail_rows if str(row.get('status', '')).lower() == 'active']
+                    active_rows = [row for row in detail_rows if _active_catalogue_row(row)]
                 if len(active_rows) == 1:
                     item = active_rows[0]
                 elif state.get('entities', {}).get('item_id'):

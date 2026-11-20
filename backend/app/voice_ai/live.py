@@ -151,7 +151,8 @@ def _selling_rate(row: dict) -> float | None:
 def normalize_catalogue_item(row: dict, *, currency: str | None = None, catalogue_source: str = 'zoho') -> dict | None:
     item_id = row.get('item_id') or row.get('id')
     name = row.get('name') or row.get('item_name')
-    if not item_id or not name or row.get('status') == 'inactive' or row.get('can_be_sold') is False:
+    status = str(row.get('status', row.get('Status', 'active')) or 'active').strip().lower()
+    if not item_id or not name or status not in {'active', 'enabled'} or row.get('can_be_sold') is False:
         return None
     image = str(row.get('image_url') or row.get('image') or '').strip()
     local_image = catalogue_source == 'local-demo' and re.fullmatch(r'/demo-products/[a-z0-9-]+\.svg', image)

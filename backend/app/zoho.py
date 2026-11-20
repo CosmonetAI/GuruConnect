@@ -581,13 +581,18 @@ class ZohoClient:
     async def list_events(self): return await self.request('GET','/bigin/v2/Events',params={'fields':'Event_Title,Start_DateTime,End_DateTime,Owner,Who_Id,What_Id,Created_Time,Modified_Time','per_page':200,'page':1})
     async def list_calls(self): return await self.request('GET','/bigin/v2/Calls',params={'fields':'Subject,Call_Start_Time,Call_Duration,Call_Type,Who_Id,What_Id,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
     async def books_items(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}
+        params={'organization_id':org,'per_page':200,'page':1}
+        status=(filters or {}).get('status')
+        if status not in (None,'','all'):
+            params['status']=status
         for key in ('name_contains','description_contains','search_text','rate_less_equals'):
             value=(filters or {}).get(key)
             if value not in (None,''): params[key]=value
         return await self.request('GET','/books/v3/items',params=params)
     async def search_books_items(self, org, query='', date=None, page=1):
-        params = {'organization_id': org, 'filter_by': 'Status.Active', 'per_page': 200, 'page': page}
+        # Books list pages must expose the complete item catalogue.  Customer
+        # recommendations apply their active/sellable guard after retrieval.
+        params = {'organization_id': org, 'per_page': 40, 'page': page}
         if query: params['search_text'] = str(query).strip()[:100]
         if date: params['date'] = date
         return await self.request('GET','/books/v3/items',params=params)
@@ -596,9 +601,9 @@ class ZohoClient:
     async def create_books_item(self,org,data): return await self.request('POST','/books/v3/items',params={'organization_id':org},json=data)
     async def delete_books_item(self,org,item_id): return await self.request('DELETE',f'/books/v3/items/{item_id}',params={'organization_id':org})
     async def books_item_masters(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'name_contains','search_text'}}); return await self.request('GET','/books/v3/itemmasters',params=params)
+        params={'organization_id':org,'per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'status','name_contains','search_text'}}); return await self.request('GET','/books/v3/itemmasters',params=params)
     async def books_item_variants(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'search_text'}}); return await self.request('GET','/books/v3/itemvariants',params=params)
+        params={'organization_id':org,'per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'status','search_text'}}); return await self.request('GET','/books/v3/itemvariants',params=params)
     async def books_customers(self,org): return await self.request('GET','/books/v3/contacts',params={'organization_id':org,'per_page':200,'page':1})
     async def search_books_customers(self,org,query,date=None, page=1):
         params={'organization_id':org,'per_page':10,'page':page,'customer_type':'customer'}

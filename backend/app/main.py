@@ -1388,9 +1388,38 @@ async def sync_pipelines():
             db.commit()
         return {'synced': True, 'limited': False, 'last_sync': now().isoformat(), 'count': len(fetched)}
     except Exception: raise HTTPException(502, 'Unable to sync Zoho Bigin pipelines')
+
+
+def _active_product(item: dict) -> bool:
+    return str(item.get('status', item.get('Status', 'active')) or 'active').strip().lower() in {'active', 'enabled'}
+
+
+def _product_matches(item: dict, query: str) -> bool:
+    needle = query.casefold()
+    return needle in ' '.join(str(item.get(key) or '') for key in ('name', 'item_name', 'sku', 'description')).casefold()
+
+
+def _product_key(item: dict) -> str:
+    return str(item.get('item_id') or item.get('id') or item.get('sku') or item.get('name') or json.dumps(item, sort_keys=True, default=str))
+
+
+def _merge_products(*groups: list[dict]) -> list[dict]:
+    merged = {}
+    for group in groups:
+        for item in group:
+            if isinstance(item, dict):
+                merged.setdefault(_product_key(item), item)
+    return list(merged.values())
+
+
+def _active_first(items: list[dict]) -> list[dict]:
+    return sorted(items, key=lambda item: 0 if _active_product(item) else 1)
+
+
 @app.get('/api/products')
-async def products(search: str = '', date: str = '', page: int = 1):
-    """Return the member's recent cache by default, then use live Books search."""
+async def products(search: str = '', date: str = '', page: int = 1, active_only: bool = False,
+                   provider_page: int | None = None):
+    """Use cache as a fast first batch, then continue through live Books pages."""
     query = search.strip()
     try:
         status = zoho.status()
@@ -1398,18 +1427,33 @@ async def products(search: str = '', date: str = '', page: int = 1):
             raise HTTPException(409, 'Connect Zoho before searching products')
         if not status.get('organization_id'):
             raise HTTPException(409, 'Select a Zoho Books organization before searching products')
-        if not query and not date.strip() and page == 1:
+        requested_provider_page = max(1, int(provider_page or page))
+        cached = []
+        if not date.strip() and page == 1 and requested_provider_page == 1:
             cached = _recent_cache_rows('products')
-            if cached:
-                return {'items': cached, 'search': '', 'page': 1, 'has_more': True,
+            if query:
+                cached = [row for row in cached if isinstance(row, dict) and _product_matches(row, query)]
+            if active_only:
+                cached = [row for row in cached if isinstance(row, dict) and _active_product(row)]
+            if len(cached) >= RECENT_ZOHO_LIMIT:
+                return {'items': _active_first(cached)[:RECENT_ZOHO_LIMIT], 'search': query, 'page': page,
+                        'has_more': True, 'next_provider_page': 1,
                         'search_by': 'search_text', 'organization_id': status['organization_id'],
-                        'source': 'supabase', 'stored_in_supabase': True}
-        payload = await zoho.search_books_items(status['organization_id'], query, date.strip() or None, page)
+                        'source': 'supabase', 'stored_in_supabase': True, 'active_only': active_only}
+        payload = await zoho.search_books_items(status['organization_id'], query, date.strip() or None,
+                                                requested_provider_page)
         rows = payload.get('items', payload.get('item_variants', payload.get('products', payload.get('data', []))))
-        items = [row for row in rows if isinstance(row, dict)]
-        _cache_recent_rows('products', items)
+        zoho_items = [row for row in rows if isinstance(row, dict)]
+        if active_only:
+            zoho_items = [row for row in zoho_items if _active_product(row)]
+        items = _active_first(_merge_products(cached, zoho_items))[:RECENT_ZOHO_LIMIT]
+        _cache_recent_rows('products', zoho_items)
         context = payload.get('page_context', {})
-        return {'items': items[:40], 'search': query, 'page': page, 'has_more': bool(context.get('has_more_page')), 'search_by': 'search_text', 'organization_id': status['organization_id'], 'source': 'zoho', 'stored_in_supabase': True}
+        return {'items': items, 'search': query, 'page': page,
+                'has_more': bool(context.get('has_more_page')), 'next_provider_page': requested_provider_page + 1,
+                'search_by': 'search_text', 'organization_id': status['organization_id'],
+                'source': 'zoho' if not cached else 'mixed', 'stored_in_supabase': True,
+                'active_only': active_only}
     except HTTPException:
         raise
     except Exception:

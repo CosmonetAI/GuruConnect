@@ -42,6 +42,11 @@ import "../styles/voice-sessions.css";
 import "../styles/session-workspace.css";
 import "../styles/live-session-page.css";
 
+const isActiveProduct = (item) => {
+  const status = String(item?.status ?? item?.Status ?? "active").trim().toLowerCase();
+  return status === "active" || status === "enabled";
+};
+
 const newProduct = () => ({
   product: "",
   sku: "",
@@ -1081,7 +1086,7 @@ export default function VoiceSessions() {
     try {
       setActiveTab("conversation");
       setLiveAnalysis("running");
-      const savedRecommendations = (recording.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku));
+      const savedRecommendations = (recording.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku) && isActiveProduct(item));
       setRecommendations(savedRecommendations);
       setProducts(savedRecommendations);
       if (recording.tags?.length) setLiveTags(recording.tags);
@@ -1098,7 +1103,7 @@ export default function VoiceSessions() {
       }
       const data = await sessionCall(`/voice-sessions/${selectedSession}/recordings/${encodeURIComponent(recording.id)}/recommendations`, { method: "POST" });
       if (!alive.current || sessionRef.current !== selectedSession) return;
-      const items = (data.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku));
+      const items = (data.recommendations || []).filter((item) => item && (item.item_id || item.id || item.sku) && isActiveProduct(item));
       const requirements = data.requirements?.length ? data.requirements : [newProduct()];
       setRecommendations(items); setProducts(items); setProductRequirements(requirements);
       setCartOpen(cart.length > 0); setContextHydrated(selectedSession);
@@ -1144,9 +1149,9 @@ export default function VoiceSessions() {
     if (!value.trim()) return;
     try {
       const data = await sessionCall(
-        `/products?search=${encodeURIComponent(value.trim())}`,
+        `/products?active_only=true&search=${encodeURIComponent(value.trim())}`,
       );
-      setProducts(data.items || []);
+      setProducts((data.items || []).filter(isActiveProduct));
     } catch (e) {
       setError(e.message);
     }
@@ -1158,9 +1163,9 @@ export default function VoiceSessions() {
     const selected = sessionRef.current;
     setCartSearchBusy(true); setCartSearchError("");
     try {
-      const data = await sessionCall(`/products?search=${encodeURIComponent(query)}`);
+      const data = await sessionCall(`/products?active_only=true&search=${encodeURIComponent(query)}`);
       if (!alive.current || ticket !== catalogueSearch.current || selected !== sessionRef.current) return;
-      setCartSearchResults(data.items || []);
+      setCartSearchResults((data.items || []).filter(isActiveProduct));
     } catch (e) {
       if (alive.current && ticket === catalogueSearch.current && selected === sessionRef.current) setCartSearchError(e.message);
     } finally {
@@ -1240,8 +1245,9 @@ export default function VoiceSessions() {
           setRecorderSessions((current) => current.map((item) => item.id === conversationId ? { ...item, tags: data.tags, ...(data.current_intent ? { intent: data.current_intent } : {}) } : item));
         }
         if (Array.isArray(data.recommendations)) {
-          setRecommendations(data.recommendations);
-          setRecorderSessions((current) => current.map((item) => item.id === conversationId ? { ...item, recommendations: data.recommendations } : item));
+          const activeRecommendations = data.recommendations.filter(isActiveProduct);
+          setRecommendations(activeRecommendations);
+          setRecorderSessions((current) => current.map((item) => item.id === conversationId ? { ...item, recommendations: activeRecommendations } : item));
         }
         setLiveGuidance({ requirements: Array.isArray(data.requirements) ? data.requirements : [], clarificationSuggestions: Array.isArray(data.clarification_suggestions) ? data.clarification_suggestions : [], currentIntent: data.current_intent || '', agentGuidance: data.agent_guidance || [], catalogueStatus: data.catalogue_status || '' });
         if (data.recording) setRecordingSnapshot(data.recording);
