@@ -11,8 +11,15 @@ import ConversationRecorder from '../Enquiries/ConversationRecorder'
 import VoiceFieldMic from './VoiceFieldMic'
 import './Walkins.css'
 
+const customerNamePattern = /^[\p{L}]+(?:[\s.'’-][\p{L}]+)*$/u
+const customerNameError = 'Name can contain letters only.'
+const validateCustomerName = (value: string) => {
+  const textError = validateText(value, 'Name', { required: true, minLength: 2, maxLength: 150 })
+  return textError || (value.trim() && !customerNamePattern.test(value.trim()) ? customerNameError : undefined)
+}
+
 const registrationSchema = z.object({
-  customerName: z.string().trim().min(2, 'Enter the customer’s full name.').max(150, 'Name is too long.'),
+  customerName: z.string().trim().min(2, 'Enter the customer’s full name.').max(150, 'Name is too long.').refine(value => customerNamePattern.test(value), customerNameError),
   mobileNumber: z.string().trim().regex(/^\d{10}$/, 'Enter exactly 10 digits.'),
   email: z.string().trim().min(1, 'Enter the visitor’s email address.').refine((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
   companyName: z.string().trim().max(150, 'Company name is too long.'),
@@ -196,7 +203,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
       : field === 'email'
         ? validateEmail(nextValue, true)
         : field === 'customerName'
-          ? validateText(nextValue, 'Name', { required: true, minLength: 2, maxLength: 150 })
+          ? validateCustomerName(nextValue)
           : field === 'companyName'
             ? validateText(nextValue, 'Company name', { maxLength: 150 })
             : field === 'projectName'
@@ -338,7 +345,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
             <small>Live transcription is shown while recording. Visitor details are translated and extracted once after you end the recording.</small>
           </div>}
           <div className="walkin-form-grid">
-            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={voiceBusy} id="customerName" maxLength={150} autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', sanitizeTextInput(event.target.value, 150))} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerName', sanitizeTextInput(value, 150))} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={voiceBusy} id="customerName" type="text" inputMode="text" pattern="[\p{L}\s.'’-]+" maxLength={150} autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', sanitizeTextInput(event.target.value, 150))} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerName', sanitizeTextInput(value, 150))} /></div></Field>
             <Field label={<>{form.customerType === 'vendor' ? 'Vendor Phone No.' : 'Customer Phone No.'} <RotatingPrompt prompt="phone" /></>} name="mobileNumber" required error={errors.mobileNumber}><div className="walkin-phone-input"><select aria-label="Country code" value={form.phoneCountryCode} onChange={(event) => update('phoneCountryCode', event.target.value as FormValues['phoneCountryCode'])}>{countryCodes.map(([code, country], index) => <option key={`${code}-${country}-${index}`} value={code}>{code} {country}</option>)}</select><div className="walkin-voice-input"><input disabled={voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="numeric" maxLength={10} value={form.mobileNumber} onChange={(event) => update('mobileNumber', sanitizePhoneNumber(event.target.value))} placeholder="10 digit phone number" aria-invalid={!!errors.mobileNumber} /><VoiceFieldMic field="phone" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('mobileNumber', sanitizePhoneNumber(value))} /></div></div></Field>
             <Field label={<>{form.customerType === 'vendor' ? 'Vendor Email Address' : 'Customer Email Address'} <RotatingPrompt prompt="email" /></>} name="email" required error={errors.email}><div className="walkin-voice-input"><input disabled={voiceBusy} id="email" type="email" maxLength={320} autoComplete="email" value={form.email} onChange={(event) => update('email', sanitizeTextInput(event.target.value, 320))} placeholder={form.customerType === 'vendor' ? 'vendor@example.com' : 'customer@example.com'} required /><VoiceFieldMic field="email" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('email', sanitizeTextInput(value, 320))} /></div></Field>
             <Field label={form.customerType === 'vendor' ? 'Vendor Source type' : 'Customer Source type'} name="source"><div className="walkin-source-input" aria-disabled="true"><input id="source" value="Retail walk-in" disabled readOnly tabIndex={-1} aria-readonly="true" /></div></Field>

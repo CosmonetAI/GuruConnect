@@ -42,6 +42,13 @@ describe('WalkinRegistration voice assist', () => {
     expect(screen.getByRole('button', { name: /register visitor/i })).toBeDisabled()
     expect(mocks.register).not.toHaveBeenCalled()
   })
+  it('rejects numbers in the customer full name', async () => {
+    setup()
+    fireEvent.change(screen.getByLabelText(/customer full name/i), { target: { value: 'Asha Rao 2' } })
+    submit()
+    expect(await screen.findByText(/name can contain letters only/i)).toBeInTheDocument()
+    expect(mocks.register).not.toHaveBeenCalled()
+  })
   it('registers without audio exactly as before', async () => {
     setup(); fill(); submit(); await confirm()
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalled())
