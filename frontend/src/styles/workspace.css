@@ -67,6 +67,287 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
   .walkin-header p { color: #62738c; margin: 0; }
   .walkin-header .walkin-header-actions { position: fixed; z-index: 999; top: 64px; right: 32px; }
 }
+
+@media (max-width: 768px) {
+  .app-root:has(.enquiries-header-actions) .flow-page-header {
+    min-height: 0;
+    margin-bottom: 24px;
+  }
+
+  .app-root:has(.enquiries-header-actions) .flow-page-header > div:first-child {
+    position: static;
+    width: 100%;
+    max-width: none;
+  }
+
+  .app-root:has(.enquiries-header-actions) .flow-page-header p {
+    max-width: 100%;
+  }
+
+  .app-root:has(.enquiries-header-actions) .enquiries-header-actions {
+    position: static;
+    width: 100%;
+    margin-top: 0;
+  }
+}
+
+/* Responsive header contract: keep titles and controls in separate, fluid
+   regions instead of relying on fixed desktop offsets at every width. */
+@media (min-width: 1101px) {
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    left: 280px;
+    right: clamp(20px, 3vw, 40px);
+  }
+
+  .flow-page-header > div:first-child,
+  .analytics-page > .analytics-header > div:first-child,
+  .gg-page-header > div:first-child,
+  .pipelines-page > .pipelines-hero > div:first-child,
+  .walkin-header > div:first-child,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    width: min(100%, calc(100% - 340px));
+    max-width: none;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1100px) {
+  .app-root::before,
+  .app-root:has(.analytics-page)::before,
+  .app-root:has(.zoho-feedback-scope)::before,
+  .app-root:has(.enquiries-header-actions)::before,
+  .app-root:has(.pipelines-page)::before {
+    left: 220px;
+    height: 176px;
+  }
+
+  .app-root .app-content,
+  .app-root:has(.zoho-feedback-scope) .app-content,
+  .app-root:has(.enquiries-header-actions) .app-content,
+  .app-root:has(.pipelines-page) .app-content {
+    padding: 192px 24px 24px;
+  }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    position: fixed;
+    top: 0;
+    right: 24px;
+    left: 252px;
+    height: 176px;
+    min-height: 176px;
+    padding: 14px 0 12px;
+  }
+
+  .flow-page-header > div:first-child,
+  .analytics-page > .analytics-header > div:first-child,
+  .gg-page-header > div:first-child,
+  .pipelines-page > .pipelines-hero > div:first-child,
+  .walkin-header > div:first-child,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    position: static;
+    width: min(100%, calc(100% - 16px));
+    max-width: none;
+  }
+
+  .flow-page-header .page-title,
+  .analytics-page > .analytics-header .page-title,
+  .gg-page-header h1,
+  .pipelines-page > .pipelines-hero h2,
+  .walkin-header h1,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > h2 {
+    font-size: clamp(26px, 4vw, 34px);
+    overflow-wrap: anywhere;
+  }
+
+  .flow-page-header p,
+  .analytics-page > .analytics-header p,
+  .pipelines-page > .pipelines-hero p,
+  .walkin-header p,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions,
+  .flow-page-header > .button,
+  .analytics-page > .analytics-header .analytics-filters,
+  .pipelines-page > .pipelines-hero .sync-meta,
+  .walkin-header .walkin-header-actions,
+  .gg-page-header-actions,
+  .gg-page-header > .pill,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    position: absolute;
+    top: auto;
+    right: 0;
+    bottom: 14px;
+    max-width: 100%;
+  }
+
+  .platform-bar {
+    top: 14px;
+    right: 24px;
+    max-width: min(52%, 560px);
+  }
+}
+
+@media (max-width: 768px) {
+  .app-root::before {
+    height: 68px;
+  }
+
+  .platform-bar {
+    top: 10px;
+    right: 12px;
+    max-width: calc(100% - 64px);
+    align-items: center;
+    gap: 5px;
+  }
+
+  .platform-bar > * {
+    min-width: 0;
+  }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    position: static;
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    margin: 0 0 24px;
+    padding: 0;
+    gap: 16px;
+  }
+
+  .flow-page-header > div:first-child,
+  .analytics-page > .analytics-header > div:first-child,
+  .gg-page-header > div:first-child,
+  .pipelines-page > .pipelines-hero > div:first-child,
+  .walkin-header > div:first-child,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    position: static;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .flow-page-header .page-title,
+  .analytics-page > .analytics-header .page-title,
+  .gg-page-header h1,
+  .pipelines-page > .pipelines-hero h2,
+  .walkin-header h1,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > h2 {
+    font-size: clamp(26px, 8vw, 34px);
+    overflow-wrap: anywhere;
+  }
+
+  .flow-page-header p,
+  .analytics-page > .analytics-header p,
+  .pipelines-page > .pipelines-hero p,
+  .walkin-header p,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    max-width: none;
+    overflow-wrap: anywhere;
+  }
+
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions,
+  .flow-page-header > .button,
+  .analytics-page > .analytics-header .analytics-filters,
+  .pipelines-page > .pipelines-hero .sync-meta,
+  .walkin-header .walkin-header-actions,
+  .gg-page-header-actions,
+  .gg-page-header > .pill,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .gg-page-header-actions,
+  .gg-header-action-group,
+  .walkin-header .walkin-header-actions,
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .flow-page-header > .button,
+  .gg-header-action-group > *,
+  .walkin-header .walkin-header-actions > *,
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions > * {
+    max-width: 100%;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    align-items: stretch;
+  }
+
+  .analytics-page > .analytics-header .analytics-filters label,
+  .analytics-page > .analytics-header .analytics-filters select,
+  .analytics-page > .analytics-header .analytics-filters > .button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .zoho-feedback-scope .setup-status {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 420px) {
+  .platform-bar {
+    right: 8px;
+    max-width: calc(100% - 56px);
+  }
+
+  .platform-bar .availability-pill,
+  .platform-bar .read-only-pill {
+    max-width: 100%;
+  }
+
+  .platform-bar .availability-pill select {
+    max-width: 92px;
+  }
+
+  .app-content {
+    padding-inline: 12px;
+  }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .flow-page-header > .button,
+  .gg-header-action-group > *,
+  .walkin-header .walkin-header-actions > *,
+  .flow-page-header:has(.enquiries-header-actions) .enquiries-header-actions > * {
+    width: 100%;
+    justify-content: center;
+  }
+}
 .inventory-import-trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid #b9d2ff; border-radius: 999px; background: #f5f8ff; color: #175cd3; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; box-shadow: 0 2px 8px rgba(26, 66, 104, .05); }
 .inventory-import-trigger:hover { border-color: #8fb4f5; background: #eaf1ff; }
 .inventory-import-trigger.has-inventory { border-color: #b9e1d7; color: #117c67; background: #effbf7; }
@@ -547,6 +828,24 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
     pointer-events: none;
   }
 
+  /* The enquiries description can wrap at narrower desktop widths. Reserve
+     the extra line so it does not sit on top of the header border. */
+  .app-root:has(.enquiries-header-actions)::before {
+    height: 156px;
+  }
+
+  .app-root:has(.pipelines-page)::before {
+    height: 156px;
+  }
+
+  .app-root:has(.enquiries-header-actions) .app-content {
+    padding-top: 172px;
+  }
+
+  .app-root:has(.pipelines-page) .app-content {
+    padding-top: 172px;
+  }
+
   .platform-bar { position: fixed; top: 16px; right: 32px; z-index: 1000; }
   .app-root .app-content { padding-top: 140px; }
 
@@ -567,6 +866,16 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
     padding: 16px 0 8px;
     align-items: flex-start;
     background: transparent;
+  }
+
+  .app-root:has(.enquiries-header-actions) .flow-page-header {
+    height: 156px;
+    min-height: 156px;
+  }
+
+  .app-root:has(.pipelines-page) .pipelines-page > .pipelines-hero {
+    height: 156px;
+    min-height: 156px;
   }
 
   .flow-page-header > div:first-child,
@@ -765,7 +1074,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
   display: flex;
   align-items: center;
   flex-direction: row;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   height: auto;
   padding: 0;
@@ -776,13 +1085,14 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .zoho-feedback-scope .setup-status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 38px;
-  padding: 0 14px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
   border: 1px solid #b9e5d3;
   border-radius: 999px;
   background: #effbf6;
   color: #155b42;
+  font-size: 13px;
   font-weight: 750;
   box-shadow: 0 3px 10px rgba(26, 101, 74, .08);
 }
@@ -797,10 +1107,10 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
   align-items: center;
   gap: 4px;
   margin-left: 2px;
-  padding-left: 8px;
+  padding-left: 6px;
   border-left: 1px solid #b9e5d3;
   color: #3b745e;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -808,7 +1118,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
   display: inline;
   margin: 0;
   color: #7185a1;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   white-space: nowrap;
 }
@@ -863,5 +1173,211 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 
   .analytics-page > .page-loader {
     margin-bottom: 16px;
+  }
+}
+
+/* Keep every fixed desktop header on one compact shared height. */
+@media (min-width: 769px) {
+  .app-root::before,
+  .app-root:has(.analytics-page)::before,
+  .app-root:has(.zoho-feedback-scope)::before,
+  .app-root:has(.enquiries-header-actions)::before,
+  .app-root:has(.pipelines-page)::before {
+    height: 140px;
+  }
+
+  .app-root .app-content,
+  .app-root:has(.analytics-page) .app-content,
+  .app-root:has(.zoho-feedback-scope) .app-content,
+  .app-root:has(.enquiries-header-actions) .app-content,
+  .app-root:has(.pipelines-page) .app-content {
+    padding-top: 156px;
+  }
+
+  .flow-page-header,
+  .analytics-page > .analytics-header,
+  .gg-page-header,
+  .pipelines-page > .pipelines-hero,
+  .walkin-header,
+  .zoho-feedback-scope .setup-page > .setup-hero,
+  .app-root:has(.enquiries-header-actions) .flow-page-header,
+  .app-root:has(.pipelines-page) .pipelines-page > .pipelines-hero {
+    height: 140px;
+    min-height: 140px;
+  }
+
+  .flow-page-header > div:first-child,
+  .analytics-page > .analytics-header > div:first-child,
+  .gg-page-header > div:first-child,
+  .pipelines-page > .pipelines-hero > div:first-child,
+  .walkin-header > div:first-child,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    max-width: min(1000px, calc(100% - 260px));
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    right: 300px;
+  }
+
+  .flow-page-header .page-title,
+  .analytics-page > .analytics-header .page-title,
+  .gg-page-header h1,
+  .pipelines-page > .pipelines-hero h2,
+  .walkin-header h1,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > h2,
+  .voice-sessions-page > .voice-sessions-page-header .page-title,
+  .office-processing > .office-row:first-child .page-title {
+    font-size: 34px !important;
+    line-height: 1.08;
+    letter-spacing: -.045em;
+    font-weight: 760;
+    margin-top: 6px;
+    margin-bottom: 7px;
+  }
+
+  .flow-page-header p,
+  .analytics-page > .analytics-header p,
+  .pipelines-page > .pipelines-hero p,
+  .walkin-header p,
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    max-width: 1000px;
+    overflow: visible;
+    font-size: 14px !important;
+    line-height: 1.4;
+    white-space: normal;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p::after {
+    content: none !important;
+  }
+}
+
+/* Zoho connection status gets its own reserved area so it never sits on top
+   of the wizard title or description. */
+@media (min-width: 1101px) {
+  .app-root:has(.zoho-feedback-scope)::before {
+    height: 190px;
+  }
+
+  .app-root:has(.zoho-feedback-scope) .app-content {
+    padding-top: 206px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    height: 176px;
+    min-height: 176px;
+    padding: 16px 0 14px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child {
+    right: 320px;
+    width: auto;
+    max-width: none;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:first-child > p {
+    max-width: 760px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    position: absolute;
+    top: 76px;
+    right: 0;
+    width: 290px;
+  }
+
+  .zoho-feedback-scope .setup-status {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    min-width: 0;
+    height: auto;
+    padding: 11px 14px;
+    border: 1px solid #b9e5d3;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #f3fcf7, #e8f8f0);
+    box-shadow: 0 8px 20px rgba(26, 101, 74, .09);
+  }
+
+  .zoho-feedback-scope .setup-status-pill {
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .zoho-feedback-scope .setup-status > small {
+    display: block;
+    margin: 0;
+    color: #4f7d6a;
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: normal;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1100px) {
+  .app-root:has(.zoho-feedback-scope)::before {
+    height: 200px;
+  }
+
+  .app-root:has(.zoho-feedback-scope) .app-content {
+    padding-top: 216px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero {
+    height: 190px;
+    min-height: 190px;
+  }
+
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    right: 0;
+    bottom: 14px;
+    width: min(100%, 290px);
+  }
+
+  .zoho-feedback-scope .setup-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px 10px;
+    height: auto;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid #b9e5d3;
+    border-radius: 13px;
+    background: #effbf6;
+  }
+
+  .zoho-feedback-scope .setup-status > small {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 768px) {
+  .zoho-feedback-scope .setup-page > .setup-hero > div:last-child {
+    position: static;
+  }
+
+  .zoho-feedback-scope .setup-status {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 11px 13px;
+    border: 1px solid #b9e5d3;
+    border-radius: 13px;
+    background: linear-gradient(135deg, #f3fcf7, #e8f8f0);
+  }
+
+  .zoho-feedback-scope .setup-status-pill {
+    max-width: 100%;
+  }
+
+  .zoho-feedback-scope .setup-status > small {
+    white-space: normal;
+    line-height: 1.35;
   }
 }
