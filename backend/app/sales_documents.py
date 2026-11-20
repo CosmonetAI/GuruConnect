@@ -354,6 +354,7 @@ class SalesDocumentService:
                 if not source_id:
                     payload['reference_number'] = f'GC-{identity}'
                 if source_id:
+                    payload['reason'] = 'Updated from ConnectCosmos customer session'
                     result = await getattr(self.zoho, update_method)(org, source_id, payload)
                 else:
                     result = await getattr(self.zoho, create_method)(org, payload)

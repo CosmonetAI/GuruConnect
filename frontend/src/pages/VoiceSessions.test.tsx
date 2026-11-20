@@ -116,6 +116,27 @@ describe('live session integration', () => {
     expect(mocks.unmounts).toBe(0)
   })
 
+  it('keeps an opened customer invoice as a customer when the edited cart is completed', async () => {
+    installLiveApi((path, options) => {
+      if (path.startsWith('/invoices?') && path.includes('search_text=Customer%20A')) return { invoices: [{ invoice_id: 'invoice-7', invoice_number: 'INV-000007', customer_name: 'Customer A', date: '2026-11-04', total: 100 }] }
+      if (path === '/invoices/invoice-7') return { invoice: { invoice_id: 'invoice-7', invoice_number: 'INV-000007', customer_name: 'Customer A', line_items: [{ item_id: 'fan-1', name: 'BLDC fan', quantity: 2, rate: 4499, tax_id: 'tax-18' }] } }
+      if (path.endsWith('/sales-documents/options')) return { mode: 'zoho', email: { configured: false }, document_types: ['invoice', 'quote', 'sales-order'], taxes: [{ tax_id: 'tax-18', tax_name: 'GST 18%', tax_percentage: 18 }], zoho_region: 'in', customer: { name: 'Customer A', phone: '9876543210', email: '' } }
+      if (path.endsWith('/sales-documents') && options.method === 'POST') return pdfResult()
+      return undefined
+    })
+    await openFirst()
+    fireEvent.click(await screen.findByRole('button', { name: 'Documents' }))
+    fireEvent.click(await screen.findByRole('button', { name: /INV-000007/ }))
+    await waitFor(() => expect(document.querySelector('.live-session-workspace')).toHaveAttribute('data-layout', 'cart'))
+    fireEvent.click(screen.getByRole('button', { name: 'Complete cart' }))
+    await screen.findByRole('dialog', { name: 'Create sales document' })
+    fireEvent.click(screen.getByRole('button', { name: 'Create & download PDF' }))
+    await screen.findByText('Invoice INV-1 created')
+    const write = mocks.call.mock.calls.find(([path, options]) => path.endsWith('/sales-documents') && options.method === 'POST')
+    expect(write).toBeDefined()
+    expect(JSON.parse(write![1].body)).toMatchObject({ type: 'invoice', customer_type: 'customer', source_document_id: 'invoice-7', line_items: [{ tax_id: 'tax-18' }] })
+  })
+
   it('labels local sample inventory and opens a download-only demo document review', async () => {
     mocks.localMode = true
     installLiveApi(path => path.endsWith('/live') ? { ...liveData(), recommendations: [{ ...fan, catalogue_source: 'local-demo' }], notices: [{ code: 'local_demo_catalogue' }] } : path.endsWith('/sales-documents/options') ? { mode: 'local-demo', email: { provider: 'smtp2go', configured: false }, document_types: ['invoice', 'quote', 'sales-order'], customer: { name: 'Customer A', phone: '9876543210', email: '' } } : undefined)

@@ -155,6 +155,7 @@ async def test_source_document_updates_existing_books_document_without_creating_
     assert len(books.created) == 0
     assert 'reference_number' not in books.updated[2]
     assert books.updated[2]['line_items'][0]['tax_id'] == '999'
+    assert books.updated[2]['reason'] == 'Updated from ConnectCosmos customer session'
 
 
 @pytest.mark.asyncio

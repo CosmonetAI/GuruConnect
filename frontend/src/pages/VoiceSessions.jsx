@@ -422,16 +422,8 @@ function SessionViewModal({ view, identity, selectedContact, liveTags, liveKeywo
 
 function SessionDocumentsPanel({ cart, documentResult, documents, documentSearchState, searchQuery, onSearchQueryChange, documentsError, onOpenDocument, onCreate, onDownload, permissions, onRecordDelete }) {
   const [searchInput, setSearchInput] = useState(searchQuery ?? "");
-  const document = documentResult?.document;
   const hasCart = cart.length > 0;
   const searchItems = sessionDocumentDefinitions.map((definition) => ({ definition, state: documentSearchState[definition.type] })).filter(({ state }) => state);
-  const createdDefinition = document ? sessionDocumentDefinitions.find((item) => item.type === document.type) : null;
-  const createdDocumentRecord = document && createdDefinition ? { ...document, __document_type: createdDefinition.type, [createdDefinition.idKey]: document.id } : null;
-  const createdDocumentCard = document ? <article className="session-document-record-card session-document-created-card" role="button" tabIndex={0} title="Open in cart" aria-label={`${document.updated_existing ? "Updated" : "Created"} ${String(document.type || "document").replaceAll("-", " ")} ${document.number || "document"}`} onClick={() => createdDocumentRecord && onOpenDocument(createdDocumentRecord)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && createdDocumentRecord) { event.preventDefault(); onOpenDocument(createdDocumentRecord); } }}>
-    <span className="session-document-record-type"><SessionDocumentIcon type={document.type} />{document.updated_existing ? "Updated document" : "Created document"}</span>
-    <div className="session-document-record-title"><strong>{document.number || "Sales document"}</strong><button type="button" className="session-document-open-link" onClick={(event) => { event.stopPropagation(); onDownload(); }}>Download PDF</button></div>
-    <span className="session-document-record-meta">{String(document.type || "document").replaceAll("-", " ")} · {document.demo ? "Sample PDF" : "PDF ready"}</span>
-  </article> : null;
   useEffect(() => { setSearchInput(searchQuery ?? ""); }, [searchQuery]);
   const submitSearch = () => onSearchQueryChange(searchInput.trim());
   return (
@@ -449,7 +441,7 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
         </div>
       </div>
       {documentsError && <p className="session-documents-error">{documentsError}</p>}
-      {(documents.length > 0 || document) && <div className="session-documents-results" aria-label="Matching Zoho Books documents">
+      {documents.length > 0 && <div className="session-documents-results" aria-label="Matching Zoho Books documents">
         {documents.map((record) => {
           const definition = sessionDocumentDefinitions.find((item) => item.type === record.__document_type) || sessionDocumentDefinitions[0];
           const id = record[definition.idKey];
@@ -462,13 +454,11 @@ function SessionDocumentsPanel({ cart, documentResult, documents, documentSearch
               <span className="session-document-record-meta">{record.date || record.created_time || "Date not provided"}{record.status ? ` · ${String(record.status).replaceAll("_", " ")}` : ""}{record.total != null ? ` · ${record.currency_symbol || "₹"}${Number(record.total).toLocaleString("en-IN")}` : ""}</span>
               <DocumentCardActions record={record} type={definition.type} permissions={permissions} onRecordDelete={() => onRecordDelete?.(record)} />
             </article>
-            {record === documents[0] && createdDocumentCard}
           </Fragment>;
         })}
-        {!documents.length && createdDocumentCard}
       </div>}
       {searchItems.length > 0 && searchItems.every(({ state }) => state.status !== "searching") && !documentsError && documents.length === 0 && <p className="session-documents-empty-search">No matching Zoho Books documents found for this customer.</p>}
-      {!document && hasCart && DOCUMENT_TYPES.some(type => canDocumentAction(permissions, type, "create")) ? <div className="session-document-card session-document-empty">
+      {!documents.length && hasCart && DOCUMENT_TYPES.some(type => canDocumentAction(permissions, type, "create")) ? <div className="session-document-card session-document-empty">
         <div>
           <strong>Ready to create a document</strong>
           <span>{cart.length} product{cart.length === 1 ? "" : "s"} selected in the cart.</span>
@@ -857,6 +847,7 @@ export default function VoiceSessions() {
         const quantity = Math.max(1, Number(line.quantity || 1));
         const rate = Number(line.rate ?? line.selling_price ?? line.selling_rate ?? line.sales_rate ?? line.unit_price ?? line.price ?? 0);
         const name = line.name || line.item_name || line.description || "Document item";
+        const taxId = line.tax_id || line.tax?.tax_id || line.tax?.id || line.tax_details?.tax_id || undefined;
         return {
           ...line,
           item_id: itemId,
@@ -867,12 +858,18 @@ export default function VoiceSessions() {
           rate: Number.isFinite(rate) ? rate : 0,
           discount: Number(line.discount || 0),
           discount_type: line.discount_type || "percentage",
+          tax_id: taxId,
         };
       }).filter((line) => line.item_id);
       if (alive.current) {
         setCart(loadedCart);
+        setSelectedTaxId(String(loadedCart.find((line) => line.tax_id)?.tax_id || ""));
         setCartOpen(true);
         setSourceDocumentType(definition.type); setSourceDocumentId(id); setSourceDocumentNumber(documentTitle(record, definition));
+        // The document being edited is authoritative for the Books party role.
+        // A contact can exist in both Books roles, so resolving it by phone/email
+        // can otherwise incorrectly turn a customer invoice into a vendor flow.
+        setCustomerType(definition.type === "purchase-order" ? "dealer" : "customer");
         setActiveTab("conversation");
         setSessionDocumentsError(loadedCart.length ? "" : "This document has no catalogue line items to load into the cart.");
       }
@@ -1422,7 +1419,7 @@ export default function VoiceSessions() {
     if (documentPendingCreation) setDocumentProgress({ state: "loading", label: `${documentTypeLabel(documentType)} creation is still in progress…` });
     setDocumentModalOpen(false);
   };
-  const returnToDefaultSession = () => { setCart([]); setCartOpen(false); setActiveTab("conversation"); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); };
+  const returnToDefaultSession = () => { setCart([]); setCartOpen(false); setActiveTab("conversation"); setDocumentRefreshToken((current) => current + 1); setSourceDocumentType(null); setSourceDocumentId(null); setSourceDocumentNumber(null); };
   const documentScopeCurrent = (snapshot) => alive.current && documentSnapshot.current === snapshot && currentDocumentScope.current === snapshot.scope && sessionRef.current === snapshot.session;
   const createDocument = async (type) => {
     const snapshot = documentSnapshot.current;
