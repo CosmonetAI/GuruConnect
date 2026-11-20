@@ -69,7 +69,7 @@ html, body, #app {
 .password-input-wrap { position: relative; }
 .password-input-wrap input { width: 100%; padding-right: 44px; }
 .password-visibility-button { position: absolute; top: 50%; right: 6px; display: grid; place-items: center; width: 34px; min-height: 34px; padding: 0; border: 0; background: transparent; color: #58708f; transform: translateY(-50%); }
-.password-visibility-button:hover { color: #2563eb; background: #eff5ff; box-shadow: none; transform: translateY(-50%); }
+.password-visibility-button:hover { color: #2563eb; background: #eff5ff; box-shadow: none; transform: translateY(-50%) !important; }
 
 .sidebar-footer {
   margin-top: auto;

@@ -305,7 +305,7 @@ export default function WalkinRegistration({ enquiryMode = false }: { enquiryMod
       allowLeave.current = true
       navigate(enquiryMode
         ? (visit.convertedEnquiryReference ? `/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}` : '/enquiries')
-        : '/walkins', { replace: true })
+        : '/walkins', { replace: true, state: enquiryMode ? undefined : { successMessage: 'Registration completed' } })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Clock3, Plus, RefreshCw } from 'lucide-react'
 import { walkinPurposes, walkinStatuses, type WalkinVisit } from '../../types/walkin'
 import { isWalkinDemoMode, listWalkinVisitPage, type WalkinVisitPage } from '../../services/walkinService'
@@ -21,7 +21,10 @@ function waitingTime(value: string) {
 
 export default function WalkinsOverview() {
   const { workspace } = useOffice()
+  const location = useLocation()
+  const navigate = useNavigate()
   const canRegisterVisitor = workspace?.role === 'receptionist'
+  const [successMessage, setSuccessMessage] = useState('')
   const [visits, setVisits] = useState<WalkinVisit[]>([])
   const [query, setQuery] = useState('')
   const [purpose, setPurpose] = useState('')
@@ -31,6 +34,13 @@ export default function WalkinsOverview() {
   const [page, setPage] = useState(1)
   const [result, setResult] = useState<WalkinVisitPage | null>(null)
   const sequence = useRef(0)
+
+  useEffect(() => {
+    const message = location.state?.successMessage
+    if (!message) return
+    setSuccessMessage(String(message))
+    navigate(location.pathname, { replace: true, state: null })
+  }, [location, navigate])
 
   const refresh = useCallback(async () => {
     const ticket = ++sequence.current
@@ -80,6 +90,7 @@ export default function WalkinsOverview() {
       </header>
 
       {isWalkinDemoMode() && <div className="walkin-notice">Demo mode — walk-in records are stored in this browser. No production authentication or database is configured.</div>}
+      {successMessage && <div className="walkin-notice" role="status">{successMessage}</div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
       <section className="walkin-stat-grid" aria-label="Walk-in summary">
