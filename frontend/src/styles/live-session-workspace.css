@@ -157,12 +157,14 @@
 .live-session-workspace .lws-note-error { color: #b34848; font-size: 10px; line-height: 1.4; }
 .live-session-workspace .lws-notes.is-collapsed { align-self: start; min-height: 0; }
 .live-session-workspace .lws-notes.is-collapsed .lws-notes-toggle { border-bottom: 0; border-radius: 12px; }
-.live-session-workspace .lws-cart { flex: 1 1 auto; min-height: 260px; padding-bottom: 12px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #cbd8e9 transparent; }
+.live-session-workspace .lws-cart { flex: 1 1 auto; min-height: 260px; padding-bottom: 12px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #cbd8e9 transparent; container: customer-cart / inline-size; }
 .live-session-workspace .lws-cart .lws-panel-heading { padding: 13px 14px 14px; }
 .live-session-workspace .lws-cart .lws-panel-heading h3 { color: #0954c0; font-size: 17px; }
 .live-session-workspace .lws-cart .lws-panel-heading h3 span { font-size: 15px; }
-.live-session-workspace .lws-cart-table { margin: 0 11px; border: 1px solid #e4edf8; border-radius: 9px; overflow: hidden; }
-.live-session-workspace .lws-cart-table-header, .live-session-workspace .lws-cart-row { display: grid; grid-template-columns: minmax(135px, 1.65fr) minmax(56px, .7fr) 90px minmax(90px, 1fr) minmax(61px, .75fr) 22px; align-items: center; gap: 9px; }
+.live-session-workspace .lws-cart-table { display: grid; grid-template-columns: minmax(0, 1fr) max-content 90px 100px max-content 22px; column-gap: 10px; margin: 0 11px; border: 1px solid #e4edf8; border-radius: 9px; overflow: hidden; }
+/* Share the money columns across every row so longer amounts cannot overlap controls. */
+.live-session-workspace .lws-cart-table-header, .live-session-workspace .lws-cart-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; column-gap: inherit; }
+.live-session-workspace .lws-cart-table-header > :nth-child(2), .live-session-workspace .lws-cart-table-header > :nth-child(5), .live-session-workspace .lws-cart-unit, .live-session-workspace .lws-line-total { text-align: right; font-variant-numeric: tabular-nums; }
 .live-session-workspace .lws-cart-table-header { min-height: 38px; padding: 8px 10px; background: #f7faff; color: #6a83a6; font-size: 9px; font-weight: 650; }
 .live-session-workspace .lws-cart-row { min-height: 112px; padding: 15px 10px; border-top: 1px solid #edf2f8; animation: lws-cart-item-enter .3s ease-out; }
 .live-session-workspace .lws-cart-product { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -176,13 +178,15 @@
 .live-session-workspace .lws-quantity button { display: grid; width: 25px; flex: 0 0 25px; place-items: center; padding: 0; border: 0; background: #f6faff; color: #1763e9; }
 .live-session-workspace .lws-quantity button:hover:not(:disabled) { background: #e5efff; }
 .live-session-workspace .lws-quantity input { width: 34px; min-width: 0; flex: 1; padding: 0; border: 0; border-right: 1px solid #e8effb; border-left: 1px solid #e8effb; border-radius: 0; outline-offset: -2px; color: #334d6c; background: #fff; text-align: center; font-size: 11px; appearance: textfield; -moz-appearance: textfield; }
+.live-session-workspace .lws-quantity button, .live-session-workspace .lws-quantity input, .live-session-workspace .lws-discount input, .live-session-workspace .lws-discount select { min-height: 0; height: 100%; margin: 0; }
 .live-session-workspace input::-webkit-outer-spin-button, .live-session-workspace input::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
-.live-session-workspace .lws-discount { min-width: 0; }
-.live-session-workspace .lws-discount-caption { display: block; margin-bottom: 4px; color: #8c9cb3; font-size: 8px; }
+.live-session-workspace .lws-discount { position: relative; min-width: 0; }
+/* Annotations sit outside the control's alignment box, including when a saving appears. */
+.live-session-workspace .lws-discount-caption { position: absolute; bottom: calc(100% + 4px); left: 0; color: #8c9cb3; font-size: 8px; }
 .live-session-workspace .lws-discount > div { display: flex; height: 31px; border: 1px solid #d9e5f5; border-radius: 5px; overflow: hidden; }
 .live-session-workspace .lws-discount input { width: 48px; min-width: 0; flex: 1; padding: 4px 7px; border: 0; border-radius: 0; color: #3d5679; background: #fff; font-size: 11px; }
 .live-session-workspace .lws-discount select { width: 39px; flex: 0 0 auto; padding: 0 2px; border: 0; border-left: 1px solid #e5edf9; border-radius: 0; background: #fff; color: #4d6790; font-size: 10px; }
-.live-session-workspace .lws-discount > small { display: block; margin-top: 5px; color: #08a26a; font-size: 10px; font-weight: 650; }
+.live-session-workspace .lws-discount > small { position: absolute; top: calc(100% + 5px); right: 0; color: #08a26a; font-size: 10px; font-weight: 650; white-space: nowrap; }
 .live-session-workspace .lws-remove-item { width: 22px; }
 .live-session-workspace .lws-remove-item:hover { background: #fff0f0; color: #bd4b4b; }
 .live-session-workspace .lws-tax-rule { display:flex; align-items:flex-end; gap:8px; margin:0 13px 12px; padding:10px 11px; border:1px solid #dbe7f5; border-radius:9px; background:#f8fbff; }
@@ -260,7 +264,6 @@
   .live-session-workspace.is-cart-view .lws-note-editor textarea { min-height: 65px; }
   .live-session-workspace.is-cart-view .lws-work-grid .lws-cart-lane { display: block; overflow: visible; }
   .live-session-workspace.is-cart-view .lws-work-grid .lws-cart-lane > * + * { margin-top: 12px; }
-  .live-session-workspace.is-cart-view .lws-cart-table-header, .live-session-workspace.is-cart-view .lws-cart-row { grid-template-columns: minmax(110px, 1.6fr) 60px 82px 87px 62px 20px; gap: 6px; }
   .live-session-workspace.is-cart-view .lws-cart-product .lws-product-image { width: 40px; height: 50px; }
 }
 @container (max-width: 860px) {
@@ -290,18 +293,22 @@
   .live-session-workspace .lws-product-list { grid-auto-columns: minmax(205px, 1fr); }
   .live-session-workspace.is-cart-view .lws-conversation-lane { grid-template-columns: minmax(0, 1fr); }
   .live-session-workspace.is-cart-view .lws-suggestions { max-height: none; }
-  .live-session-workspace .lws-cart-table-header { display: none; }
-  .live-session-workspace.is-cart-view .lws-cart-row { grid-template-columns: minmax(0, 1fr) 95px 28px; gap: 12px; padding: 14px 10px; }
-  .live-session-workspace .lws-cart-product { grid-column: 1 / 3; }
-  .live-session-workspace .lws-cart-unit { display: none; }
-  .live-session-workspace .lws-quantity { grid-column: 1; grid-row: 2; max-width: 95px; }
-  .live-session-workspace .lws-discount { grid-column: 2; grid-row: 2; }
-  .live-session-workspace .lws-line-total { grid-column: 1 / 3; grid-row: 3; text-align: right; }
-  .live-session-workspace .lws-remove-item { grid-column: 3; grid-row: 1; }
   .live-session-workspace .lws-cart .lws-panel-heading { align-items: flex-start; flex-wrap: wrap; }
   .live-session-workspace .lws-cart .lws-panel-heading h3 { font-size: 16px; }
   .live-session-workspace .lws-cart .lws-panel-heading .lws-button { min-height: 29px; padding: 5px 7px; font-size: 10px; }
   .live-session-workspace .lws-recording-footer { padding: 8px; }
+}
+/* The cart can be narrow beside the conversation and notes even on a wide screen. */
+@container customer-cart (max-width: 680px) {
+  .live-session-workspace .lws-cart-table { display: block; }
+  .live-session-workspace .lws-cart-table-header { display: none; }
+  .live-session-workspace .lws-cart-row { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr) 22px; gap: 24px 12px; padding: 18px 10px; }
+  .live-session-workspace .lws-cart-product { grid-column: 1 / 3; }
+  .live-session-workspace .lws-cart-unit { display: none; }
+  .live-session-workspace .lws-quantity { grid-column: 1; grid-row: 2; width: 90px; }
+  .live-session-workspace .lws-discount { grid-column: 2 / -1; grid-row: 2; width: 100px; justify-self: end; }
+  .live-session-workspace .lws-line-total { grid-column: 1 / -1; grid-row: 3; }
+  .live-session-workspace .lws-remove-item { grid-column: 3; grid-row: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .live-session-workspace *, .live-session-workspace *::before, .live-session-workspace *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
