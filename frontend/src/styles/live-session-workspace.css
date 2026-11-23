@@ -298,8 +298,14 @@
   .live-session-workspace .lws-cart .lws-panel-heading .lws-button { min-height: 29px; padding: 5px 7px; font-size: 10px; }
   .live-session-workspace .lws-recording-footer { padding: 8px; }
 }
-/* The cart can be narrow beside the conversation and notes even on a wide screen. */
+/* Keep all columns visible when desktop side panels leave a compact cart. */
 @container customer-cart (max-width: 680px) {
+  .live-session-workspace .lws-cart-table { grid-template-columns: minmax(0, 1fr) max-content 82px 90px max-content 22px; column-gap: 8px; }
+  .live-session-workspace .lws-cart-product { gap: 7px; }
+  .live-session-workspace .lws-cart-product .lws-product-image { width: 36px; height: 46px; }
+}
+/* Stack only when the cart itself is too narrow for the desktop columns. */
+@container customer-cart (max-width: 480px) {
   .live-session-workspace .lws-cart-table { display: block; }
   .live-session-workspace .lws-cart-table-header { display: none; }
   .live-session-workspace .lws-cart-row { grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr) 22px; gap: 24px 12px; padding: 18px 10px; }
