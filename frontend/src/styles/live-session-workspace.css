@@ -161,7 +161,7 @@
 .live-session-workspace .lws-cart .lws-panel-heading { padding: 13px 14px 14px; }
 .live-session-workspace .lws-cart .lws-panel-heading h3 { color: #0954c0; font-size: 17px; }
 .live-session-workspace .lws-cart .lws-panel-heading h3 span { font-size: 15px; }
-.live-session-workspace .lws-cart-table { display: grid; grid-template-columns: minmax(0, 1fr) max-content 90px 100px max-content 22px; column-gap: 10px; margin: 0 11px; border: 1px solid #e4edf8; border-radius: 9px; overflow: hidden; }
+.live-session-workspace .lws-cart-table { display: grid; grid-template-columns: minmax(150px, 1fr) max-content 90px 100px max-content 22px; column-gap: 10px; margin: 0 11px; border: 1px solid #e4edf8; border-radius: 9px; overflow: auto; scrollbar-width: thin; }
 /* Share the money columns across every row so longer amounts cannot overlap controls. */
 .live-session-workspace .lws-cart-table-header, .live-session-workspace .lws-cart-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; column-gap: inherit; }
 .live-session-workspace .lws-cart-table-header > :nth-child(2), .live-session-workspace .lws-cart-table-header > :nth-child(5), .live-session-workspace .lws-cart-unit, .live-session-workspace .lws-line-total { text-align: right; font-variant-numeric: tabular-nums; }
@@ -197,8 +197,9 @@
 @keyframes lws-spin { to { transform:rotate(360deg); } }
 .live-session-workspace .lws-cart-bottom { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 15px; padding: 17px 13px 0; }
 .live-session-workspace .lws-another-product { min-height: 32px; font-size: 10px; }
-.live-session-workspace .lws-order-totals { display: flex; flex: 1 1 220px; flex-direction: column; gap: 10px; max-width: 320px; margin-left: auto; }
-.live-session-workspace .lws-order-totals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; color: #5d7595; font-size: 11px; }
+.live-session-workspace .lws-order-totals { display: flex; flex: 1 1 220px; flex-direction: column; gap: 10px; min-width: 0; max-width: 320px; margin-left: auto; }
+.live-session-workspace .lws-order-totals > div { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 18px; color: #5d7595; font-size: 11px; }
+.live-session-workspace .lws-order-totals > div > :last-child { margin-left: auto; }
 .live-session-workspace .lws-order-totals > div > span:last-child { color: #1d3658; font-size: 12px; }
 .live-session-workspace .lws-order-totals > .lws-order-discount > span:last-child { color: #06a36c; }
 .live-session-workspace .lws-order-totals > .lws-order-grand-total { margin-top: 2px; padding-top: 12px; border-top: 1px solid #d9e4f3; color: #18325a; font-size: 13px; }
@@ -300,7 +301,7 @@
 }
 /* Keep all columns visible when desktop side panels leave a compact cart. */
 @container customer-cart (max-width: 680px) {
-  .live-session-workspace .lws-cart-table { grid-template-columns: minmax(0, 1fr) max-content 82px 90px max-content 22px; column-gap: 8px; }
+  .live-session-workspace .lws-cart-table { grid-template-columns: minmax(150px, 1fr) max-content 82px 90px max-content 22px; column-gap: 8px; }
   .live-session-workspace .lws-cart-product { gap: 7px; }
   .live-session-workspace .lws-cart-product .lws-product-image { width: 36px; height: 46px; }
 }

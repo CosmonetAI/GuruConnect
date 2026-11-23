@@ -829,7 +829,7 @@ function Cart({
       )}
       {rows.length ? (
         <>
-          <div className="lws-cart-table" role="table" aria-label="Cart items">
+          <div className="lws-cart-table" role="table" aria-label="Cart items" tabIndex={0}>
             <div className="lws-cart-table-header" role="row">
               <span role="columnheader">Product</span>
               <span role="columnheader">Unit price</span>
