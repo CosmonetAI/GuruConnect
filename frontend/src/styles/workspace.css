@@ -696,7 +696,7 @@ input:not([type=checkbox]), textarea, select { max-width: 100%; min-width: 0; }
 .settings-profile-heading .settings-account-actions { flex: 0 0 auto; margin: 0; }
 .settings-tax-actions { margin: 0 0 14px; }
 .settings-taxes-button { margin-left: auto; }
-.zoho-taxes-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #0d1d3588; }
+.zoho-taxes-backdrop { position: fixed; inset: 0; z-index: 1400; display: grid; place-items: center; padding: 24px; background: #0d1d3588; }
 .zoho-taxes-modal { width: min(620px, 100%); max-height: min(720px, 90vh); overflow: auto; border: 1px solid #dbe5f2; border-radius: 18px; background: #fff; box-shadow: 0 28px 80px #0d1d3533; padding: 24px; }
 .zoho-taxes-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 18px; border-bottom: 1px solid #e6edf6; }
 .zoho-taxes-heading small { color: #2563eb; font-weight: 800; letter-spacing: .08em; font-size: 11px; }
