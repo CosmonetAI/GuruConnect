@@ -1550,7 +1550,8 @@ async def document_contacts(search: str = '', role: str = 'customer'):
         if not status.get('connected') or not org:
             raise HTTPException(409, 'Connect Zoho and select a Books organization first')
         digits = ''.join(ch for ch in query if ch.isdigit())
-        search_by = 'phone' if query.isdigit() or (len(digits) == 10 and digits == query) else ('email' if re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', query) else 'word')
+        phone_query = len(digits) in {10, 11, 12, 13} and all(ch.isdigit() or ch in ' +()-.' for ch in query)
+        search_by = 'phone' if phone_query else ('email' if re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', query) else 'word')
         try:
             bigin_payload = await zoho.search_bigin_contacts(query, search_by)
         except ValueError:
