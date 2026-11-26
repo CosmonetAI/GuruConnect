@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     zoho_accounts_url: str = "https://accounts.zoho.com"
     zoho_mail_api_domain: str = "https://mail.zoho.com"
     zoho_refresh_cron_secret: str = ""
+    # Shared secret used by TeleCRM for its server-to-server webhook calls.
+    # TELECRM_KEY remains the public deployment name; the longer alias is
+    # accepted as well so the purpose is explicit in managed environments.
+    telecrm_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices("TELECRM_KEY", "TELECRM_WEBHOOK_KEY"))
 
     @field_validator("openai_translation_model")
     @classmethod

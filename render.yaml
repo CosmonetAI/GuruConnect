@@ -104,6 +104,8 @@ services:
         value: https://www.zohoapis.com
       - key: OPENAI_API_KEY
         sync: false
+      - key: TELECRM_KEY
+        sync: false
       - key: ERROR_ALERT_AI_ENABLED
         value: "true"
       - key: ERROR_ALERT_AI_MODEL

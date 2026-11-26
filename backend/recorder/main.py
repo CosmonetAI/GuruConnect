@@ -24,6 +24,7 @@ from .runtime import ProcessingRuntime
 from .storage import Storage
 from .transcript_routes import router as transcript_router
 from .walkin_routes import router as walkin_router
+from .telecrm_routes import router as telecrm_router
 
 log = logging.getLogger("recorder.api")
 
@@ -52,6 +53,7 @@ select
     and to_regclass('public.guruconnect_walkin_recordings') is not null
     and to_regclass('public.guruconnect_missed_visitors') is not null
     and to_regclass('public.guruconnect_followup_email_deliveries') is not null
+    and to_regclass('public.telecrm_events') is not null
     and to_regclass('recorder_private.conversation_requests') is not null
     and to_regprocedure('public.create_workspace(uuid,text)') is not null
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
@@ -108,7 +110,7 @@ def create_app(settings=None, *, allow_local=False):
     app.state.processing = ProcessingRuntime(settings, database=app.state.db)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-                       allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Workspace-ID", "X-Workspace-Member-ID", "Idempotency-Key"],
+                       allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Workspace-ID", "X-Workspace-Member-ID", "X-TeleCRM-Key", "Idempotency-Key"],
                        expose_headers=["Content-Disposition", "X-Request-ID", "Content-Length", "X-Playback-Mode", "X-Playback-Start-Sample", "X-Playback-Sample-Rate"], max_age=600)
 
     app.add_middleware(RequestBoundary, settings=settings)
@@ -173,7 +175,7 @@ def create_app(settings=None, *, allow_local=False):
             return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
 
     for router in (public_router, recording_router, transcript_router, connection_router, internal_router,
-                   enquiry_router, walkin_router, followup_email_router, followup_internal_router):
+                   enquiry_router, walkin_router, followup_email_router, followup_internal_router, telecrm_router):
         app.include_router(router)
     # One backend process serves both products. Existing ConnectCosmos routes
     # remain under /api/v1; the GG sales assistant keeps its /api routes.
