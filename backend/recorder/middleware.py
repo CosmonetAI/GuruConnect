@@ -95,7 +95,7 @@ class RequestBoundary:
             await reject("request_headers_too_large", 431)
             return
         headers = {}
-        sensitive = {b"host", b"origin", b"authorization", b"content-length", b"transfer-encoding", b"x-workspace-id", b"x-workspace-member-id"}
+        sensitive = {b"host", b"origin", b"authorization", b"content-length", b"transfer-encoding", b"x-workspace-id", b"x-workspace-member-id", b"x-telecrm-key"}
         for key, value in raw_headers:
             key = key.lower()
             if key in sensitive and key in headers:
