@@ -1,5 +1,5 @@
 -r requirements.in
 pytest>=8.4,<10
 pytest-asyncio>=1.0,<2
-ruff>=0.12,<1
+ruff>=0.17.6,<1
 respx>=0.22,<1
