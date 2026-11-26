@@ -83,8 +83,8 @@ Expected response:
 
 Event: `whatsapp_message_received`
 
-Required fields: `customer_phone`, `message_text`, `received_at`. All other
-fields are optional.
+Required fields: `customer_phone`, `message_text`, `message_id`, `received_at`.
+All other fields are optional.
 
 ```json
 {
