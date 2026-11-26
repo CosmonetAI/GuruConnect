@@ -222,7 +222,8 @@ Expected TeleCRM response:
       "direction": "outgoing",
       "message_type": "text",
       "message": "Sure, how can I help you?",
-      "timestamp": "2026-11-25T12:35:00Z"
+      "timestamp": "2026-11-25T12:35:00Z",
+      "status": "sent"
     }
   ]
 }
