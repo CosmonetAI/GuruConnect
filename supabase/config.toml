@@ -4,4 +4,4 @@ project_id = "guru-group-ai-sales"
 enabled = true
 
 [db]
-major_version = 15
+major_version = 17
