@@ -100,6 +100,7 @@ def _validate(event: str, payload: dict[str, Any]) -> None:
         _required(payload, "received_at")
     else:
         _required(payload, "customer_phone")
+        _required(payload, "message_id")
         _required(payload, "status")
 
 

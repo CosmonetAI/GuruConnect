@@ -87,10 +87,14 @@ def test_wrong_telecrm_key_is_rejected_before_database_write():
 
 def test_status_requires_phone_and_status():
     with client() as http:
-        missing_status = {"event": "whatsapp_message_status", "customer_phone": "+919876543210"}
+        missing_status = {"event": "whatsapp_message_status", "message_id": "status-test-1", "customer_phone": "+919876543210"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_status, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 422
 
         valid = {**missing_status, "status": "delivered"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=valid, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 200
+
+        missing_message_id = {"event": "whatsapp_message_status", "customer_phone": "+919876543210", "status": "read"}
+        response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_message_id, headers={"X-TeleCRM-Key": "test-telecrm-key"})
+        assert response.status_code == 422
