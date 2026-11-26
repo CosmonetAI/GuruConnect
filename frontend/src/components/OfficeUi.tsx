@@ -9,7 +9,7 @@ const MAX_POLL_CHECKS = 180
 /** Private results are bound to both the signed-in account and workspace. */
 export function useOfficeResource<T>(path: string | null, shouldPoll?: (value: T) => boolean) {
   const { user, workspace } = useOffice()
-  const scope = user && workspace && path ? `${user.id}:${workspace.id}:${path}` : ''
+  const scope = user && workspace && path ? `${user.id}:${workspace.id}:${workspace.member_id ?? user.id}:${path}` : ''
   const currentScope = useRef(scope)
   currentScope.current = scope
   const poll = useRef(shouldPoll)
@@ -48,7 +48,7 @@ export function useOfficeResource<T>(path: string | null, shouldPoll?: (value: T
         ? { ...value, refreshing: !!value.data, loading: !value.data, error: '' }
         : { scope, error: '', loading: true, refreshing: false, pollPaused: false })
       try {
-        const data = await request<T>(path, workspace.id, { signal: controller.signal })
+        const data = await request<T>(path, workspace.id, { signal: controller.signal }, workspace.member_id)
         if (stopped || currentScope.current !== scope) return
         latest = data
         fatalReadFailure = false
@@ -95,7 +95,7 @@ export function OfficeStatus({ value }: { value?: string | null }) {
   return <span className={`office-status office-status-${tone}`}>{text.replaceAll('_', ' ')}</span>
 }
 
-export function OfficeDialog({ title, children, close, busy = false }: { title: string; children: ReactNode; close: () => void; busy?: boolean }) {
+export function OfficeDialog({ title, children, close, busy = false, className = '' }: { title: ReactNode; children: ReactNode; close: () => void; busy?: boolean; className?: string }) {
   const id = useId()
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(close)
@@ -104,6 +104,8 @@ export function OfficeDialog({ title, children, close, busy = false }: { title: 
   isBusy.current = busy
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     const focusable = () => Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') || [])
     ;(focusable()[0] || panel.current)?.focus()
     const keys = (event: KeyboardEvent) => {
@@ -117,9 +119,9 @@ export function OfficeDialog({ title, children, close, busy = false }: { title: 
       else if (!event.shiftKey && (document.activeElement === last || !panel.current?.contains(document.activeElement))) { event.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', keys)
-    return () => { document.removeEventListener('keydown', keys); previous?.focus() }
+    return () => { document.removeEventListener('keydown', keys); document.body.style.overflow = previousOverflow; previous?.focus() }
   }, [])
-  return <div className="office-dialog-overlay"><div className="office-dialog" ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1}>
+  return <div className="office-dialog-overlay"><div className={`office-dialog ${className}`.trim()} ref={panel} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1}>
     <div className="office-row office-between"><h2 id={id}>{title}</h2><button type="button" className="office-button office-secondary" aria-label="Close dialog" disabled={busy} onClick={close}>Close</button></div>
     {children}
   </div></div>

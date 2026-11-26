@@ -1,11 +1,12 @@
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 Hash = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 Id = Annotated[UUID, Field(strict=False)]
-Engine = Literal["elevenlabs", "faster-whisper", "azure-translator", "openai-translator"]
+Engine = Literal["elevenlabs", "faster-whisper", "openai-translator"]
 
 
 class Input(BaseModel):
@@ -19,6 +20,49 @@ class WorkspaceCreate(Input):
 class ProfilePatch(Input):
     display_name: Name
     preferences: dict = Field(default_factory=dict)
+    phone: str | None = Field(default=None, max_length=24)
+    avatar_path: str | None = Field(default=None, max_length=500)
+    availability_status: Literal["active", "inactive", "on_leave", "be_right_back"] = "active"
+    leave_end_date: str | None = None
+    final_status: Literal["active", "inactive", "on_leave", "be_right_back"] | None = None
+    final_status_until: str | None = None
+
+    @field_validator("availability_status", mode="before")
+    @classmethod
+    def normalize_legacy_status(cls, value):
+        return "active" if value == "not_active" else value
+
+    @field_validator("leave_end_date", "final_status_until", mode="before")
+    @classmethod
+    def normalize_empty_leave_date(cls, value):
+        if value in ("", None):
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Leave end date must be an ISO calendar date")
+        try:
+            date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError("Leave end date must be an ISO calendar date") from error
+        return value
+
+    @model_validator(mode="after")
+    def validate_availability(self):
+        status = self.final_status or self.availability_status
+        leave_date = self.final_status_until or self.leave_end_date
+        if status == "on_leave":
+            if leave_date is None:
+                raise ValueError("A leave end date is required when status is On Leave")
+            if date.fromisoformat(leave_date) < date.today():
+                raise ValueError("Leave end date cannot be in the past")
+        elif leave_date is not None:
+            raise ValueError("Leave end date is only valid when status is On Leave")
+        return self
+
+
+class PresencePing(Input):
+    # Browser session ids arrive as JSON strings; use the same non-strict UUID
+    # input used by the rest of the API instead of rejecting every heartbeat.
+    sessionId: Id | None = None
 
 
 class CustomerCreate(Input):
@@ -29,6 +73,8 @@ class CustomerCreate(Input):
 class ConversationCreate(Input):
     customer_id: Id | None = None
     customer_name: Name | None = None
+    phone: str | None = Field(default=None, max_length=24)
+    email: str | None = Field(default=None, max_length=320)
     is_unnamed: bool = False
     title: str | None = Field(default=None, max_length=200)
     location: str | None = Field(default=None, max_length=200)
@@ -36,13 +82,17 @@ class ConversationCreate(Input):
     consent_confirmed: bool
     engine_id: Literal["elevenlabs", "faster-whisper"] | None = None
     audio_only: bool = False
+    audio_bucket: Literal["session-audio", "walkin-audio"] = "session-audio"
 
     @model_validator(mode="after")
     def customer_and_consent(self):
         if not self.consent_confirmed:
             raise ValueError("Recording acknowledgement is required")
-        if not self.customer_id and not self.customer_name and not self.is_unnamed:
-            raise ValueError("Select a customer, enter a name, or select Name not provided")
+        if not self.customer_id and not self.is_unnamed and self.audio_bucket != "walkin-audio":
+            if not self.customer_name:
+                raise ValueError("Enter the customer name")
+            if not (self.phone and self.phone.strip()) and not (self.email and self.email.strip()):
+                raise ValueError("Enter a phone number or email")
         return self
 
 
@@ -67,10 +117,10 @@ class Chunk(Input):
     conversation_id: Id | None = None
     part_id: Id
     sequence: int = Field(ge=0, le=2880)
-    sample_count: int = Field(ge=1, le=160000)
+    sample_count: int = Field(ge=1, le=2880000)
     sample_rate: Literal[16000] = 16000
     start_sample: int = Field(ge=0, le=115200000)
-    bytes: int = Field(ge=46, le=400000)
+    bytes: int = Field(ge=46, le=6000000)
     sha256: Hash
     mime: Literal["audio/wav"] = "audio/wav"
     lease_token: Id
@@ -91,8 +141,9 @@ class Manifest(Input):
 
 
 class Invitation(Input):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=120)]
     email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")]
-    role: Literal["admin", "salesperson"] = "salesperson"
+    role: Literal["owner", "salesperson", "receptionist"] = "salesperson"
 
 
 class AcceptInvitation(Input):

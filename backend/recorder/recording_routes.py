@@ -1,17 +1,19 @@
 import hashlib
 import json
 from uuid import UUID
+import logging
 from fastapi import APIRouter, Depends, Request
 from psycopg.types.json import Jsonb
 from . import schemas as s
 from .audio import validate_wav
 from .db import one, many
 from .errors import fail
-from .processing import plan_windows, schedule
+from .processing import plan_windows
 from .routes import audit
 from .security import Workspace, workspace, conversation, owned_conversation
 
 router = APIRouter(prefix="/api/v1/conversations")
+log = logging.getLogger("recorder.api")
 
 
 async def valid_lease(connection, context: Workspace, conversation_id: UUID, token: UUID):
@@ -44,7 +46,10 @@ async def acquire(conversation_id: UUID, body: s.LeaseAcquire, request: Request,
 @router.post("/{conversation_id}/lease/heartbeat")
 async def heartbeat(conversation_id: UUID, body: s.LeaseHeartbeat, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        await owned_conversation(connection, context, conversation_id)
+        # Heartbeats only renew the lease. Taking a conversation row lock here
+        # makes a 15-second heartbeat wait behind chunk confirmation/finalize,
+        # which can cause the next upload to lose its lease during DB pressure.
+        await owned_conversation(connection, context, conversation_id, lock=False)
         row = await one(connection, "select heartbeat_recording_lease(%s,%s,%s,%s) as renewed", (conversation_id, context.user.id, body.tab_id, body.lease_token))
         if not row["renewed"]:
             fail("recording_lease_expired", 409)
@@ -103,9 +108,14 @@ async def authorize(conversation_id: UUID, body: s.Chunk, request: Request, cont
         overlap = await one(connection, "select id from audio_chunks where conversation_id=%s and id<>coalesce(%s::uuid,'00000000-0000-0000-0000-000000000000') and sample_start<%s and sample_start+sample_count>%s limit 1", (conversation_id, row["id"] if row else None, body.start_sample+body.sample_count, body.start_sample))
         if overlap:
             fail("chunk_timeline_conflict", 409)
-        path = f"{context.id}/{context.user.id}/{conversation_id}/{body.part_id}/{body.sequence}.wav"
+        customer = await one(connection, "select phone from customers where id=%s and organisation_id=%s", (conv["customer_id"], context.id))
+        phone = ''.join(character for character in str(customer.get("phone") if customer else "") if character.isdigit())[-15:] or "no-phone"
+        bucket = conv.get("audio_bucket") or "session-audio"
+        path = f"{context.id}/{context.user.id}/{conversation_id}/{bucket}/{phone}/{body.part_id}/{body.sequence}.wav"
         if not row:
-            await connection.execute("insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
+            row = await one(connection, "insert into audio_chunks(conversation_id,part_id,sequence,sample_start,sample_count,sample_rate,bytes,mime,sha256,object_path) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict(conversation_id,part_id,sequence) do update set upload_expires_at=now()+interval '15 minutes' returning *", (conversation_id, body.part_id, body.sequence, body.start_sample, body.sample_count, body.sample_rate, body.bytes, body.mime, body.sha256, path))
+            if not chunk_matches(row, body):
+                fail("chunk_content_conflict", 409)
         else:
             await connection.execute("update audio_chunks set upload_expires_at=now()+interval '15 minutes' where id=%s", (row["id"],))
         await connection.execute("update conversations set upload_state='uploading',updated_at=now() where id=%s", (conversation_id,))
@@ -130,7 +140,8 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await valid_lease(connection, context, conversation_id, body.lease_token)
     data = await request.app.state.storage.read(row["object_path"], request.app.state.settings.upload_max_bytes)
     try:
-        info = validate_wav(data, expected_samples=body.sample_count, max_samples=160000)
+        # The final WAV chunk may be shorter than the page's configured chunk duration.
+        info = validate_wav(data, expected_samples=body.sample_count, max_samples=3 * 60 * 16000)
     except ValueError:
         fail("invalid_wav_content", 422)
     if len(data) != body.bytes or info.sha256 != body.sha256:
@@ -140,7 +151,17 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
         await valid_lease(connection, context, conversation_id, body.lease_token)
         await connection.execute("update audio_chunks set state='validated',confirmed_at=now(),validated_at=now() where id=%s", (row["id"],))
         await connection.execute("update conversations set total_samples=greatest(total_samples,%s),duration_seconds=greatest(duration_seconds,%s),updated_at=now() where id=%s", (body.start_sample+body.sample_count, (body.start_sample+body.sample_count)/16000, conversation_id))
-        await plan_windows(connection, conversation_id, request.app.state.settings)
+    log.info("chunk_validated conversation_id=%s part_id=%s sequence=%s bytes=%s", conversation_id, body.part_id, body.sequence, len(data))
+    # Audio durability is independent from processing readiness. Schedule the
+    # next window after the validation transaction has committed, so queue
+    # contention cannot keep the validated chunk transaction open or turn a
+    # successful save into a 503. The next chunk/finalize path will retry this
+    # idempotently if the processing database is temporarily busy.
+    try:
+        async with request.app.state.db.connection() as connection:
+            await plan_windows(connection, conversation_id, request.app.state.settings)
+    except Exception as error:
+        log.warning("chunk_processing_schedule_deferred conversation_id=%s exception_type=%s", conversation_id, type(error).__name__)
     return {"confirmed": True, "chunk_id": row["id"], "sample_count": info.sample_count}
 
 
@@ -148,6 +169,7 @@ async def confirm(conversation_id: UUID, body: s.Chunk, request: Request, contex
 async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, context: Workspace = Depends(workspace)):
     canonical = {"part_id": str(body.part_id), "expected_chunks": body.expected_chunks, "total_samples": body.total_samples}
     digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    should_plan = False
     async with request.app.state.db.connection() as connection:
         conv = await owned_conversation(connection, context, conversation_id)
         if conv["manifest_hash"]:
@@ -174,11 +196,22 @@ async def finalize(conversation_id: UUID, body: s.Manifest, request: Request, co
         await connection.execute("update processing_runs set audio_manifest_hash=%s where conversation_id=%s", (digest, conversation_id))
         await connection.execute("delete from recording_leases where conversation_id=%s and user_id=%s and token=%s", (conversation_id, context.user.id, body.lease_token))
         if expected:
-            await schedule(connection, conversation_id, None, "assemble", "playback", {"sample_start": 0, "sample_end": expected}, priority=20)
-            await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
+            # Playback is assembled on demand from the validated bucket chunks.
+            # No background playback job is required for a recording to be playable.
+            log.info("playback_ready_for_on_demand_stream conversation_id=%s chunks=%s samples=%s", conversation_id, len(chunks), expected)
+            should_plan = True
         else:
             await connection.execute("update conversations set final_state='complete',english_state='unavailable',speaker_state='unavailable',transcription_state='complete' where id=%s", (conversation_id,))
         await audit(connection, context, "recording.stopped", {"samples": expected, "chunks": len(chunks)}, conversation_id)
+    if should_plan:
+        # Do not hold the conversation row lock while enqueueing provider work.
+        # Saving the manifest and releasing the lease are the durable part of
+        # finalization; processing can be retried from the next poll or the UI.
+        try:
+            async with request.app.state.db.connection() as connection:
+                await plan_windows(connection, conversation_id, request.app.state.settings, final=True)
+        except Exception as error:
+            log.warning("final_processing_schedule_deferred conversation_id=%s exception_type=%s", conversation_id, type(error).__name__)
     return {"saved": True, "manifest_hash": digest, "final_state": "queued" if expected else "complete"}
 
 

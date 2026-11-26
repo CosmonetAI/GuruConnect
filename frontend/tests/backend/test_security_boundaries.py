@@ -175,9 +175,11 @@ def test_validation_and_unexpected_errors_do_not_expose_customer_or_secret_value
     @app.post("/validation")
     async def validation(body: ConnectionCreate):
         return body
+    app.router.routes.insert(0, app.router.routes.pop())  # Place probe before the sales fallback mount.
     @app.get("/unexpected")
     async def unexpected():
         raise RuntimeError("synthetic-private-credential synthetic-private-customer")
+    app.router.routes.insert(0, app.router.routes.pop())
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.post("/validation", json={"engine_id": "synthetic-private-customer", "credentials": {"synthetic-private-credential": 123}, "idempotency_key": "valid-idem-key"})
         assert response.status_code == 422
@@ -273,15 +275,16 @@ async def test_admin_mfa_uses_only_verified_claim_and_rejects_password_only_sess
     user = await verifier.verify(token)
     assert user.aal == "aal1"
     with pytest.raises(HTTPException) as error:
-        await administrator(request, Workspace(uuid4(), user, "owner"))
+        await administrator(request, Workspace(uuid4(), user, "owner", user.id, "owner"))
     assert error.value.status_code == 403 and error.value.detail["code"] == "mfa_required"
     token, public = signed_session(settings, aal="aal2")
     verifier.keys = {"test-key": public}
     user = await verifier.verify(token)
-    context = Workspace(uuid4(), user, "admin")
+    context = Workspace(uuid4(), user, "owner", user.id, "owner")
     assert await administrator(request, context) == context
     with pytest.raises(HTTPException) as error:
-        await administrator(request, Workspace(uuid4(), User(uuid4(), "fixture@example.test", "Fixture", "aal2"), "salesperson"))
+        salesperson = User(uuid4(), "fixture@example.test", "Fixture", "aal2")
+        await administrator(request, Workspace(uuid4(), salesperson, "salesperson", salesperson.id, "salesperson"))
     assert error.value.detail["code"] == "administrator_required"
 
 

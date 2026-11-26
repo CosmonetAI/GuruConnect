@@ -64,14 +64,21 @@ select cron.schedule(
   $$select public.invoke_zoho_token_refresh();$$
 );
 
-select vault.create_secret(
-  'mUcxeau4hWQJwZvSeltes83Zi6Gj1rcJ4t-LXYcletYqXOotS-va0K5xc5vdgcKk',
-  'zoho_refresh_cron_secret',
-  'Secret used by the Zoho refresh cron'
-);
-
-select vault.create_secret(
-  'https://gg-backend-0vh9.onrender.com',
-  'zoho_refresh_url',
-  'Backend URL used by the Zoho refresh cron'
-);
+do $$
+begin
+  if not exists (select 1 from vault.decrypted_secrets where name = 'zoho_refresh_cron_secret') then
+    perform vault.create_secret(
+      'mUcxeau4hWQJwZvSeltes83Zi6Gj1rcJ4t-LXYcletYqXOotS-va0K5xc5vdgcKk',
+      'zoho_refresh_cron_secret',
+      'Secret used by the Zoho refresh cron'
+    );
+  end if;
+  if not exists (select 1 from vault.decrypted_secrets where name = 'zoho_refresh_url') then
+    perform vault.create_secret(
+      'https://gg-backend-0vh9.onrender.com',
+      'zoho_refresh_url',
+      'Backend URL used by the Zoho refresh cron'
+    );
+  end if;
+end;
+$$;

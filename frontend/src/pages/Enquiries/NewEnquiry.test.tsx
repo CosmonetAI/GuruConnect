@@ -53,7 +53,7 @@ describe('durable enquiry submission', () => {
     expect(mocks.create).toHaveBeenCalledWith('workspace-a', expect.objectContaining({
       product: 'SKU-123', quantity: 3, customerNotes: 'Customer facts', salespersonNotes: 'Internal facts', requirementsSummary: 'Requirements',
       productRequirements: [expect.objectContaining({ product: '', sku: 'SKU-123', quantity: 3 })],
-    }), expect.any(String))
+    }), expect.any(String), undefined)
     expect(router.state.location.pathname).toBe('/enquiries/83bc6f7a-8c29-46a8-9587-d9e0baf1d291')
     expect(sessionStorage.getItem(key())).toBeNull()
   })

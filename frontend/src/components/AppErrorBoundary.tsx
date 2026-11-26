@@ -6,7 +6,7 @@ export default class AppErrorBoundary extends Component<{ children: ReactNode },
   render() {
     if (this.state.failed) return <main className="welcome-page"><section className="welcome-card" role="alert">
       <h1>This screen could not open</h1><p>Reload to try again. Any audio already saved will remain available.</p>
-      <button type="button" className="button button-primary" onClick={() => location.reload()}>Reload GuruConnect</button>
+      <button type="button" className="button button-primary" onClick={() => location.reload()}>Reload ConnectCosmos</button>
     </section></main>
     return this.props.children
   }

@@ -15,7 +15,7 @@ def failure_case(monkeypatch, kind, *, accepted, error=None):
     state = SimpleNamespace(executed=[], renewal_cancelled=False)
     job = {
         "id": "job-1", "conversation_id": "conversation-1", "run_id": "run-1",
-        "kind": kind, "lease_token": "lease-1", "fence": 7,
+        "kind": kind, "lease_token": "lease-1", "fence": 7, "attempt": 1,
     }
 
     class Connection:
@@ -28,6 +28,8 @@ def failure_case(monkeypatch, kind, *, accepted, error=None):
             yield Connection()
 
     async def one(connection, sql, params=()):
+        if sql.startswith("select state from processing_jobs"):
+            return {"state": "blocked" if error and error.code == "invalid_credentials" else "failed"}
         assert "retry_job(" in sql
         await connection.execute(sql, params)
         return {"accepted": accepted}
@@ -77,10 +79,10 @@ async def test_accepted_failure_updates_only_its_own_stage(monkeypatch, kind, st
     state = failure_case(monkeypatch, kind, accepted=True)
     await state.worker.execute(state.job)
     updates = [(sql, params) for sql, params in state.executed if sql.startswith("update conversations")]
-    assert updates == [(
-        f"update conversations set {stage}=%s,updated_at=now() where id=%s and deleted_at is null",
-        ("failed", "conversation-1"),
-    )]
+    assert len(updates) == 1
+    assert f"set {stage}=%s" in updates[0][0]
+    assert "v.kind='final' and v.english_state='complete'" in updates[0][0]
+    assert updates[0][1] == (("failed", "failed", "conversation-1", "run-1") if stage != "final_state" else ("failed", "conversation-1", "run-1"))
     assert state.renewal_cancelled
 
 
@@ -91,7 +93,7 @@ async def test_accepted_translation_access_failure_marks_english_blocked(monkeyp
     updates = [(sql, params) for sql, params in state.executed if sql.startswith("update conversations")]
     assert len(updates) == 1
     assert "set english_state=%s" in updates[0][0]
-    assert updates[0][1] == ("blocked", "conversation-1")
+    assert updates[0][1] == ("blocked", "blocked", "conversation-1", "run-1")
 
 
 @pytest.mark.asyncio

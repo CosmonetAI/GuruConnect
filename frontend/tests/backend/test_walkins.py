@@ -9,10 +9,20 @@ import psycopg
 import pytest
 from pydantic import ValidationError
 from recorder.walkin_routes import Requirement, WalkinCreate
-from test_api_native import new
+from test_api_native import new, reserve
 from test_enquiries import enquiry, finalized_recording, save
 
 pytest_plugins = ["test_api_native"]
+
+
+@pytest.fixture(autouse=True)
+def deterministic_assignee(request):
+    """Set fixture availability explicitly instead of relying on random ties."""
+    if 'api' not in request.fixturenames:
+        return
+    _, _, ids, _, database_url = request.getfixturevalue('api')
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("update profiles set availability_status='be_right_back' where id=any(%s)", ([ids[0], ids[2]],))
 
 
 def register(client, headers, *, key=None, **changes):
@@ -67,6 +77,18 @@ def test_registration_retry_is_scoped_and_audited_without_pii(api):
         assert events[0][0].keys() == {"visit_id"}
 
 
+def test_owner_and_salesperson_can_create_walkin_recordings(api):
+    client, headers, ids, _, _ = api
+    owner = {**headers, "X-Test-User": "0"}
+    for actor in (headers, owner):
+        response = client.post(
+            "/api/v1/conversations",
+            headers=actor,
+            json={"customer_name": "Direct visitor", "phone": "+91 9000000000", "consent_confirmed": True, "audio_bucket": "walkin-audio"},
+        )
+        assert response.status_code == 201, response.text
+
+
 def test_workspace_and_salesperson_isolation_admin_assignment_and_revocation(api):
     client, headers, ids, _, _ = api
     key = str(uuid4())
@@ -83,8 +105,10 @@ def test_workspace_and_salesperson_isolation_admin_assignment_and_revocation(api
     assert client.patch(url + "/assignment", headers=headers, json=fields).status_code == 403
     reassigned = client.patch(url + "/assignment", headers=admin, json=fields)
     assert reassigned.status_code == 200, reassigned.text
-    assert client.get(url, headers=headers).status_code == 404
-    assert register(client, headers, key=key).status_code == 404
+    # The original registrar retains history access after assignment changes.
+    assert client.get(url, headers=headers).status_code == 200
+    assert register(client, headers, key=key).status_code == 200
+    assert client.patch(url + '/status', headers=headers, json={'status': 'In Discussion', 'expectedUpdatedAt': reassigned.json()['updatedAt']}).status_code == 403
     assert client.get(url, headers=other).status_code == 200
     foreign = client.post("/api/v1/workspaces", headers=other, json={"name": "Other visit workspace"}).json()["id"]
     assert client.get(url, headers={**other, "X-Workspace-ID": foreign}).status_code == 404
@@ -95,8 +119,10 @@ def test_workspace_and_salesperson_isolation_admin_assignment_and_revocation(api
 
 
 def test_agents_derive_roles_from_workspace_and_do_not_leak_other_sales_counts(api):
-    client, headers, ids, _, _ = api
+    client, headers, ids, _, database_url = api
     register(client, headers)
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("update profiles set availability_status='active' where id=%s", (ids[2],))
     register(client, {**headers, "X-Test-User": "2"})
     agents = client.get("/api/v1/walkins/agents", headers=headers).json()
     assert not agents["canManage"] and agents["currentAgentId"] == str(ids[1])
@@ -108,6 +134,20 @@ def test_agents_derive_roles_from_workspace_and_do_not_leak_other_sales_counts(a
     assert client.patch(url, headers=admin, json={"availability": "Busy"}).status_code == 200
     assert client.patch(f"/api/v1/walkins/agents/{uuid4()}", headers=admin, json={"availability": "Busy"}).status_code == 404
     assert client.patch(url, headers=admin, json={"availability": "Unrecognized"}).status_code == 422
+
+
+def test_owner_is_an_eligible_walkin_assignee_when_salespeople_are_unavailable(api):
+    client, headers, ids, _, database_url = api
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("update profiles set availability_status='active' where id=%s", (ids[0],))
+    admin = {**headers, "X-Test-User": "0"}
+    for agent_id in ids[1:]:
+        assert client.patch(f"/api/v1/walkins/agents/{agent_id}", headers=admin, json={"availability": "Busy"}).status_code == 200
+
+    visit = register(client, headers).json()
+
+    assert visit["assignedAgentId"] == str(ids[0])
+    assert visit["status"] == "Assigned"
 
 
 def test_pagination_literal_search_no_client_side_tenant_filters(api):
@@ -156,6 +196,8 @@ def test_atomic_conversion_is_unique_replayable_and_rollback_safe(api):
     client, headers, _, _, database_url = api
     visit = reviewed(client, headers)
     source = f"walkin:{visit['id']}"
+    with psycopg.connect(database_url) as connection:
+        issued_ticket = connection.execute("select id,ticket_day,daily_sequence,public_token_hash from guruconnect_enquiries where id=%s", (visit["convertedEnquiryReference"],)).fetchone()
     assert save(client, {**headers, "X-Test-User": "2"}, enquiry(sourceEventId=source)).status_code == 404
     assert save(client, {**headers, "X-Test-User": "0"}, enquiry(sourceEventId=source)).status_code == 403
     key = str(uuid4())
@@ -168,6 +210,7 @@ def test_atomic_conversion_is_unique_replayable_and_rollback_safe(api):
     assert save(client, headers, enquiry(sourceEventId=source)).status_code == 409
     assert save(client, headers, enquiry(sourceEventId="walkin:not-a-uuid")).status_code == 422
     with psycopg.connect(database_url) as connection:
+        assert connection.execute("select id,ticket_day,daily_sequence,public_token_hash from guruconnect_enquiries where id=%s", (item["id"],)).fetchone() == issued_ticket
         assert connection.execute("select count(*) from guruconnect_enquiries where organisation_id=%s and payload->>'sourceEventId'=%s", (headers["X-Workspace-ID"], source)).fetchone()[0] == 1
         assert connection.execute("select count(*) from guruconnect_walkin_history where visit_id=%s and event_type='Converted to enquiry'", (visit["id"],)).fetchone()[0] == 1
     # Failed recording attachment leaves the visit open and no enquiry saved.
@@ -193,7 +236,7 @@ def test_durable_recording_links_enforce_visit_owner_workspace_and_exact_convers
     path = f"/api/v1/walkins/{visit['id']}/recordings"
     fields = {"conversationId": conv["id"]}
     assert client.post(path, headers={**headers, "X-Test-User": "2"}, json=fields).status_code == 404
-    assert client.post(path, headers={**headers, "X-Test-User": "0"}, json=fields).status_code == 403
+    assert client.post(path, headers={**headers, "X-Test-User": "0"}, json=fields).status_code == 404
     assert client.post(path, headers=headers, json=fields).status_code == 200
     assert client.post(path, headers=headers, json=fields).status_code == 200
     listed = client.get(path, headers=headers).json()
@@ -207,6 +250,45 @@ def test_durable_recording_links_enforce_visit_owner_workspace_and_exact_convers
     converted = save(client, headers, enquiry(sourceEventId=f"walkin:{visit['id']}", conversationId=conv["id"]))
     assert converted.status_code == 201, converted.text
     assert client.post(path, headers=headers, json=fields).status_code == 200
+
+
+def test_owner_walkin_recording_is_attached_to_and_playable_by_assigned_salesperson(api):
+    client, headers, ids, blobs, _ = api
+    owner = {**headers, "X-Test-User": "0"}
+    assigned = {**headers, "X-Test-User": "1"}
+    conv = finalized_recording(client, owner, blobs)
+    visit = register(client, owner, assignedAgentId=str(ids[1]), conversationId=conv["id"]).json()
+
+    enquiry_id = visit["convertedEnquiryReference"]
+    detail = client.get(f"/api/v1/enquiries/{enquiry_id}", headers=assigned)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["conversationId"] == conv["id"]
+    assert client.get(f"/api/v1/conversations/{conv['id']}/playback/stream", headers=assigned).status_code == 200
+    assert client.get(f"/api/v1/conversations/{conv['id']}/transcript", headers=assigned).status_code == 200
+
+
+def test_reception_registration_attaches_own_saved_audio_after_sales_assignment(api):
+    client, headers, ids, blobs, database_url = api
+    reception = {**headers, "X-Test-User": "2"}
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("update members set role='receptionist' where organisation_id=%s and user_id=%s", (headers["X-Workspace-ID"], ids[2]))
+    registered = register(client, reception).json()
+    assert registered["assignedAgentId"] == str(ids[1])
+    conv = new(client, reception, audio_bucket="walkin-audio", audio_only=True)
+    prefix = f"/api/v1/conversations/{conv['id']}"
+    path = f"/api/v1/walkins/{registered['id']}/recordings"
+    fields = {"conversationId": conv["id"]}
+    assert client.post(path, headers=reception, json=fields).status_code == 409
+    lease = client.post(prefix + "/lease", headers=reception, json={"tab_id": str(uuid4())}).json()
+    chunk, chunk_url = reserve(client, reception, conv, lease, blobs)
+    assert client.post(chunk_url + "/confirm", headers=reception, json=chunk).status_code == 200
+    assert client.post(prefix + "/finalize", headers=reception, json={"part_id": lease["part_id"], "lease_token": lease["lease_token"], "expected_chunks": 1, "total_samples": chunk["sample_count"]}).status_code == 200
+    assert client.post(path, headers=reception, json=fields).status_code == 200
+    assert client.post(path, headers=reception, json=fields).status_code == 200
+    assert client.get(path, headers=reception).json()["total"] == 1
+    assert client.get(prefix + "/playback/stream", headers=reception).status_code == 200
+    assert client.get(prefix + "/playback/stream", headers=headers).status_code == 404
+    assert client.post(path, headers=headers, json=fields).status_code == 404
 
 
 def test_database_permissions_and_cross_workspace_foreign_keys(api):

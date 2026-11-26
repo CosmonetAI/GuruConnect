@@ -4,6 +4,12 @@ import { useEffect } from 'react'
 // mismatch. Repair only the rendered Zoho surface, including late React
 // updates, while keeping real credentials out of the UI.
 const replacements: Array<[string, string]> = [
+  // Common UTF-8 bytes decoded as Windows-1252. Keep these before the
+  // legacy mappings below so the live wizard never exposes mojibake.
+  ['\u00e2\u20ac\u201d', '—'],
+  ['\u00e2\u20ac\u201c', '–'],
+  ['\u00e2\u20ac\u00a2', '•'],
+  ['\u00e2\u20ac\u2122', '’'],
   ['\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a2', '********'],
   ['\u00e2\u20ac\u00a2', '*'],
   ['\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a6', '...'],

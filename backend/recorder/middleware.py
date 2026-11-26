@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi.responses import JSONResponse
+from .activity_log import emit, reset_context, set_context
 
 log = logging.getLogger("recorder.api")
 
@@ -62,14 +63,17 @@ class RequestBoundary:
             await self.app(scope, receive, send)
             return
         request_id = str(uuid4())
+        started_at = time.perf_counter()
+        status_code = 500
         scope.setdefault("state", {})["request_id"] = request_id
         response_headers = security_headers(self.settings, request_id)
         response_started, response_ended = False, False
 
         async def secure_send(message):
-            nonlocal response_started, response_ended
+            nonlocal response_started, response_ended, status_code
             if message["type"] == "http.response.start":
                 response_started = True
+                status_code = message["status"]
                 replacement = {key.lower().encode(): value.encode() for key, value in response_headers.items()}
                 message = {**message, "headers": [(key, value) for key, value in message.get("headers", []) if key.lower() not in replacement]
                            + list(replacement.items())}
@@ -91,7 +95,7 @@ class RequestBoundary:
             await reject("request_headers_too_large", 431)
             return
         headers = {}
-        sensitive = {b"host", b"origin", b"authorization", b"content-length", b"transfer-encoding", b"x-workspace-id"}
+        sensitive = {b"host", b"origin", b"authorization", b"content-length", b"transfer-encoding", b"x-workspace-id", b"x-workspace-member-id"}
         for key, value in raw_headers:
             key = key.lower()
             if key in sensitive and key in headers:
@@ -133,6 +137,7 @@ class RequestBoundary:
             await reject("server_busy", 503, retry=True)
             return
         self.active += 1
+        context_token = set_context(request_id=request_id)
         try:
             maximum = 5_000_000 if scope.get("path", "").startswith("/internal/v1/") else 1_000_000
             length = headers.get(b"content-length")
@@ -185,10 +190,24 @@ class RequestBoundary:
             except Exception as exc:
                 # ASGI servers otherwise log the exception and traceback even
                 # after FastAPI's generic exception handler has sent a response.
-                log.error("unexpected_error request_id=%s exception_type=%s", request_id, type(exc).__name__)
+                emit("request.failed", level=logging.ERROR, metadata={"exception_type": type(exc).__name__})
                 if not response_started:
                     await JSONResponse({"detail": {"code": "internal_error", "request_id": request_id}}, 500)(scope, bounded_receive, secure_send)
                 elif not response_ended:
-                    await secure_send({"type": "http.response.body", "body": b"", "more_body": False})
+                    # Completing a partial response violates Content-Length and
+                    # also makes chunked downloads appear successful. Let the
+                    # server close the connection without fabricating success.
+                    raise RuntimeError("stream_response_incomplete") from None
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            method, path = scope.get("method", ""), scope.get("path", "")
+            # Successful preflights, profile polling and presence heartbeats
+            # are transport noise. Business events are emitted by the code
+            # that actually performed the work.
+            if (status_code >= 400 or duration_ms >= 2000
+                    or (method not in {"GET", "HEAD", "OPTIONS"} and path != "/api/v1/presence")):
+                emit("request.completed", level=logging.WARNING if status_code >= 400 else logging.INFO,
+                     metadata={"method": method, "path": path, "status": status_code,
+                               "duration_ms": round(duration_ms, 1)})
         finally:
+            reset_context(context_token)
             self.active -= 1

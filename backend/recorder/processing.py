@@ -23,16 +23,28 @@ def contiguous_samples(chunks: list[dict]) -> int:
     return expected
 
 
+def processing_window_seconds(audio_bucket: str | None, configured_seconds: int, live_seconds: int = 15) -> int:
+    """Keep live customer conversations, visitor registration and legacy windows distinct."""
+    if audio_bucket == "walkin-audio":
+        return 6
+    return live_seconds if audio_bucket == "session-audio" else configured_seconds
+
+
 async def plan_windows(connection, conversation_id: UUID, settings, final: bool = False, run_id: UUID | None = None) -> list[UUID]:
     """Lock conversation before calling. Jobs own new audio; overlap only supplies context."""
     chunks = await many(connection, "select * from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
     coverage = contiguous_samples(chunks)
+    conversation = await one(connection, "select audio_bucket from conversations where id=%s", (conversation_id,))
+    # A completed live window can be processed before capture stops. Uploads
+    # stay independently durable, and finalization flushes any shorter remainder.
+    window_seconds = processing_window_seconds(conversation.get("audio_bucket") if conversation else None,
+                                                settings.window_seconds, settings.live_window_seconds)
     runs = await many(connection, "select * from processing_runs where conversation_id=%s and cancelled_at is null and (%s::uuid is null or id=%s) and (kind='production' or id=%s) order by created_at", (conversation_id, run_id, run_id, run_id))
     jobs = []
     for run in runs:
         previous = await one(connection, "select coalesce(max(sample_end),0) as covered,coalesce(max(sequence),-1)+1 as sequence from transcription_windows where run_id=%s", (run["id"],))
         start, sequence = previous["covered"], previous["sequence"]
-        window_samples = settings.window_seconds * 16000
+        window_samples = window_seconds * 16000
         while coverage - start >= window_samples or (final and coverage > start):
             end = min(start + window_samples, coverage)
             context_start = max(0, start - settings.context_seconds * 16000)
@@ -63,8 +75,10 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
     existing = await one(connection, "select id from transcript_versions where job_id=%s", (job["id"],))
     if existing:
         return existing["id"]
-    run = await one(connection, "select * from processing_runs where id=%s for update", (job["run_id"],))
-    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null for update", (job["conversation_id"],))
+    # These are read-only inputs for most of publication. Do not hold either
+    # row lock while inserting the transcript and word data below.
+    run = await one(connection, "select * from processing_runs where id=%s", (job["run_id"],))
+    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null", (job["conversation_id"],))
     if not run or not conv or run["cancelled_at"]:
         fail("result_publication_cancelled", 409)
     final = job["kind"] == "finalise" or bool(job["payload"].get("final"))
@@ -116,7 +130,9 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
         return ownership_segments(prepared, offset, own_start, own_end, scope)
     native = bool((result.get("provenance") or {}).get("native_english")) or run["engine_id"] == "faster-whisper"
     source_owned = owned([dict(item, _source_index=index) for index, item in enumerate(source)])
-    english_owned = owned([{key: value for key, value in dict(item, _source_index=index).items() if key != "words"} for index, item in enumerate(english)])
+    # Known-English source copies carry real source word timings; ownership must
+    # trim their text exactly like the source. Actual translations have no words.
+    english_owned = owned([dict(item, _source_index=index) for index, item in enumerate(english)])
     if native:
         # Native translation and an optional source pass have independent timing.
         # Preserve both without asserting translated-word or cross-pass alignment.
@@ -147,6 +163,12 @@ async def publish_result(connection, job: dict, result: dict) -> UUID:
     for interval in result.get("diarization_intervals") or []:
         await connection.execute("insert into diarization_intervals(version_id,conversation_id,speaker_ref,start_seconds,end_seconds,overlap) values(%s,%s,%s,%s,%s,%s)", (version_id, conv["id"], interval["speaker"], float(interval["start"]) + offset, float(interval["end"]) + offset, bool(interval.get("overlap", False))))
     next_state = "complete" if final and english_state == "complete" else "running"
+    # Serialize only the final run/conversation state transition. The heavy
+    # transcript publication above can now coexist with chunk confirmation.
+    run = await one(connection, "select * from processing_runs where id=%s for update", (run["id"],))
+    conv = await one(connection, "select * from conversations where id=%s and deleted_at is null for update", (conv["id"],))
+    if not run or run["cancelled_at"] or not conv:
+        fail("result_publication_cancelled", 409)
     await connection.execute("update processing_runs set coverage_samples=greatest(coverage_samples,%s),state=case when state='complete' and %s<>'complete' then state else %s end where id=%s", (coverage, next_state, next_state, run["id"]))
     active = await one(connection, "select * from transcript_versions where id=%s", (conv["active_version_id"],)) if conv["active_version_id"] else None
     publish_active = run["kind"] == "production" and not (active and active["kind"] == "final" and active["english_state"] == "complete" and not final)

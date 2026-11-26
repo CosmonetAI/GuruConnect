@@ -7,9 +7,10 @@ from uuid import UUID
 import httpx
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .config import Settings
+from .activity_log import external_completed, external_failed, external_started, update_context
 from .db import one
 from .errors import fail
 
@@ -44,15 +45,25 @@ class JWTVerifier:
             return
         self.last_fetch_at = now
         self.fetch_failed = True
-        async with asyncio.timeout(self.JWKS_TIMEOUT_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3), follow_redirects=False, trust_env=False) as client:
-            async with client.stream("GET", f"{self.settings.issuer}/.well-known/jwks.json") as response:
-                if response.status_code != 200:
-                    fail("auth_temporarily_unavailable", 503)
-                payload = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(payload) + len(chunk) > 262144:
+        operation = "GET /.well-known/jwks.json"
+        started_at = external_started("supabase-auth", operation)
+        try:
+            async with asyncio.timeout(self.JWKS_TIMEOUT_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(5, connect=3), follow_redirects=False, trust_env=False) as client:
+                async with client.stream("GET", f"{self.settings.issuer}/.well-known/jwks.json") as response:
+                    external_completed("supabase-auth", operation, started_at, status=response.status_code,
+                                       metadata={"response_bytes": response.headers.get("content-length", "unknown")})
+                    if response.status_code != 200:
+                        external_failed("supabase-auth", operation, started_at, RuntimeError(f"jwks_http_{response.status_code}"), status=response.status_code)
                         fail("auth_temporarily_unavailable", 503)
-                    payload.extend(chunk)
+                    payload = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(payload) + len(chunk) > 262144:
+                            fail("auth_temporarily_unavailable", 503)
+                        payload.extend(chunk)
+        except Exception as error:
+            if not isinstance(error, HTTPException):
+                external_failed("supabase-auth", operation, started_at, error)
+            raise
         try:
             items = json.loads(payload)["keys"]
             if not isinstance(items, list) or not 1 <= len(items) <= 64:
@@ -149,6 +160,7 @@ async def current_user(request: Request, credentials: HTTPAuthorizationCredentia
     if not credentials or credentials.scheme.lower() != "bearer":
         fail("authentication_required", 401)
     user = await request.app.state.verifier.verify(credentials.credentials)
+    update_context(actor_id=str(user.id))
     async with request.app.state.db.connection() as connection:
         allowance = await one(connection, "select allow_api_request(%s,%s,60) as allowed", (f"user:{user.id}", request.app.state.settings.rate_limit_per_minute))
         if not allowance["allowed"]:
@@ -161,25 +173,44 @@ class Workspace:
     id: UUID
     user: User
     role: str
+    member_id: UUID
+    actor_role: str
 
     @property
     def admin(self) -> bool:
-        return self.role in {"owner", "admin"}
+        return self.actor_role == "owner"
+
+    @property
+    def personal(self) -> bool:
+        return self.member_id == self.user.id
 
 
 async def workspace(request: Request, user: User = Depends(current_user),
-                    x_workspace_id: UUID | None = Header(default=None)) -> Workspace:
+                    x_workspace_id: UUID | None = Header(default=None),
+                    x_workspace_member_id: UUID | None = Header(default=None)) -> Workspace:
     if not x_workspace_id:
         fail("workspace_required", 400)
     async with request.app.state.db.connection() as connection:
-        member = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
-    if not member:
+        actor = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
+        selected_id = x_workspace_member_id or user.id
+        selected = await one(connection, "select role,status from members where organisation_id=%s and user_id=%s", (x_workspace_id, selected_id))
+    # Owners may work in a salesperson's or receptionist's workspace, but an
+    # owner must not impersonate another owner. Keep the actor's own member
+    # selection valid so they can always return to their own workspace.
+    if not actor or not selected or (selected_id != user.id and (
+        actor["role"] != "owner" or selected["role"] == "owner"
+    )):
         fail("workspace_access_denied", 403)
-    return Workspace(x_workspace_id, user, member["role"])
+    if actor["role"] == "owner" and selected_id != user.id and request.method not in {"GET", "HEAD"}:
+        fail("workspace_read_only", 403, "Owner views of salesperson and receptionist workspaces are read-only")
+    if selected.get("status", "active") != "active" and (actor["role"] != "owner" or request.method not in {"GET", "HEAD"}):
+        fail("workspace_access_denied", 403)
+    update_context(organisation_id=str(x_workspace_id), member_id=str(selected_id))
+    return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])
 
 
 async def administrator(request: Request, context: Workspace = Depends(workspace)) -> Workspace:
-    if not context.admin:
+    if context.role != "owner":
         fail("administrator_required", 403)
     if request.app.state.settings.require_admin_mfa and context.user.aal != "aal2":
         fail("mfa_required", 403)
@@ -187,8 +218,25 @@ async def administrator(request: Request, context: Workspace = Depends(workspace
 
 
 async def conversation(connection, context: Workspace, conversation_id: UUID, *, lock: bool = False) -> dict:
-    row = await one(connection, "select * from conversations where id=%s and organisation_id=%s and deleted_at is null" + (" for update" if lock else ""), (conversation_id, context.id))
-    if not row or (row["owner_id"] != context.user.id and not context.admin):
+    row = await one(connection, """
+        select c.*,
+               exists(
+                   select 1
+                     from public.guruconnect_enquiries e
+                     join public.guruconnect_walkin_recordings wr
+                       on wr.organisation_id=e.organisation_id
+                      and wr.conversation_id=e.conversation_id
+                    where e.organisation_id=c.organisation_id
+                      and e.conversation_id=c.id
+                      and e.assigned_to=%s
+                      and c.audio_bucket='walkin-audio'
+               ) as assigned_walkin_access
+          from conversations c
+         where c.id=%s and c.organisation_id=%s and c.deleted_at is null
+        """ + (" for update" if lock else ""), (context.member_id, conversation_id, context.id))
+    # An assigned owner/salesperson may review the main walk-in recording
+    # attached to their enquiry. All other recordings remain owner-scoped.
+    if not row or (row["owner_id"] != context.member_id and not row.get("assigned_walkin_access")):
         fail("conversation_not_found", 404)
     return row
 

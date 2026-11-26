@@ -1,107 +1,599 @@
 from datetime import timedelta
+import json
+import logging
 import asyncio, httpx
+from contextvars import ContextVar
+import re
+from urllib.parse import urlsplit
 from sqlalchemy import text
 from .db import require_db, row_dict, now
-from .settings import settings
+from recorder.activity_log import external_completed, external_failed, external_started
+
+_organisation_id: ContextVar[str | None] = ContextVar('zoho_organisation_id', default=None)
+_member_id: ContextVar[str | None] = ContextVar('zoho_member_id', default=None)
+log = logging.getLogger(__name__)
+
+ZOHO_REGIONS = {
+    'us': {
+        'label': 'USA',
+        'accounts_url': 'https://accounts.zoho.com',
+        'api_domain': 'https://www.zohoapis.com',
+        'mail_api_domain': 'https://mail.zoho.com',
+        'api_console_url': 'https://api-console.zoho.com/',
+    },
+    'in': {
+        'label': 'India',
+        'accounts_url': 'https://accounts.zoho.in',
+        'api_domain': 'https://www.zohoapis.in',
+        'mail_api_domain': 'https://mail.zoho.in',
+        'api_console_url': 'https://api-console.zoho.in/',
+    },
+}
+
+
+def zoho_region(value):
+    region = str(value or 'us').strip().lower()
+    if region not in ZOHO_REGIONS:
+        raise ValueError('Unsupported Zoho data center')
+    return region
+
+
+def zoho_endpoints(value):
+    return ZOHO_REGIONS[zoho_region(value)]
+
+def set_organisation_id(value: str | None):
+    _organisation_id.set(value)
+
+def set_member_id(value: str | None):
+    _member_id.set(value)
+
+def get_member_id():
+    return _member_id.get()
+
+def get_organisation_id():
+    return _organisation_id.get()
+
+
+def _zoho_response_metadata(response):
+    metadata = {'response_bytes': len(response.content)}
+    if response.status_code >= 400:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict):
+            # Keep provider diagnostics useful without logging the submitted
+            # contact payload or any other customer data.
+            if payload.get('code') is not None:
+                metadata['provider_code'] = str(payload['code'])[:80]
+            if payload.get('message'):
+                metadata['provider_message'] = str(payload['message'])[:240]
+    return metadata
+
+
+def _log_zoho_response(operation, started_at, response):
+    metadata = _zoho_response_metadata(response)
+    external_completed('zoho', operation, started_at, status=response.status_code,
+                       external_request_id=response.headers.get('x-request-id'),
+                       metadata=metadata)
+    if response.status_code >= 400:
+        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'),
+                        status=response.status_code, metadata={key: value for key, value in metadata.items() if key != 'response_bytes'})
 
 class ZohoClient:
-    def _connection(self):
+    def _tenant_key(self):
+        org = _organisation_id.get()
+        member = _member_id.get()
+        return f"guru-group:{org}:{member}" if org and member else 'guru-group'
+    def _member(self):
+        org = _organisation_id.get(); member = _member_id.get()
+        if not org or not member:
+            raise RuntimeError('A signed-in workspace member is required for Zoho access')
         with require_db() as db:
-            row = db.execute(text("select * from zoho_connections where tenant_key='guru-group' limit 1")).first()
+            row = db.execute(text("""select user_id, role, status from members
+              where organisation_id=cast(:org as uuid) and user_id=cast(:member as uuid)
+              limit 1"""), {'org': org, 'member': member}).first()
+        if not row or row.status != 'active' or row.role not in ('owner', 'salesperson'):
+            raise PermissionError('Receptionists cannot connect to or access Zoho accounts')
+        return row_dict(row)
+    def _connection(self):
+        self._member()
+        with require_db() as db:
+            row = db.execute(text("""select * from zoho_connections
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              limit 1"""), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
             return row_dict(row) if row else None
     def status(self):
         c=self._connection()
         if not c: return {'status':'not_connected','connected':False}
-        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'last_error':c.get('last_error')}
+        region = zoho_region(c.get('zoho_region') or 'in')
+        return {'status':c['status'],'connected':bool(c.get('refresh_token')),'expires_at':c.get('expires_at'),'organization_id':c.get('organization_id'),'currency':c.get('currency'),'mail_account_id':c.get('mail_account_id'),'zoho_region':region,'zoho_region_label':zoho_endpoints(region)['label'],'zoho_taxes_updated_at':c.get('zoho_taxes_updated_at'),'last_error':'Zoho connection requires attention' if c.get('last_error') else None}
     def configuration(self):
         c=self._connection() or {}
-        return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret'))}
-    async def save_configuration(self, client_id, client_secret):
+        region = zoho_region(c.get('zoho_region') or 'in')
+        endpoints = zoho_endpoints(region)
+        return {'configured':bool(c.get('client_id') and c.get('client_secret')),'client_id':c.get('client_id'),'client_secret_configured':bool(c.get('client_secret')),'zoho_region':region,'zoho_region_label':endpoints['label'],'zoho_accounts_url':endpoints['accounts_url'],'zoho_api_domain':endpoints['api_domain'],'zoho_mail_api_domain':endpoints['mail_api_domain'],'zoho_api_console_url':endpoints['api_console_url']}
+    async def save_region(self, region):
+        self._member()
+        region = zoho_region(region or 'in')
         with require_db() as db:
-            existing=db.execute(text("select client_secret from zoho_connections where tenant_key='guru-group' limit 1")).first()
+            existing = db.execute(text("""select zoho_region from zoho_connections
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)
+              limit 1"""), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
+            if not existing:
+                db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,member_id,zoho_region,status)
+                  values(:tenant,cast(:org as uuid),cast(:member as uuid),:region,'not_connected')"""), {
+                    'tenant': self._tenant_key(), 'org': _organisation_id.get(), 'member': _member_id.get(), 'region': region,
+                })
+            elif zoho_region(existing[0]) != region:
+                # A token is tied to the selected data center. Reconnecting is
+                # required when the user deliberately switches regions.
+                db.execute(text("""update zoho_connections set zoho_region=:region,
+                  access_token=null,refresh_token=null,expires_at=null,organization_id=null,
+                  currency=null,mail_account_id=null,api_domain=null,zoho_taxes='[]'::jsonb,
+                  zoho_taxes_updated_at=null,status='not_connected',
+                  last_error=null,updated_at=now()
+                  where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), {
+                    'region': region, 'org': _organisation_id.get(), 'member': _member_id.get(),
+                })
+            db.commit()
+        return self.status()
+    async def save_configuration(self, client_id, client_secret, region=None):
+        self._member()
+        region = zoho_region(region or 'in')
+        with require_db() as db:
+            existing=db.execute(text("select client_secret from zoho_connections where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"), {'org': _organisation_id.get(), 'member': _member_id.get()}).first()
             if not client_secret:
                 client_secret=existing[0] if existing and existing[0] else None
             if not client_secret:
                 raise ValueError('Client Secret is required for the first configuration.')
-            db.execute(text("""insert into zoho_connections(tenant_key,client_id,client_secret,status) values('guru-group',:client_id,:client_secret,'not_connected') on conflict(tenant_key) do update set client_id=:client_id,client_secret=:client_secret,updated_at=now()"""), {'client_id':client_id,'client_secret':client_secret}); db.commit()
+            db.execute(text("""insert into zoho_connections(tenant_key,organisation_id,member_id,client_id,client_secret,status)
+              values(:tenant,cast(:org as uuid),cast(:member as uuid),:client_id,:client_secret,'not_connected')
+              on conflict (organisation_id,member_id) where organisation_id is not null and member_id is not null
+              do update set tenant_key=excluded.tenant_key,
+                client_id=excluded.client_id,client_secret=excluded.client_secret,zoho_region=:region,
+                zoho_taxes='[]'::jsonb,zoho_taxes_updated_at=null,updated_at=now()"""),
+              {'tenant':self._tenant_key(),'org':_organisation_id.get(),'member':_member_id.get(),'client_id':client_id,'client_secret':client_secret,'region':region}); db.commit()
         return self.configuration()
     async def exchange_code(self, code):
         c=self._connection() or {}
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'authorization_code','client_id':c['client_id'],'client_secret':c['client_secret'],'code':code}
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{settings.zoho_accounts_url}/oauth/v2/token',data=data)
-        response.raise_for_status(); payload=response.json(); await self._save_tokens(payload); return self.status()
+        accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
+        operation = 'POST /oauth/v2/token'; started_at = external_started('zoho', operation)
+        try:
+            async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
+            _log_zoho_response(operation, started_at, response)
+            response.raise_for_status(); payload=response.json(); await self._save_tokens(payload); return self.status()
+        except Exception as error:
+            if 'response' not in locals() or response.status_code < 400: external_failed('zoho', operation, started_at, error, status=getattr(locals().get('response'), 'status_code', None))
+            raise
     async def refresh(self, force=False):
         c=self._connection()
         if not c or not c.get('refresh_token'): return False
         if not force and c.get('expires_at') and c['expires_at'] > now()+timedelta(minutes=10): return True
         if not c.get('client_id') or not c.get('client_secret'): raise RuntimeError('Zoho client configuration is missing. Complete the frontend setup first.')
         data={'grant_type':'refresh_token','client_id':c['client_id'],'client_secret':c['client_secret'],'refresh_token':c['refresh_token']}
-        async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{settings.zoho_accounts_url}/oauth/v2/token',data=data)
-        response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
+        accounts_url = zoho_endpoints(c.get('zoho_region'))['accounts_url']
+        operation = 'POST /oauth/v2/token'; started_at = external_started('zoho', operation)
+        try:
+            async with httpx.AsyncClient(timeout=25) as client: response=await client.post(f'{accounts_url}/oauth/v2/token',data=data)
+            _log_zoho_response(operation, started_at, response)
+            response.raise_for_status(); await self._save_tokens({**response.json(),'refresh_token':c['refresh_token']}); return True
+        except Exception as error:
+            if 'response' not in locals() or response.status_code < 400: external_failed('zoho', operation, started_at, error, status=getattr(locals().get('response'), 'status_code', None))
+            raise
     async def _save_tokens(self,payload):
+        self._member()
         with require_db() as db:
-            db.execute(text("""insert into zoho_connections(tenant_key,api_domain,access_token,refresh_token,expires_at,scope,status,updated_at) values('guru-group',:domain,:access,:refresh,:expires,:scope,'connected',now()) on conflict(tenant_key) do update set api_domain=:domain,access_token=:access,refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()"""),{'domain':payload.get('api_domain',settings.zoho_api_domain),'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
+            region = zoho_region((db.execute(text("select zoho_region from zoho_connections where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid) limit 1"), {'org': _organisation_id.get(), 'member': _member_id.get()}).first() or ['us'])[0])
+            db.execute(text("""update zoho_connections set api_domain=:domain,access_token=:access,
+              refresh_token=:refresh,expires_at=:expires,scope=:scope,status='connected',last_error=null,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'org':_organisation_id.get(),'member':_member_id.get(),'domain':zoho_endpoints(region)['api_domain'],'access':payload['access_token'],'refresh':payload.get('refresh_token'),'expires':now()+timedelta(seconds=int(payload.get('expires_in',3600))),'scope':payload.get('scope','')}); db.commit()
     async def request(self,method,path,*,params=None,json=None,form=None):
         await self.refresh(); c=self._connection()
         if not c or not c.get('access_token'): raise RuntimeError('Zoho is not connected')
         headers={'Authorization':f"Zoho-oauthtoken {c['access_token']}"}
-        async with httpx.AsyncClient(timeout=30) as client:
-            response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
-            if response.status_code==401:
-                await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
-                response=await client.request(method,f"{c.get('api_domain') or settings.zoho_api_domain}{path}",headers=headers,params=params,json=json,data=form)
-        response.raise_for_status(); return response.json()
+        api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
+        operation = f"{method.upper()} {path}"
+        started_at = external_started('zoho', operation)
+        response = None
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
+                if response.status_code==401:
+                    await self.refresh(force=True); c=self._connection(); headers['Authorization']=f"Zoho-oauthtoken {c['access_token']}"
+                    api_domain = c.get('api_domain') or zoho_endpoints(c.get('zoho_region'))['api_domain']
+                    response=await client.request(method,f"{api_domain}{path}",headers=headers,params=params,json=json,data=form)
+            if response.status_code >= 400:
+                metadata = _zoho_response_metadata(response)
+                external_completed('zoho', operation, started_at, status=response.status_code,
+                                   external_request_id=response.headers.get('x-request-id'), metadata=metadata)
+                external_failed('zoho', operation, started_at, RuntimeError(f"zoho_http_{response.status_code}"),
+                                status=response.status_code,
+                                metadata={key: value for key, value in metadata.items() if key != 'response_bytes'})
+            else:
+                external_completed('zoho', operation, started_at, status=response.status_code,
+                                   external_request_id=response.headers.get('x-request-id'),
+                                   metadata={'response_bytes': len(response.content)})
+            response.raise_for_status()
+            return response.json() if response.content else {'ok': True}
+        except Exception as error:
+            if response is None or response.status_code < 400:
+                external_failed('zoho', operation, started_at, error, status=getattr(response, 'status_code', None))
+            raise
+
+    async def mail_accounts(self):
+        """Resolve the Mail account IDs available to this OAuth user."""
+        await self.refresh()
+        connection = self._connection()
+        if not connection or not connection.get('access_token'):
+            raise RuntimeError('Zoho is not connected')
+        domain = zoho_endpoints(connection.get('zoho_region'))['mail_api_domain'].rstrip('/')
+        headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/json'}
+        for attempt in range(2):
+            operation = 'GET /api/accounts'; started_at = external_started('zoho', operation)
+            try:
+                async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+                    response = await client.get(f'{domain}/api/accounts', headers=headers)
+                _log_zoho_response(operation, started_at, response)
+            except Exception as error:
+                external_failed('zoho', operation, started_at, error)
+                raise
+            if response.status_code == 401 and attempt == 0:
+                await self.refresh(force=True)
+                connection = self._connection()
+                headers['Authorization'] = f"Zoho-oauthtoken {connection['access_token']}"
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            raw_accounts = payload.get('data') if isinstance(payload, dict) else []
+            accounts = []
+            for account in raw_accounts if isinstance(raw_accounts, list) else []:
+                if not isinstance(account, dict) or not account.get('accountId'):
+                    continue
+                account_id = str(account['accountId'])
+                address = account.get('mailboxAddress') or account.get('incomingUserName') or account.get('primaryEmailAddress') or ''
+                accounts.append({'account_id': account_id, 'email': str(address), 'label': str(account.get('accountDisplayName') or address or account_id)})
+            current = str(connection.get('mail_account_id') or '')
+            ids = {account['account_id'] for account in accounts}
+            selected = current if current in ids else (accounts[0]['account_id'] if len(accounts) == 1 else None)
+            if selected != current:
+                with require_db() as db:
+                    db.execute(text("""update zoho_connections set mail_account_id=:selected,updated_at=now()
+                      where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+                      {'selected': selected, 'org': _organisation_id.get(), 'member': _member_id.get()}); db.commit()
+            return {'mail_accounts': accounts, 'mail_account_id': selected}
+        raise RuntimeError('Zoho Mail account lookup failed')
+
+    async def select_mail_account(self, account_id):
+        self._member()
+        available = await self.mail_accounts()
+        selected = str(account_id or '')
+        if selected not in {account['account_id'] for account in available['mail_accounts']}:
+            raise ValueError('Select a valid Zoho Mail account')
+        with require_db() as db:
+            db.execute(text("""update zoho_connections set mail_account_id=:selected,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'selected': selected, 'org': _organisation_id.get(), 'member': _member_id.get()}); db.commit()
+        return self.status()
+
+    async def download_sales_document(self, org, kind, document_id):
+        """Download Zoho's authoritative PDF using this member's connection.
+
+        Books documents support GET /{resource}/{id}?accept=pdf. No caller-
+        supplied download URL is accepted, and OAuth headers never follow a
+        redirect. The caller separately authorizes access to the document ID.
+        """
+        resources = {
+            'invoice': 'invoices', 'invoices': 'invoices',
+            'quote': 'estimates', 'estimate': 'estimates', 'estimates': 'estimates',
+            'sales-order': 'salesorders', 'sales_order': 'salesorders',
+            'salesorder': 'salesorders', 'salesorders': 'salesorders', 'order': 'salesorders',
+            'purchase-order': 'purchaseorders', 'purchase_order': 'purchaseorders', 'purchaseorder': 'purchaseorders',
+        }
+        resource = resources.get(str(kind).strip().lower())
+        if not resource or not re.fullmatch(r'[0-9]{1,64}', str(document_id)) or not re.fullmatch(r'[0-9]{1,64}', str(org)):
+            raise ValueError('Invalid sales document identity')
+        allowed_hosts = {
+            'www.zohoapis.com', 'www.zohoapis.eu', 'www.zohoapis.in', 'www.zohoapis.com.au',
+            'www.zohoapis.jp', 'www.zohoapis.ca', 'www.zohoapis.com.cn', 'www.zohoapis.sa',
+        }
+        maximum = 8 * 1024 * 1024
+        await self.refresh()
+        for attempt in range(2):
+            connection = self._connection()
+            if not connection or not connection.get('access_token'):
+                raise RuntimeError('Zoho is not connected')
+            if str(connection.get('organization_id') or '') != str(org):
+                raise PermissionError('Select the connected Zoho Books organization before downloading')
+            domain = str(connection.get('api_domain') or zoho_endpoints(connection.get('zoho_region'))['api_domain']).rstrip('/')
+            parsed = urlsplit(domain)
+            if (parsed.scheme != 'https' or parsed.hostname not in allowed_hosts
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+                raise ValueError('Unsupported Zoho API domain')
+            domain = f'https://{parsed.hostname}'
+            headers = {'Authorization': f"Zoho-oauthtoken {connection['access_token']}", 'Accept': 'application/pdf'}
+            url = f'{domain}/books/v3/{resource}/{document_id}'
+            retry = False
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                operation = f'GET /books/v3/{resource}/{document_id}'; started_at = external_started('zoho', operation)
+                async with client.stream('GET', url, params={'organization_id': str(org), 'accept': 'pdf'}, headers=headers) as response:
+                    external_completed('zoho', operation, started_at, status=response.status_code,
+                                       external_request_id=response.headers.get('x-request-id'),
+                                       metadata={'content_type': response.headers.get('content-type', '').split(';', 1)[0]})
+                    if response.status_code >= 400:
+                        external_failed('zoho', operation, started_at, RuntimeError(f'zoho_http_{response.status_code}'), status=response.status_code)
+                    if response.status_code == 401 and attempt == 0:
+                        retry = True
+                    else:
+                        if 300 <= response.status_code < 400:
+                            raise ValueError('Zoho PDF redirects are not supported')
+                        response.raise_for_status()
+                        if response.headers.get('content-type', '').split(';', 1)[0].strip().lower() != 'application/pdf':
+                            raise ValueError('Zoho did not return a PDF document')
+                        length = response.headers.get('content-length')
+                        if length is not None and (not length.isdigit() or int(length) > maximum):
+                            raise ValueError('Zoho PDF exceeds the download size limit')
+                        content = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            if len(content) + len(chunk) > maximum:
+                                raise ValueError('Zoho PDF exceeds the download size limit')
+                            content.extend(chunk)
+                        pdf = bytes(content)
+                        if not pdf.startswith(b'%PDF-') or b'%%EOF' not in pdf[-1024:]:
+                            raise ValueError('Zoho returned an invalid or incomplete PDF document')
+                        return pdf
+            if retry:
+                await self.refresh(force=True)
+        raise RuntimeError('Zoho PDF download failed')
     async def smoke_test(self):
-        result=await self.request('GET','/books/v3/organizations'); orgs=result.get('organizations',result.get('data',[]));
         current=self._connection() or {}; selected=current.get('organization_id')
+        books_error = None
+        try:
+            result=await self.request('GET','/books/v3/organizations')
+            raw_orgs = result.get('organizations') or result.get('data') or result.get('organization') or []
+            if isinstance(raw_orgs, dict):
+                raw_orgs = raw_orgs.get('organizations') or raw_orgs.get('data') or raw_orgs.get('organization') or [raw_orgs]
+            if isinstance(raw_orgs, dict): raw_orgs = [raw_orgs]
+        except Exception as error:
+            log.warning('zoho_books_organizations_unavailable exception_type=%s', type(error).__name__)
+            raw_orgs = []
+            books_error = 'Zoho Books organization lookup failed. The saved organization will remain available.'
+        orgs = []
+        for org in raw_orgs if isinstance(raw_orgs, list) else []:
+            if not isinstance(org, dict): continue
+            org_id = org.get('organization_id') or org.get('id')
+            if org_id: orgs.append({**org, 'organization_id': str(org_id), 'organization_name': org.get('organization_name') or org.get('name') or org.get('org_name') or str(org_id)})
         ids={str(org.get('organization_id')) for org in orgs if org.get('organization_id')}
         if len(orgs)==1:
-            selected=orgs[0].get('organization_id'); self.select_organization(selected)
-        elif selected not in ids:
+            only_org = orgs[0].get('organization_id')
+            if str(selected or '') != str(only_org or ''):
+                await self.select_organization(only_org)
+            selected = only_org
+        elif orgs and selected not in ids:
             selected=None
-        return {'organizations':orgs,'organization_id':selected}
-    def select_organization(self, organization_id):
+        if not orgs and selected:
+            orgs=[{'organization_id': str(selected), 'organization_name': 'Selected Books organization'}]
+        mail_error = None
+        try:
+            mail = await self.mail_accounts()
+        except Exception as error:
+            # A token created before the Mail scopes were added can still read
+            # Books. Keep the working Books selector usable while the UI asks
+            # the owner to reconnect for Mail account access.
+            log.warning('zoho_mail_accounts_unavailable exception_type=%s', type(error).__name__)
+            mail = {'mail_accounts': [], 'mail_account_id': current.get('mail_account_id')}
+            mail_error = 'Zoho Mail account lookup failed. Reconnect Zoho with the Mail account scopes.'
+        log.info('zoho_books_organizations count=%s selected=%s mail_accounts=%s mail_selected=%s', len(orgs), bool(selected), len(mail['mail_accounts']), bool(mail['mail_account_id']))
+        return {'organizations':orgs,'organization_id':selected, 'books_organizations_error': books_error, 'mail_accounts_error': mail_error, **mail}
+    async def select_organization(self, organization_id):
+        self._member()
+        currencies = await self.request('GET', '/books/v3/settings/currencies', params={'organization_id': organization_id})
+        available = currencies.get('currencies') or []
+        base_currency = next((currency for currency in available if currency.get('is_base_currency')), None)
+        currency_code = (base_currency or (available[0] if available else {})).get('currency_code')
+        if not currency_code:
+            raise RuntimeError('Zoho Books did not return a base currency for the selected organization')
         with require_db() as db:
-            db.execute(text("update zoho_connections set organization_id=:org,updated_at=now() where tenant_key='guru-group'"),{'org':organization_id}); db.commit()
+            db.execute(text("""update zoho_connections set organization_id=:selected,currency=:currency,
+              zoho_taxes='[]'::jsonb,zoho_taxes_updated_at=null,updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""),
+              {'selected':organization_id,'currency':currency_code,'org':_organisation_id.get(),'member':_member_id.get()}); db.commit()
+        connection = self._connection() or {}
+        if zoho_region(connection.get('zoho_region') or 'us') == 'in':
+            try:
+                await self.refresh_taxes()
+            except Exception as error:
+                log.warning('zoho_india_taxes_initial_fetch_failed exception_type=%s', type(error).__name__)
         return self.status()
+
+    def cached_taxes(self):
+        connection = self._connection() or {}
+        # GST is an India-only product surface. Missing/legacy region data is
+        # deliberately treated as non-India so it cannot leak GST controls.
+        region = zoho_region(connection.get('zoho_region') or 'us')
+        raw = connection.get('zoho_taxes')
+        taxes = raw if isinstance(raw, list) else (raw.get('taxes', []) if isinstance(raw, dict) else [])
+        return {
+            'taxes': [tax for tax in taxes if isinstance(tax, dict)],
+            'zoho_region': region,
+            'zoho_region_label': zoho_endpoints(region)['label'],
+            'organization_id': connection.get('organization_id'),
+            'updated_at': connection.get('zoho_taxes_updated_at'),
+            'cached': bool(connection.get('zoho_taxes_updated_at')),
+            'available': bool(connection.get('organization_id') and connection.get('refresh_token')),
+        }
+
+    async def refresh_taxes(self):
+        self._member()
+        connection = self._connection() or {}
+        region = zoho_region(connection.get('zoho_region') or 'us')
+        if region != 'in':
+            return {**self.cached_taxes(), 'refreshed': False}
+        org = connection.get('organization_id')
+        if not connection.get('refresh_token') or not org:
+            raise RuntimeError('Connect Zoho and select a Books organization first')
+        payload = await self.list_books_taxes(org)
+        taxes = payload.get('taxes') or payload.get('data') or []
+        if not isinstance(taxes, list):
+            taxes = []
+        with require_db() as db:
+            db.execute(text("""update zoho_connections set zoho_taxes=cast(:taxes as jsonb),zoho_taxes_updated_at=now(),updated_at=now()
+              where organisation_id=cast(:org as uuid) and member_id=cast(:member as uuid)"""), {
+                'taxes': json.dumps([tax for tax in taxes if isinstance(tax, dict)], ensure_ascii=False),
+                'org': _organisation_id.get(), 'member': _member_id.get(),
+            }); db.commit()
+        result = self.cached_taxes()
+        result.update({'refreshed': True, 'page_context': payload.get('page_context', {})})
+        return result
+
+    async def taxes_for_documents(self, org):
+        connection = self._connection() or {}
+        region = zoho_region(connection.get('zoho_region') or 'us')
+        if region == 'in':
+            cached = self.cached_taxes()
+            result = cached if cached.get('updated_at') else await self.refresh_taxes()
+            taxes = result.get('taxes') or []
+            # India GST document endpoints reject legacy/custom tax rows that
+            # have no GST specification, including standalone CGST/SGST rows.
+            # Keep those rows visible in Settings, but only expose document-
+            # ready GST groups to invoice/quote/order pickers.
+            document_taxes = [
+                tax for tax in taxes
+                if isinstance(tax, dict)
+                and not tax.get('is_inactive')
+                and str(tax.get('status') or 'Active').lower() == 'active'
+                and str(tax.get('tax_type') or '').lower() == 'tax_group'
+                and str(tax.get('tax_specification') or '').lower() in {'intra', 'inter'}
+            ]
+            return {**result, 'taxes': document_taxes}
+        # Non-India organizations may have other tax concepts, but this
+        # product surface is specifically GST/tax-rule selection for India.
+        return {**self.cached_taxes(), 'taxes': []}
     async def list_bigin_contacts(self, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
-        return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':40, 'page':page})
+        return await self.request('GET','/bigin/v2/Contacts',params={'fields': fields, 'per_page':50, 'page':page})
     async def search_bigin_contacts(self, query, search_by, page=1):
         fields = 'First_Name,Last_Name,Full_Name,Email,Phone,Mobile,Home_Phone,Title,Account_Name,Owner,Description,Mailing_Street,Mailing_City,Mailing_State,Mailing_Country,Mailing_Zip,Created_Time,Modified_Time,Last_Activity_Time,Tag,Email_Opt_Out'
-        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 40, 'page': page})
+        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: query, 'fields': fields, 'per_page': 50, 'page': page})
+    async def get_bigin_contact(self, contact_id): return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}')
+    async def create_bigin_contact(self, data): return await self.request('POST','/bigin/v2/Contacts',json={'data':[data]})
+    async def lookup_bigin_contacts(self, search_by, value):
+        # No fields filter so system fields such as $layout_id are returned.
+        return await self.request('GET','/bigin/v2/Contacts/search',params={search_by: value})
+    async def contact_pipelines(self, contact_id, layout_id=None):
+        fields = 'Deal_Name,Stage,Sub_Pipeline,Pipeline,Amount,Closing_Date,Contact_Name,Account_Name,Owner,Description,Created_Time,Modified_Time,Last_Activity_Time,Tag'
+        params = {'fields': fields}
+        if layout_id: params['pipeline_id'] = layout_id
+        return await self.request('GET',f'/bigin/v2/Contacts/{contact_id}/Pipelines',params=params)
     async def search_books_contacts(self, org, query, date=None, page=1, per_page=10):
         params = {'organization_id': org, 'per_page': per_page, 'page': page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/contacts',params=params)
     async def create_books_contact(self, org, data): return await self.request('POST','/books/v3/contacts',params={'organization_id':org},json=data)
+    async def ensure_books_contact(self, org, *, name, email=None, phone=None, contact_type='customer', company=None, notes=None):
+        """Find a matching Books customer before creating one, so walk-ins are idempotent."""
+        email = (email or '').strip().lower()
+        phone = ''.join(ch for ch in (phone or '') if ch.isdigit())
+        for query in (email, phone):
+            if not query:
+                continue
+            payload = await (self.search_books_vendors(org, query) if contact_type == 'vendor' else self.search_books_customers(org, query))
+            rows = payload.get('contacts', payload.get('data', []))
+            for row in rows:
+                people = row.get('contact_persons') or row.get('contact_person') or []
+                if isinstance(people, dict):
+                    people = [people]
+                person = people[0] if isinstance(people, list) and people and isinstance(people[0], dict) else {}
+                row_email = (row.get('email') or person.get('email') or '').strip().lower()
+                row_phone = ''.join(ch for ch in str(row.get('phone') or row.get('mobile') or person.get('mobile') or person.get('phone') or '') if ch.isdigit())
+                if (email and row_email == email) or (phone and row_phone and row_phone[-10:] == phone[-10:]):
+                    return row
+        display_name = (name or email or phone or 'Walk-in customer').strip()
+        parts = display_name.split(maxsplit=1)
+        # Books accepts the visitor's local number in its contact fields. The
+        # registration form stores the country code together with the number,
+        # so strip a leading country prefix for the Books payload while still
+        # using the full value for matching existing contacts.
+        books_phone = phone[-10:] if len(phone) > 10 else phone
+        payload = {
+            'contact_name': display_name,
+            'contact_type': contact_type,
+            'customer_sub_type' if contact_type == 'customer' else 'vendor_sub_type': 'business',
+            'email': email or None,
+            'mobile': books_phone or None,
+            'company_name': (company or '').strip() or None,
+            'notes': (notes or '').strip() or None,
+            'contact_persons': [{
+                'first_name': parts[0], 'last_name': parts[1] if len(parts) > 1 else '',
+                'email': email or None, 'mobile': books_phone or None, 'is_primary_contact': True,
+            }],
+        }
+        result = await self.create_books_contact(org, {key: value for key, value in payload.items() if value not in (None, '')})
+        return result.get('contact') or (result.get('data') or [None])[0] or result
     async def update_books_contact(self, org, contact_id, data): return await self.request('PUT',f'/books/v3/contacts/{contact_id}',params={'organization_id':org},json=data)
     async def update_books_contact_person(self, org, contact_person_id, data): return await self.request('PUT',f'/books/v3/contacts/contactpersons/{contact_person_id}',params={'organization_id':org},json=data)
     async def delete_books_contact(self, org, contact_id): return await self.request('DELETE',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
+    async def update_bigin_contact(self, contact_id, data): return await self.request('PUT',f'/bigin/v2/Contacts/{contact_id}',json={'data':[{'id': contact_id, **data}]})
+    async def delete_bigin_contact(self, contact_id): return await self.request('DELETE',f'/bigin/v2/Contacts/{contact_id}')
     async def list_pipelines(self): return await self.request('GET','/bigin/v2/Pipelines',params={'per_page':200,'page':1})
     async def create_pipeline(self,data): return await self.request('POST','/bigin/v2/Pipelines',json={'data':[data]})
+    async def update_pipeline(self, record_id, data): return await self.request('PUT',f'/bigin/v2/Pipelines/{record_id}',json={'data':[{'id': record_id, **data}]})
+    async def delete_pipeline(self, record_id): return await self.request('DELETE',f'/bigin/v2/Pipelines/{record_id}')
+    async def delete_task(self, task_id): return await self.request('DELETE',f'/bigin/v2/Tasks/{task_id}')
+    async def list_deleted_bigin_records(self, module, deleted_type='recycle', page=1):
+        return await self.request('GET', f'/bigin/v2/{module}/deleted', params={'type': deleted_type, 'page': page, 'per_page': 200})
     async def pipeline_layout(self): return await self.request('GET','/bigin/v2/settings/layouts',params={'module':'Pipelines'})
-    async def list_accounts(self): return await self.request('GET','/bigin/v2/Accounts',params={'per_page':200,'page':1})
-    async def list_bigin_products(self): return await self.request('GET','/bigin/v2/Products',params={'per_page':200,'page':1})
-    async def list_tasks(self): return await self.request('GET','/bigin/v2/Tasks',params={'per_page':200,'page':1})
+    async def list_pipeline_records(self, pipeline_id, page=1, layout=None):
+        if layout is None:
+            layout_response = await self.pipeline_layout()
+            layout_rows = layout_response.get('layouts', []) if isinstance(layout_response, dict) else []
+            layout = next((row for row in layout_rows if str(row.get('id')) == str(pipeline_id)), None)
+        field_names = {
+            'id', 'Deal_Name', 'Stage', 'Amount', 'Expected_Revenue',
+            'Probability', 'Closing_Date', 'Next_Step', 'Contact_Name',
+            'Account_Name', 'Owner', 'Sub_Pipeline', 'Pipeline', 'Description',
+            'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By',
+            'Last_Activity_Time', 'Tag', 'Associated_Products',
+            'Secondary_Contacts',
+        }
+        for section in (layout or {}).get('sections', []):
+            for field in section.get('fields', []):
+                api_name = field.get('api_name')
+                if api_name and field.get('visible', True):
+                    field_names.add(api_name)
+        fields = ','.join(sorted(field_names))
+        return await self.request('GET','/bigin/v2/Pipelines',params={'pipeline_id': pipeline_id, 'fields': fields, 'per_page': 200, 'page': page, 'sort_by': 'Modified_Time', 'sort_order': 'desc'})
+    async def search_pipeline_records(self, query): return await self.request('GET','/bigin/v2/Pipelines/search',params={'word': query})
+    async def pipeline_record(self, record_id): return await self.request('GET',f'/bigin/v2/Pipelines/{record_id}')
+    async def list_accounts(self): return await self.request('GET','/bigin/v2/Accounts',params={'fields':'Account_Name,Phone,Email,Website,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_bigin_products(self): return await self.request('GET','/bigin/v2/Products',params={'fields':'Product_Name,Product_Code,Unit_Price,Description,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_tasks(self): return await self.request('GET','/bigin/v2/Tasks',params={'fields':'Subject,Due_Date,Status,Priority,Who_Id,What_Id,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
     async def create_note(self,data): return await self.request('POST','/bigin/v2/Notes',json={'data':[data]})
-    async def list_notes(self): return await self.request('GET','/bigin/v2/Notes',params={'per_page':200,'page':1})
+    async def list_notes(self): return await self.request('GET','/bigin/v2/Notes',params={'fields':'Note_Title,Note_Content,Parent_Id,Created_Time,Modified_Time','per_page':200,'page':1})
     async def update_note(self,note_id,data): return await self.request('PUT',f'/bigin/v2/Notes/{note_id}',json={'data':[data]})
     async def create_task(self,data): return await self.request('POST','/bigin/v2/Tasks',json={'data':[data]})
     async def update_task(self,task_id,data): return await self.request('PUT',f'/bigin/v2/Tasks/{task_id}',json={'data':[data]})
-    async def list_events(self): return await self.request('GET','/bigin/v2/Events',params={'per_page':200,'page':1})
-    async def list_calls(self): return await self.request('GET','/bigin/v2/Calls',params={'per_page':200,'page':1})
+    async def list_events(self): return await self.request('GET','/bigin/v2/Events',params={'fields':'Event_Title,Start_DateTime,End_DateTime,Owner,Who_Id,What_Id,Created_Time,Modified_Time','per_page':200,'page':1})
+    async def list_calls(self): return await self.request('GET','/bigin/v2/Calls',params={'fields':'Subject,Call_Start_Time,Call_Duration,Call_Type,Who_Id,What_Id,Owner,Created_Time,Modified_Time','per_page':200,'page':1})
     async def books_items(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}
+        params={'organization_id':org,'per_page':200,'page':1}
+        status=(filters or {}).get('status')
+        if status not in (None,'','all'):
+            params['status']=status
         for key in ('name_contains','description_contains','search_text','rate_less_equals'):
             value=(filters or {}).get(key)
             if value not in (None,''): params[key]=value
         return await self.request('GET','/books/v3/items',params=params)
     async def search_books_items(self, org, query='', date=None, page=1):
+        # Books list pages must expose the complete item catalogue.  Customer
+        # recommendations apply their active/sellable guard after retrieval.
         params = {'organization_id': org, 'per_page': 40, 'page': page}
-        if query: params['search_text'] = query
+        if query: params['search_text'] = str(query).strip()[:100]
         if date: params['date'] = date
         return await self.request('GET','/books/v3/items',params=params)
     async def books_item(self,org,item_id): return await self.request('GET',f'/books/v3/items/{item_id}',params={'organization_id':org})
@@ -109,9 +601,9 @@ class ZohoClient:
     async def create_books_item(self,org,data): return await self.request('POST','/books/v3/items',params={'organization_id':org},json=data)
     async def delete_books_item(self,org,item_id): return await self.request('DELETE',f'/books/v3/items/{item_id}',params={'organization_id':org})
     async def books_item_masters(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'name_contains','search_text'}}); return await self.request('GET','/books/v3/itemmasters',params=params)
+        params={'organization_id':org,'per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'status','name_contains','search_text'}}); return await self.request('GET','/books/v3/itemmasters',params=params)
     async def books_item_variants(self,org,filters=None):
-        params={'organization_id':org,'status':'active','per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'search_text'}}); return await self.request('GET','/books/v3/itemvariants',params=params)
+        params={'organization_id':org,'per_page':200,'page':1}; params.update({k:v for k,v in (filters or {}).items() if k in {'status','search_text'}}); return await self.request('GET','/books/v3/itemvariants',params=params)
     async def books_customers(self,org): return await self.request('GET','/books/v3/contacts',params={'organization_id':org,'per_page':200,'page':1})
     async def search_books_customers(self,org,query,date=None, page=1):
         params={'organization_id':org,'per_page':10,'page':page,'customer_type':'customer'}
@@ -121,46 +613,97 @@ class ZohoClient:
     async def search_books_vendors(self, org, query, page=1):
         params={'organization_id':org,'per_page':10,'page':page,'customer_type':'vendor','search_text':query}
         return await self.request('GET','/books/v3/contacts',params=params)
+    async def get_books_contact(self, org, contact_id): return await self.request('GET',f'/books/v3/contacts/{contact_id}',params={'organization_id':org})
+    async def get_books_contact_persons(self, org, contact_id): return await self.request('GET',f'/books/v3/contacts/{contact_id}/contactpersons',params={'organization_id':org})
+    async def list_books_currencies(self, org): return await self.request('GET','/books/v3/settings/currencies',params={'organization_id':org})
+    async def list_books_locations(self, org): return await self.request('GET','/books/v3/locations',params={'organization_id':org})
+    async def list_books_chart_of_accounts(self, org): return await self.request('GET','/books/v3/chartofaccounts',params={'organization_id':org,'per_page':200,'page':1})
+    async def list_books_projects(self, org): return await self.request('GET','/books/v3/projects',params={'organization_id':org,'per_page':200,'page':1})
+    async def list_books_reporting_tags(self, org): return await self.request('GET','/books/v3/reportingtags',params={'organization_id':org})
+    async def list_books_reporting_tag_options(self, org, tag_id): return await self.request('GET','/books/v3/reportingtags/options',params={'organization_id':org,'tag_id':tag_id})
+    async def list_books_taxes(self, org): return await self.request('GET','/books/v3/settings/taxes',params={'organization_id':org,'per_page':200,'page':1})
     async def books_estimates(self,org): return await self.request('GET','/books/v3/estimates',params={'organization_id':org,'per_page':200,'page':1})
     async def books_estimate(self,org,estimate_id): return await self.request('GET',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
-    async def create_estimate(self,org,data): return await self.request('POST','/books/v3/estimates',params={'organization_id':org},json=data)
+    async def create_estimate(self,org,data):
+        params = {'organization_id': org}
+        if data.get('estimate_number'):
+            params['ignore_auto_number_generation'] = 'true'
+        return await self.request('POST','/books/v3/estimates',params=params,json=data)
     async def update_estimate(self,org,estimate_id,data): return await self.request('PUT',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org},json=data)
     async def delete_estimate(self,org,estimate_id): return await self.request('DELETE',f'/books/v3/estimates/{estimate_id}',params={'organization_id':org})
     async def accept_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/accepted',params={'organization_id':org},json={})
-    async def email_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json={})
+    async def send_estimate(self,org,estimate_id): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/status/sent',params={'organization_id':org},json={})
+    async def email_estimate(self,org,estimate_id,data=None): return await self.request('POST',f'/books/v3/estimates/{estimate_id}/email',params={'organization_id':org},json=data or {})
+    async def create_customer_payment(self,org,data): return await self.request('POST','/books/v3/customerpayments',params={'organization_id':org},json=data)
     async def list_sales_orders(self,org): return await self.request('GET','/books/v3/salesorders',params={'organization_id':org,'per_page':200,'page':1})
-    async def search_sales_orders(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_sales_orders(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/salesorders',params=params)
-    async def search_purchase_orders(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_purchase_orders(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/purchaseorders',params=params)
-    async def search_invoices(self,org,query='',date=None, page=1):
-        params={'organization_id':org,'per_page':10,'page':page}
+    async def search_invoices(self,org,query='',date=None, page=1, per_page=10):
+        params={'organization_id':org,'per_page':per_page,'page':page}
         if query: params['search_text'] = query
         if date: params['date'] = date
         return await self.request('GET','/books/v3/invoices',params=params)
-    async def create_sales_order(self,org,data): return await self.request('POST','/books/v3/salesorders',params={'organization_id':org},json=data)
+    async def books_sales_order(self,org,salesorder_id): return await self.request('GET',f'/books/v3/salesorders/{salesorder_id}',params={'organization_id':org})
+    async def books_purchase_order(self,org,purchaseorder_id): return await self.request('GET',f'/books/v3/purchaseorders/{purchaseorder_id}',params={'organization_id':org})
+    async def books_invoice(self,org,invoice_id): return await self.request('GET',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org})
+    async def create_sales_order(self,org,data):
+        params = {'organization_id': org}
+        if data.get('salesorder_number'):
+            params['ignore_auto_number_generation'] = 'true'
+        return await self.request('POST','/books/v3/salesorders',params=params,json=data)
     async def update_sales_order(self,org,order_id,data): return await self.request('PUT',f'/books/v3/salesorders/{order_id}',params={'organization_id':org},json=data)
     async def delete_sales_order(self,org,order_id): return await self.request('DELETE',f'/books/v3/salesorders/{order_id}',params={'organization_id':org})
-    async def email_sales_order(self,org,order_id): return await self.request('POST',f'/books/v3/salesorders/{order_id}/email',params={'organization_id':org},json={})
-    async def create_purchase_order(self,org,data): return await self.request('POST','/books/v3/purchaseorders',params={'organization_id':org},json=data)
+    async def email_sales_order(self,org,order_id,data=None): return await self.request('POST',f'/books/v3/salesorders/{order_id}/email',params={'organization_id':org},json=data or {})
+    async def create_purchase_order(self,org,data):
+        params = {'organization_id': org}
+        if data.get('purchaseorder_number'):
+            params['ignore_auto_number_generation'] = 'true'
+        return await self.request('POST','/books/v3/purchaseorders',params=params,json=data)
     async def update_purchase_order(self,org,order_id,data): return await self.request('PUT',f'/books/v3/purchaseorders/{order_id}',params={'organization_id':org},json=data)
     async def delete_purchase_order(self,org,order_id): return await self.request('DELETE',f'/books/v3/purchaseorders/{order_id}',params={'organization_id':org})
-    async def email_purchase_order(self,org,order_id): return await self.request('POST',f'/books/v3/purchaseorders/{order_id}/email',params={'organization_id':org},json={})
-    async def create_invoice(self,org,data): return await self.request('POST','/books/v3/invoices',params={'organization_id':org},json=data)
+    async def email_purchase_order(self,org,order_id,data=None): return await self.request('POST',f'/books/v3/purchaseorders/{order_id}/email',params={'organization_id':org},json=data or {})
+    async def create_invoice(self,org,data):
+        params = {'organization_id': org}
+        if data.get('invoice_number'):
+            params['ignore_auto_number_generation'] = 'true'
+        return await self.request('POST','/books/v3/invoices',params=params,json=data)
     async def update_invoice(self,org,invoice_id,data): return await self.request('PUT',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org},json=data)
     async def delete_invoice(self,org,invoice_id): return await self.request('DELETE',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org})
-    async def email_invoice(self,org,invoice_id): return await self.request('POST',f'/books/v3/invoices/{invoice_id}/email',params={'organization_id':org},json={})
+    async def email_invoice(self,org,invoice_id,data=None): return await self.request('POST',f'/books/v3/invoices/{invoice_id}/email',params={'organization_id':org},json=data or {})
     async def list_invoices(self,org): return await self.request('GET','/books/v3/invoices',params={'organization_id':org,'per_page':200,'page':1})
 
 zoho=ZohoClient()
+async def refresh_all():
+    with require_db() as db:
+        rows = [row_dict(row) for row in db.execute(text("select organisation_id,member_id from zoho_connections where refresh_token is not null")).all()]
+    refreshed = 0
+    org_token = _organisation_id.set(None)
+    member_token = _member_id.set(None)
+    try:
+        for row in rows:
+            if not row['organisation_id'] or not row['member_id']:
+                continue
+            set_organisation_id(str(row['organisation_id']))
+            set_member_id(str(row['member_id']))
+            try:
+                refreshed += bool(await zoho.refresh(force=False))
+            except Exception:
+                log.warning('zoho_refresh_failed')
+    finally:
+        _organisation_id.reset(org_token)
+        _member_id.reset(member_token)
+    return refreshed
+
 async def refresh_loop():
     while True:
-        try: await zoho.refresh(force=False)
+        try: await refresh_all()
         except Exception: pass
         await asyncio.sleep(50*60)

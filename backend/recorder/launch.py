@@ -1,28 +1,39 @@
 """Render/container API entrypoint. No shell interpolation or trusted proxy input."""
 import asyncio
 import os
+import selectors
 import sys
 
 import uvicorn
+
+from .logging_config import configure_logging
+
+
+def windows_selector_loop_factory():
+    """Create the loop required by psycopg's async pool on Windows."""
+    return asyncio.SelectorEventLoop(selectors.SelectSelector())
 
 
 def main():
     from .config import Settings
     try:
-        Settings()  # Validate production secrets/origins before opening a socket.
+        settings = Settings()  # Validate production secrets/origins before opening a socket.
+        configure_logging(settings)
         port = int(os.environ.get("PORT", "10000"))
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port")
-    except Exception:
-        print("API startup rejected: verify backend configuration and PORT", file=sys.stderr)
+    except Exception as error:
+        # Keep the validation failure visible in Render logs without printing
+        # the values of SecretStr settings.
+        print(f"API startup rejected: {error}", file=sys.stderr)
         raise SystemExit(1) from None
 
-    # Psycopg's async connection pool is incompatible with the default
-    # ProactorEventLoop on Windows. Render/Linux keeps its normal policy.
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # Psycopg's async connection pool is incompatible with Uvicorn's default
+    # ProactorEventLoop on Windows. Uvicorn 0.36+ accepts a loop factory.
+    loop = windows_selector_loop_factory if sys.platform == "win32" else "auto"
 
     uvicorn.run("recorder.main:app", host="0.0.0.0", port=port, proxy_headers=False,
+                loop=loop,
                 access_log=False, timeout_keep_alive=5, timeout_graceful_shutdown=30,
                 server_header=False, date_header=True)
 

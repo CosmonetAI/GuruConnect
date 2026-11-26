@@ -13,16 +13,17 @@ from .config import get_settings
 from .connection_routes import router as connection_router
 from .db import Database, one
 from .enquiry_routes import router as enquiry_router
+from .followup_email import internal_router as followup_internal_router
+from .followup_email import router as followup_email_router
 from .internal_routes import router as internal_router
 from .middleware import RequestBoundary, security_headers
 from .recording_routes import router as recording_router
 from .routes import router as public_router
 from .security import JWTVerifier
+from .runtime import ProcessingRuntime
 from .storage import Storage
 from .transcript_routes import router as transcript_router
 from .walkin_routes import router as walkin_router
-from app.main import app as gg_sales_app
-from app.zoho import refresh_loop as gg_refresh_loop
 
 log = logging.getLogger("recorder.api")
 
@@ -34,21 +35,29 @@ select
     to_regclass('public.profiles') is not null
     and to_regclass('public.organisations') is not null
     and to_regclass('public.members') is not null
+    and to_regclass('public.voice_sales_documents') is not null
+    and to_regclass('public.catalogue_index_scopes') is not null
+    and to_regclass('public.catalogue_index_snapshots') is not null
+    and to_regclass('public.catalogue_index_items') is not null
     and to_regclass('public.invites') is not null
     and to_regclass('public.engine_connections') is not null
     and to_regclass('public.workspace_engine_settings') is not null
     and to_regclass('public.audit_events') is not null
+    and exists(select 1 from information_schema.columns where table_schema='public' and table_name='audit_events' and column_name='member_id')
     and to_regclass('public.transcript_versions') is not null
     and to_regclass('public.guruconnect_enquiries') is not null
     and to_regclass('public.guruconnect_walkin_visits') is not null
     and to_regclass('public.guruconnect_walkin_history') is not null
     and to_regclass('public.guruconnect_walkin_agents') is not null
     and to_regclass('public.guruconnect_walkin_recordings') is not null
+    and to_regclass('public.guruconnect_missed_visitors') is not null
+    and to_regclass('public.guruconnect_followup_email_deliveries') is not null
     and to_regclass('recorder_private.conversation_requests') is not null
     and to_regprocedure('public.create_workspace(uuid,text)') is not null
     and to_regprocedure('public.allow_api_request(text,integer,integer)') is not null
     and to_regprocedure('recorder_private.version_job_guard()') is not null
     and to_regprocedure('public.resume_translation_job(uuid,uuid)') is not null
+    and to_regprocedure('recorder_private.recording_owner_access_ready()') is not null
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='input_tokens')
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='output_tokens')
     and exists(select 1 from information_schema.columns where table_schema='public' and table_name='usage_records' and column_name='provider_model')
@@ -62,18 +71,33 @@ def create_app(settings=None, *, allow_local=False):
         from .local_api import create_local_app
         return create_local_app(settings)
 
+    # The independent SQLite workspace does not use the hosted sales graph or
+    # Zoho database. Avoid loading that entire dependency tree on local startup.
+    from app.main import bind_parent, stop_voice_live_tasks
+    from app.zoho import refresh_loop as gg_refresh_loop
+
     @asynccontextmanager
     async def lifespan(app):
+        log.info("api_starting environment=%s", settings.environment)
         await app.state.db.open()
         gg_refresh_task = asyncio.create_task(gg_refresh_loop())
         try:
+            await app.state.processing.start()
+            log.info("api_ready")
             yield
         finally:
-            gg_refresh_task.cancel()
-            await asyncio.gather(gg_refresh_task, return_exceptions=True)
-            await app.state.db.close()
+            log.info("api_stopping")
+            try:
+                # Mounted FastAPI applications do not run their own lifespan.
+                # Release sales analysis transactions before closing resources.
+                await stop_voice_live_tasks()
+                await app.state.processing.stop()
+            finally:
+                gg_refresh_task.cancel()
+                await asyncio.gather(gg_refresh_task, return_exceptions=True)
+                await app.state.db.close()
 
-    app = FastAPI(title="GuruConnect API", version="1.0.0", lifespan=lifespan,
+    app = FastAPI(title="ConnectCosmos API", version="1.0.0", lifespan=lifespan,
                   docs_url=None if settings.deployed else "/docs",
                   redoc_url=None if settings.deployed else "/redoc",
                   openapi_url=None if settings.deployed else "/openapi.json")
@@ -81,10 +105,11 @@ def create_app(settings=None, *, allow_local=False):
     app.state.db = Database(settings)
     app.state.verifier = JWTVerifier(settings)
     app.state.storage = Storage(settings)
+    app.state.processing = ProcessingRuntime(settings, database=app.state.db)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-                       allow_headers=["Authorization", "Content-Type", "X-Workspace-ID", "Idempotency-Key"],
-                       expose_headers=["Content-Disposition", "X-Request-ID"], max_age=600)
+                       allow_headers=["Authorization", "Content-Type", "X-User-ID", "X-Workspace-ID", "X-Workspace-Member-ID", "Idempotency-Key"],
+                       expose_headers=["Content-Disposition", "X-Request-ID", "Content-Length", "X-Playback-Mode", "X-Playback-Start-Sample", "X-Playback-Sample-Rate"], max_age=600)
 
     app.add_middleware(RequestBoundary, settings=settings)
 
@@ -140,16 +165,19 @@ def create_app(settings=None, *, allow_local=False):
                     schema = await one(connection, SCHEMA_READINESS_QUERY)
             if not schema or not schema["schema_ready"]:
                 return JSONResponse({"status": "not_ready", "code": "database_schema_missing"}, 503)
+            if settings.embedded_processing_enabled and not app.state.processing.healthy:
+                return JSONResponse({"status": "not_ready", "code": "processing_unavailable",
+                                     "processing": app.state.processing.status()}, 503)
             return {"status": "ready"}
         except Exception:
             return JSONResponse({"status": "not_ready", "code": "database_unavailable"}, 503)
 
-    for router in (public_router, recording_router, transcript_router, connection_router, internal_router, enquiry_router, walkin_router):
+    for router in (public_router, recording_router, transcript_router, connection_router, internal_router,
+                   enquiry_router, walkin_router, followup_email_router, followup_internal_router):
         app.include_router(router)
-    # One backend process serves both products. Existing GuruConnect routes
+    # One backend process serves both products. Existing ConnectCosmos routes
     # remain under /api/v1; the GG sales assistant keeps its /api routes.
-    app.mount("/", gg_sales_app)
+    app.mount("/", bind_parent(app))
     return app
-
 
 app = create_app(allow_local=True)

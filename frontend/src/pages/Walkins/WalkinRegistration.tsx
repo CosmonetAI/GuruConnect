@@ -1,48 +1,222 @@
-import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, ClipboardPlus } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useNavigate, useBlocker, type NavigateOptions } from 'react-router-dom'
+import { Check, CheckCircle2, LoaderCircle } from 'lucide-react'
 import { z } from 'zod'
-import { type RegisterWalkinInput } from '../../types/walkin'
-import { isWalkinDemoMode, registerWalkin } from '../../services/walkinService'
+import { type RegisterWalkinInput, type WalkinAgent } from '../../types/walkin'
+import { request } from '../../services/officeApi'
+import { attachWalkinRecording, isWalkinDemoMode, listWalkinAgents, registerWalkin } from '../../services/walkinService'
 import { useOffice } from '../../contexts/OfficeContext'
+import { sanitizePhoneNumber, sanitizeTextInput, validateEmail, validatePhoneNumber, validateText } from '../../utils/formValidation'
+import ConversationRecorder from '../Enquiries/ConversationRecorder'
+import VoiceFieldMic from './VoiceFieldMic'
 import './Walkins.css'
 
+const customerNamePattern = /^[\p{L}]+(?:[\s.'’-][\p{L}]+)*$/u
+const customerNameError = 'Name can contain letters only.'
+const validateCustomerName = (value: string) => {
+  const textError = validateText(value, 'Name', { required: true, minLength: 2, maxLength: 150 })
+  return textError || (value.trim() && !customerNamePattern.test(value.trim()) ? customerNameError : undefined)
+}
+
 const registrationSchema = z.object({
-  customerName: z.string().trim().min(2, 'Enter the customer’s full name.').max(150, 'Name is too long.'),
-  mobileNumber: z.string().trim().regex(/^\+?[0-9().\-\s]{7,20}$/, 'Enter a valid mobile number.').refine((value) => value.replace(/\D/g, '').length >= 7 && value.replace(/\D/g, '').length <= 15, 'Enter a valid mobile number.'),
-  email: z.string().trim().refine((value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
+  customerName: z.string().trim().min(2, 'Enter the customer’s full name.').max(150, 'Name is too long.').refine(value => customerNamePattern.test(value), customerNameError),
+  mobileNumber: z.string().trim().regex(/^\d{10}$/, 'Enter exactly 10 digits.'),
+  email: z.string().trim().min(1, 'Enter the visitor’s email address.').refine((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address.'),
   companyName: z.string().trim().max(150, 'Company name is too long.'),
+  projectName: z.string().trim().max(150, 'Project or site is too long.'),
+  customerType: z.enum(['customer', 'vendor']),
+  phoneCountryCode: z.string().regex(/^\+\d+(?:\s\d+)?$/, 'Choose a valid country code.'),
 })
 
 type FormValues = z.infer<typeof registrationSchema>
 type FormErrors = Partial<Record<keyof FormValues, string>>
+type WalkinVoicePreview = {
+  conversation?: { transcription_state?: string; english_state?: string; final_state?: string }
+  transcript?: Array<{ english_text?: string | null; source_text?: string | null }>
+  fields?: Partial<Record<'customerName' | 'mobileNumber' | 'email' | 'companyName' | 'projectName' | 'customerType', string>>
+  extractions?: Array<{ status?: string; data?: Record<string, unknown> }>
+}
 
 const initialValues: FormValues = {
   customerName: '',
   mobileNumber: '',
+  phoneCountryCode: '+91',
   email: '',
   companyName: '',
+  projectName: '',
+  customerType: 'customer',
 }
 
-export default function WalkinRegistration() {
-  const { workspace } = useOffice()
-  const navigate = useNavigate()
+const transcriptEmail = (transcript: WalkinVoicePreview['transcript'] = []) => {
+  const text = transcript.map(turn => `${turn.english_text || ''} ${turn.source_text || ''}`).join(' ')
+  const literal = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+  if (literal) return literal.toLowerCase()
+  const spoken = text.toLowerCase()
+    .replace(/\b(?:at the rate(?: of)?|at sign|at)\b/g, '@')
+    .replace(/\b(?:dot|period)\b/g, '.')
+    .replace(/\bunderscore\b/g, '_')
+    .replace(/\b(?:dash|hyphen)\b/g, '-')
+    .replace(/\s*([@._-])\s*/g, '$1')
+  return spoken.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0].replace(/[.]+$/, '') || ''
+}
+
+const countryCodes = [
+  ['+91', 'India'], ['+93', 'Afghanistan'], ['+355', 'Albania'], ['+213', 'Algeria'], ['+1', 'American Samoa'], ['+376', 'Andorra'], ['+244', 'Angola'], ['+1', 'Anguilla'], ['+672', 'Antarctica'], ['+1', 'Antigua and Barbuda'], ['+54', 'Argentina'], ['+374', 'Armenia'], ['+297', 'Aruba'], ['+61', 'Australia'], ['+43', 'Austria'], ['+994', 'Azerbaijan'],
+  ['+1', 'Bahamas'], ['+973', 'Bahrain'], ['+880', 'Bangladesh'], ['+1', 'Barbados'], ['+375', 'Belarus'], ['+32', 'Belgium'], ['+501', 'Belize'], ['+229', 'Benin'], ['+1', 'Bermuda'], ['+975', 'Bhutan'], ['+591', 'Bolivia'], ['+387', 'Bosnia and Herzegovina'], ['+267', 'Botswana'], ['+55', 'Brazil'], ['+246', 'British Indian Ocean Territory'], ['+1', 'British Virgin Islands'], ['+673', 'Brunei'], ['+359', 'Bulgaria'], ['+226', 'Burkina Faso'], ['+257', 'Burundi'],
+  ['+238', 'Cabo Verde'], ['+855', 'Cambodia'], ['+237', 'Cameroon'], ['+1', 'Canada'], ['+1', 'Cayman Islands'], ['+236', 'Central African Republic'], ['+235', 'Chad'], ['+56', 'Chile'], ['+86', 'China'], ['+61', 'Christmas Island'], ['+61', 'Cocos Islands'], ['+57', 'Colombia'], ['+269', 'Comoros'], ['+242', 'Congo'], ['+243', 'Congo, Democratic Republic'], ['+682', 'Cook Islands'], ['+506', 'Costa Rica'], ['+225', 'Côte d’Ivoire'], ['+385', 'Croatia'], ['+53', 'Cuba'], ['+599', 'Curaçao'], ['+357', 'Cyprus'], ['+420', 'Czechia'],
+  ['+45', 'Denmark'], ['+253', 'Djibouti'], ['+1', 'Dominica'], ['+1', 'Dominican Republic'], ['+593', 'Ecuador'], ['+20', 'Egypt'], ['+503', 'El Salvador'], ['+240', 'Equatorial Guinea'], ['+291', 'Eritrea'], ['+372', 'Estonia'], ['+268', 'Eswatini'], ['+251', 'Ethiopia'], ['+500', 'Falkland Islands'], ['+298', 'Faroe Islands'], ['+679', 'Fiji'], ['+358', 'Finland'], ['+33', 'France'], ['+594', 'French Guiana'], ['+689', 'French Polynesia'], ['+241', 'Gabon'], ['+220', 'Gambia'], ['+995', 'Georgia'], ['+49', 'Germany'], ['+233', 'Ghana'], ['+350', 'Gibraltar'], ['+30', 'Greece'], ['+299', 'Greenland'], ['+1', 'Grenada'], ['+590', 'Guadeloupe'], ['+1', 'Guam'], ['+502', 'Guatemala'], ['+44', 'Guernsey'], ['+224', 'Guinea'], ['+245', 'Guinea-Bissau'], ['+592', 'Guyana'], ['+509', 'Haiti'], ['+504', 'Honduras'], ['+852', 'Hong Kong'], ['+36', 'Hungary'], ['+354', 'Iceland'], ['+62', 'Indonesia'], ['+98', 'Iran'], ['+964', 'Iraq'], ['+353', 'Ireland'], ['+44', 'Isle of Man'], ['+972', 'Israel'], ['+39', 'Italy'], ['+1', 'Jamaica'], ['+81', 'Japan'], ['+44', 'Jersey'], ['+962', 'Jordan'], ['+7', 'Kazakhstan'], ['+254', 'Kenya'], ['+686', 'Kiribati'], ['+383', 'Kosovo'], ['+965', 'Kuwait'], ['+996', 'Kyrgyzstan'], ['+856', 'Laos'], ['+371', 'Latvia'], ['+961', 'Lebanon'], ['+266', 'Lesotho'], ['+231', 'Liberia'], ['+218', 'Libya'], ['+423', 'Liechtenstein'], ['+370', 'Lithuania'], ['+352', 'Luxembourg'], ['+853', 'Macao'], ['+261', 'Madagascar'], ['+265', 'Malawi'], ['+60', 'Malaysia'], ['+960', 'Maldives'], ['+223', 'Mali'], ['+356', 'Malta'], ['+692', 'Marshall Islands'], ['+596', 'Martinique'], ['+222', 'Mauritania'], ['+230', 'Mauritius'], ['+262', 'Mayotte'], ['+52', 'Mexico'], ['+691', 'Micronesia'], ['+373', 'Moldova'], ['+377', 'Monaco'], ['+976', 'Mongolia'], ['+382', 'Montenegro'], ['+1', 'Montserrat'], ['+212', 'Morocco'], ['+258', 'Mozambique'], ['+95', 'Myanmar'], ['+264', 'Namibia'], ['+674', 'Nauru'], ['+977', 'Nepal'], ['+31', 'Netherlands'], ['+687', 'New Caledonia'], ['+64', 'New Zealand'], ['+505', 'Nicaragua'], ['+227', 'Niger'], ['+234', 'Nigeria'], ['+683', 'Niue'], ['+672', 'Norfolk Island'], ['+850', 'North Korea'], ['+389', 'North Macedonia'], ['+1', 'Northern Mariana Islands'], ['+47', 'Norway'], ['+968', 'Oman'], ['+92', 'Pakistan'], ['+680', 'Palau'], ['+970', 'Palestine'], ['+507', 'Panama'], ['+675', 'Papua New Guinea'], ['+595', 'Paraguay'], ['+51', 'Peru'], ['+63', 'Philippines'], ['+48', 'Poland'], ['+351', 'Portugal'], ['+1', 'Puerto Rico'], ['+974', 'Qatar'], ['+262', 'Réunion'], ['+40', 'Romania'], ['+7', 'Russia'], ['+250', 'Rwanda'], ['+590', 'Saint Barthélemy'], ['+290', 'Saint Helena'], ['+1', 'Saint Kitts and Nevis'], ['+1', 'Saint Lucia'], ['+590', 'Saint Martin'], ['+508', 'Saint Pierre and Miquelon'], ['+1', 'Saint Vincent and the Grenadines'], ['+685', 'Samoa'], ['+378', 'San Marino'], ['+239', 'São Tomé and Príncipe'], ['+966', 'Saudi Arabia'], ['+221', 'Senegal'], ['+381', 'Serbia'], ['+248', 'Seychelles'], ['+232', 'Sierra Leone'], ['+65', 'Singapore'], ['+1 721', 'Sint Maarten'], ['+421', 'Slovakia'], ['+386', 'Slovenia'], ['+677', 'Solomon Islands'], ['+252', 'Somalia'], ['+27', 'South Africa'], ['+82', 'South Korea'], ['+211', 'South Sudan'], ['+34', 'Spain'], ['+94', 'Sri Lanka'], ['+249', 'Sudan'], ['+597', 'Suriname'], ['+47', 'Svalbard and Jan Mayen'], ['+46', 'Sweden'], ['+41', 'Switzerland'], ['+963', 'Syria'], ['+886', 'Taiwan'], ['+992', 'Tajikistan'], ['+255', 'Tanzania'], ['+66', 'Thailand'], ['+670', 'Timor-Leste'], ['+228', 'Togo'], ['+690', 'Tokelau'], ['+676', 'Tonga'], ['+1', 'Trinidad and Tobago'], ['+216', 'Tunisia'], ['+90', 'Turkey'], ['+993', 'Turkmenistan'], ['+1', 'Turks and Caicos Islands'], ['+688', 'Tuvalu'], ['+256', 'Uganda'], ['+380', 'Ukraine'], ['+971', 'United Arab Emirates'], ['+44', 'United Kingdom'], ['+1', 'United States'], ['+598', 'Uruguay'], ['+998', 'Uzbekistan'], ['+678', 'Vanuatu'], ['+379', 'Vatican City'], ['+58', 'Venezuela'], ['+84', 'Vietnam'], ['+1', 'U.S. Virgin Islands'], ['+681', 'Wallis and Futuna'], ['+212', 'Western Sahara'], ['+967', 'Yemen'], ['+260', 'Zambia'], ['+263', 'Zimbabwe'],
+] as const
+
+const rotatingPrompts = {
+  name: ['Ask: What is your name?', 'ಕೇಳಿ: ನಿಮ್ಮ ಹೆಸರು ಏನು?', 'पूछें: आपका नाम क्या है?'],
+  phone: ['Ask: What is your phone number?', 'ಕೇಳಿ: ನಿಮ್ಮ ಫೋನ್ ಸಂಖ್ಯೆ ಏನು?', 'पूछें: आपका फ़ोन नंबर क्या है?'],
+  email: ['Ask: What is your email address?', 'ಕೇಳಿ: ನಿಮ್ಮ ಇಮೇಲ್ ವಿಳಾಸ ಏನು?', 'पूछें: आपका ईमेल पता क्या है?'],
+  organisation: ['Ask: What is your organisation name?', 'ಕೇಳಿ: ನಿಮ್ಮ ಸಂಸ್ಥೆಯ ಹೆಸರು ಏನು?', 'पूछें: आपके संगठन का नाम क्या है?'],
+  requirement: ['Ask: What do you need?', 'ಕೇಳಿ: ನಿಮಗೆ ಏನು ಬೇಕು?', 'पूछें: आपको क्या चाहिए?'],
+  customerType: ['Ask: Are you here to buy or sell?', 'ಕೇಳಿ: ನೀವು ಖರೀದಿಸಲು ಬಂದಿದ್ದೀರಾ ಅಥವಾ ಮಾರಾಟ ಮಾಡಲು?', 'पूछें: आप खरीदने आए हैं या बेचने?'],
+} as const
+
+function RotatingPrompt({ prompt }: { prompt: keyof typeof rotatingPrompts }) {
+  const [index, setIndex] = useState(0)
+  useEffect(() => {
+    const timer = window.setInterval(() => setIndex((current) => (current + 1) % rotatingPrompts[prompt].length), 3200)
+    return () => window.clearInterval(timer)
+  }, [prompt])
+  return <span className="walkin-rotating-prompt" key={`${prompt}-${index}`}>({rotatingPrompts[prompt][index]})</span>
+}
+
+export default function WalkinRegistration({ enquiryMode = false }: { enquiryMode?: boolean }) {
+  const { user, workspace, setCaptureBusy, setPresencePaused } = useOffice()
+  const routeNavigate = useNavigate()
+  const navigate = (path: string, options?: NavigateOptions) => routeNavigate(enquiryMode && path === '/walkins' ? '/enquiries' : path, options)
   const [form, setForm] = useState(initialValues)
   const [errors, setErrors] = useState<FormErrors>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveKey, setSaveKey] = useState(() => crypto.randomUUID())
+  const [voiceBusy, setVoiceBusy] = useState(false)
+  const [agents, setAgents] = useState<WalkinAgent[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState('')
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false)
+  const agentPickerRef = useRef<HTMLDivElement | null>(null)
+  const voiceConversation = useRef<string | null>(null)
+  // Once the receptionist edits a field, later extraction refreshes must
+  // never put the model's value back into that field. This also protects an
+  // intentional clear, which is a valid manual decision.
+  const manuallyEditedFields = useRef(new Set<keyof FormValues>())
+  const allowLeave = useRef(false)
+  const [voiceId, setVoiceId] = useState<string | null>(null)
+  const [voicePreview, setVoicePreview] = useState<WalkinVoicePreview | null>(null)
+  const [processingModalDismissed, setProcessingModalDismissed] = useState(false)
+  const liveTranscriptRef = useRef<HTMLDivElement | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [pendingValues, setPendingValues] = useState<FormValues | null>(null)
+  const blocker = useBlocker(() => !allowLeave.current && (voiceBusy || saving))
+  const selfAssignSalesperson = workspace?.role === 'salesperson'
+  const selfAssignOwner = workspace?.role === 'owner'
+  const currentDisplayName = user?.user_metadata?.display_name || user?.email || 'Salesperson'
+  useEffect(() => { setCaptureBusy?.(voiceBusy || saving); return () => setCaptureBusy?.(false) }, [voiceBusy, saving, setCaptureBusy])
+  useEffect(() => { setPresencePaused?.(true); return () => setPresencePaused?.(false) }, [setPresencePaused])
+  useEffect(() => {
+    if (!workspace || selfAssignSalesperson) return
+    let active = true
+    const loadAgents = () => void listWalkinAgents(workspace.id).then((items) => {
+      if (active) setAgents([...items].sort((left, right) => (left.role === 'owner' ? 1 : 0) - (right.role === 'owner' ? 1 : 0) || presenceRank(left.presenceStatus) - presenceRank(right.presenceStatus) || availabilityRank(left.availability) - availabilityRank(right.availability) || (left.openTickets ?? 0) - (right.openTickets ?? 0) || left.name.localeCompare(right.name)))
+    }).catch(() => { if (active) setAgents([]) })
+    loadAgents()
+    const timer = window.setInterval(loadAgents, 15_000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [selfAssignSalesperson, workspace])
+  useEffect(() => {
+    if (selfAssignOwner && user?.id) setSelectedAgentId(user.id)
+  }, [selfAssignOwner, user?.id])
+  useEffect(() => { if (blocker.state === 'blocked') { setError('End the visitor recording before leaving this page.'); blocker.reset() } }, [blocker])
+  useEffect(() => {
+    if (!voiceId || !workspace) { setVoicePreview(null); return }
+    let cancelled = false
+    let timer: number | undefined
+    const refresh = async () => {
+      try {
+        // Walk-in previews are served by the walk-in router.  The recorder
+        // conversation itself is still created under /conversations, but
+        // polling the old path made every preview request return 404.
+        const result = await request<WalkinVoicePreview>(`/walkins/${encodeURIComponent(voiceId)}/walkin-preview`, workspace.id, {}, workspace.member_id)
+        if (!cancelled) {
+          setVoicePreview(result)
+          const fields = { ...(result.fields || {}) }
+          // A literal address in the transcript is safer than a missing or
+          // partially parsed model field. This also fills the form while a
+          // delayed semantic extraction is still catching up.
+          if (!fields.email) {
+            const email = transcriptEmail(result.transcript)
+            if (email) fields.email = email
+          }
+          setForm(previous => {
+            const next = { ...previous }
+            for (const key of ['customerName', 'mobileNumber', 'email', 'companyName', 'projectName'] as const) {
+              if (manuallyEditedFields.current.has(key)) continue
+              let value = fields[key]
+              // The registration form stores the local number separately from
+              // the selected country code. Accept a provider response that
+              // includes India's +91 prefix without making the form invalid.
+              if (key === 'mobileNumber' && value) {
+                const digits = String(value).replace(/\D/g, '')
+                value = (digits.length === 12 && digits.startsWith('91')) ? digits.slice(2) : digits.length > 10 ? digits.slice(-10) : digits
+              }
+              if (value && next[key] !== value) next[key] = value as never
+            }
+            if (fields.customerType === 'vendor' && !manuallyEditedFields.current.has('customerType') && next.customerType !== 'vendor') next.customerType = 'vendor'
+            return next
+          })
+        }
+      } catch { /* processing is asynchronous; the recorder remains usable */ }
+      // Poll quickly while the recording is being translated so the first
+      // completed text fills the form without waiting for the full recording.
+      // Preview is read-only and audio chunks are saved independently. Keep
+      // this light enough that it cannot compete with chunk authorization or
+      // confirmation when the database is busy.
+      if (!cancelled) timer = window.setTimeout(() => void refresh(), 3000)
+    }
+    void refresh()
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer) }
+  }, [voiceId, workspace])
+  useEffect(() => {
+    const panel = liveTranscriptRef.current
+    if (panel) panel.scrollTop = panel.scrollHeight
+  }, [voicePreview?.transcript?.length])
+  useEffect(() => {
+    if (!agentMenuOpen) return
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (agentPickerRef.current && !agentPickerRef.current.contains(event.target as Node)) setAgentMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
+  }, [agentMenuOpen])
 
   const update = <K extends keyof FormValues>(field: K, value: FormValues[K]) => {
+    manuallyEditedFields.current.add(field)
     setForm((previous) => ({ ...previous, [field]: value }))
     setSaveKey(crypto.randomUUID())
-    setErrors((previous) => ({ ...previous, [field]: undefined }))
+    const nextValue = String(value)
+    const validation = field === 'mobileNumber'
+      ? validatePhoneNumber(nextValue)
+      : field === 'email'
+        ? validateEmail(nextValue, true)
+        : field === 'customerName'
+          ? validateCustomerName(nextValue)
+          : field === 'companyName'
+            ? validateText(nextValue, 'Company name', { maxLength: 150 })
+            : field === 'projectName'
+              ? validateText(nextValue, 'Project or site', { maxLength: 150 })
+              : undefined
+    setErrors((previous) => ({ ...previous, [field]: validation }))
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!workspace || saving) return
     setError('')
+    if (voiceBusy) { setError('End the visitor recording before registering the visitor.'); return }
     const parsed = registrationSchema.safeParse(form)
     if (!parsed.success) {
       const next: FormErrors = {}
@@ -54,14 +228,59 @@ export default function WalkinRegistration() {
       document.querySelector('.walkin-field.has-error input, .walkin-field.has-error select, .walkin-field.has-error textarea')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
+    setPendingValues(parsed.data)
+    setPreviewOpen(true)
+  }
+
+  const extractedFields = Object.entries(voicePreview?.fields || {}).filter(([, value]) => String(value || '').trim())
+  const fieldsApplied = extractedFields.every(([key, value]) => manuallyEditedFields.current.has(key as keyof FormValues) || form[key as keyof FormValues] === value)
+  // Never use the presence of one extracted field as evidence that the
+  // recording is fully processed.
+  const extractionPending = voicePreview?.extractions?.some(item => item.status === 'running') === true
+  const finalState = voicePreview?.conversation?.final_state || ''
+  const recordingProcessingComplete = finalState === 'complete'
+  const processingTerminal = ['complete', 'failed', 'blocked', 'uncertain'].includes(finalState)
+  const processingFailed = processingTerminal && finalState !== 'complete'
+  const extractionComplete = processingTerminal && !extractionPending
+  const transcriptionComplete = ['available', 'complete'].includes(voicePreview?.conversation?.transcription_state || '')
+  const translationComplete = voicePreview?.conversation?.english_state === 'complete'
+  const processingStage = processingFailed
+    ? 'failed'
+    : extractionComplete && fieldsApplied
+    ? 'completed'
+    : extractedFields.length > 0 && fieldsApplied && recordingProcessingComplete
+      ? 'filling'
+      : !transcriptionComplete
+        ? 'transcribing'
+        : !translationComplete
+          ? 'translating'
+          : !extractionComplete
+            ? 'extracting'
+            : !fieldsApplied
+              ? 'filling'
+              : 'completed'
+  useEffect(() => {
+    if (!['completed', 'failed'].includes(processingStage) || processingModalDismissed) return
+    const timer = window.setTimeout(() => setProcessingModalDismissed(true), 1400)
+    return () => window.clearTimeout(timer)
+  }, [processingModalDismissed, processingStage])
+
+  const showProcessingModal = Boolean(voiceId && !voiceBusy && !processingModalDismissed)
+
+  const confirmRegistration = async () => {
+    if (!workspace || !pendingValues || saving) return
+    setPreviewOpen(false)
     setSaving(true)
     try {
-      const values = parsed.data
+      const values = pendingValues
       const input: RegisterWalkinInput = {
       customerName: values.customerName,
-      mobileNumber: values.mobileNumber,
+      mobileNumber: `${values.phoneCountryCode}${values.mobileNumber}`,
       email: values.email || '',
       companyName: values.companyName || '',
+      projectName: values.projectName || '',
+      customerType: values.customerType || 'customer',
+      assignedAgentId: selectedAgentId || undefined,
       // Provide defaults for fields not collected on the registration form
       purpose: 'Other',
       purposeDescription: '',
@@ -71,9 +290,22 @@ export default function WalkinRegistration() {
       appointmentStatus: 'Walk-in',
       appointmentReference: '',
       internalNotes: '',
+      conversationId: voiceConversation.current || undefined,
       }
       const visit = await registerWalkin(workspace.id, input, saveKey)
-      navigate(`/walkins/${visit.id}`, { state: { confirmation: `Visitor registered as ${visit.visitNumber}.` } })
+      // The hosted endpoint commits this link atomically with the enquiry.
+      // Keep the idempotent attach for local mode and older running API
+      // processes while they are being restarted.
+      const recordingId = voiceConversation.current
+      if (recordingId) {
+        let linked = false
+        try { await attachWalkinRecording(workspace.id, visit.id, recordingId); linked = !isWalkinDemoMode() } catch { linked = false }
+        if (!linked) { try { sessionStorage.setItem(`guruconnect:walkin-audio:${user?.id}:${workspace.id}:${visit.id}`, recordingId) } catch { /* best effort */ } }
+      }
+      allowLeave.current = true
+      navigate(enquiryMode
+        ? (visit.convertedEnquiryReference ? `/enquiries/${encodeURIComponent(visit.convertedEnquiryReference)}` : '/enquiries')
+        : '/walkins', { replace: true, state: enquiryMode ? undefined : { successMessage: 'Registration completed' } })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Visitor could not be registered.')
     } finally {
@@ -83,33 +315,107 @@ export default function WalkinRegistration() {
 
   return (
     <div className="walkin-page">
-      <div className="walkin-back-row"><Link to="/walkins"><ArrowLeft size={16} /> Reception queue</Link></div>
       <header className="walkin-header">
         <div>
-          <div className="walkin-kicker"><ClipboardPlus size={15} /> RECEPTION</div>
           <h1>Register a visitor</h1>
           <p>Capture just enough to direct the customer to the right person.</p>
         </div>
       </header>
-      {isWalkinDemoMode() && <div className="walkin-notice">Demo mode — records are saved to this browser. Check-in time and visit number are generated when you save.</div>}
+      {showProcessingModal && <div className="walkin-processing-backdrop" role="presentation">
+        <section className="walkin-processing-modal" role="dialog" aria-modal="true" aria-labelledby="walkin-processing-title">
+          <WalkinProcessingBanner stage={processingStage} />
+        </section>
+      </div>}
       {error && <div className="walkin-alert error" role="alert">{error}</div>}
 
       <form className="walkin-card walkin-form" onSubmit={(event) => void submit(event)} noValidate>
         <section>
-          <div className="walkin-section-heading"><span>01</span><div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div></div>
+            <div className="walkin-section-heading">
+            <span>01</span>
+            <div><h2>Customer information</h2><p>Required fields are marked with an asterisk.</p></div>
+            <div className="walkin-registration-recorder">
+              <ConversationRecorder customerName={form.customerName} customerPhone={`${form.phoneCountryCode}${form.mobileNumber}`} customerEmail={form.email} title="Walk-in registration" onConversationChange={id => { voiceConversation.current = id; setVoiceId(id); setProcessingModalDismissed(!id); if (!id) { manuallyEditedFields.current.clear(); setVoicePreview(null); setForm(initialValues); setErrors({}) } }} onBusyChange={setVoiceBusy} chunkSeconds={6} audioBucket="walkin-audio" compact registrationOnly />
+            </div>
+          </div>
+          {voiceId && <div className="walkin-live-results" aria-live="polite">
+            <div className="walkin-live-results-header"><strong>Live registration details</strong><span>{voicePreview?.conversation?.english_state === 'complete' ? 'Translation complete' : 'Listening and extracting…'}</span></div>
+            <div className="walkin-live-transcript" ref={liveTranscriptRef}>
+              {voicePreview?.transcript?.length ? voicePreview.transcript.map((turn, index) => <p key={`${turn.english_text || turn.source_text || 'turn'}-${index}`}>{turn.english_text || turn.source_text || 'Transcribing…'}</p>) : <p>Waiting for the live transcription…</p>}
+            </div>
+            <small>Live transcription is shown while recording. Visitor details are translated and extracted once after you end the recording.</small>
+          </div>}
           <div className="walkin-form-grid">
-            <Field label="Customer full name" name="customerName" required error={errors.customerName}><input id="customerName" autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} placeholder="Customer name" /></Field>
-            <Field label="Mobile number" name="mobileNumber" required error={errors.mobileNumber}><input id="mobileNumber" type="tel" autoComplete="tel" inputMode="tel" value={form.mobileNumber} onChange={(event) => update('mobileNumber', event.target.value)} placeholder="+91 98765 43210" /></Field>
-            <Field label="Company or organization" name="companyName" error={errors.companyName}><input id="companyName" autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', event.target.value)} placeholder="Optional" /></Field>
-            <Field label="Email address" name="email" error={errors.email}><input id="email" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} placeholder="name@company.com" /></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Name' : 'Customer Full Name'} <RotatingPrompt prompt="name" /></>} name="customerName" required error={errors.customerName}><div className="walkin-voice-input"><input disabled={voiceBusy} id="customerName" type="text" inputMode="text" pattern="[\p{L}\s.'’-]+" maxLength={150} autoComplete="name" value={form.customerName} onChange={(event) => update('customerName', sanitizeTextInput(event.target.value, 150))} placeholder={form.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} /><VoiceFieldMic field="name" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerName', sanitizeTextInput(value, 150))} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Phone No.' : 'Customer Phone No.'} <RotatingPrompt prompt="phone" /></>} name="mobileNumber" required error={errors.mobileNumber}><div className="walkin-phone-input"><select aria-label="Country code" value={form.phoneCountryCode} onChange={(event) => update('phoneCountryCode', event.target.value as FormValues['phoneCountryCode'])}>{countryCodes.map(([code, country], index) => <option key={`${code}-${country}-${index}`} value={code}>{code} {country}</option>)}</select><div className="walkin-voice-input"><input disabled={voiceBusy} id="mobileNumber" type="tel" autoComplete="tel" inputMode="numeric" maxLength={10} value={form.mobileNumber} onChange={(event) => update('mobileNumber', sanitizePhoneNumber(event.target.value))} placeholder="10 digit phone number" aria-invalid={!!errors.mobileNumber} /><VoiceFieldMic field="phone" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('mobileNumber', sanitizePhoneNumber(value))} /></div></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Email Address' : 'Customer Email Address'} <RotatingPrompt prompt="email" /></>} name="email" required error={errors.email}><div className="walkin-voice-input"><input disabled={voiceBusy} id="email" type="email" maxLength={320} autoComplete="email" value={form.email} onChange={(event) => update('email', sanitizeTextInput(event.target.value, 320))} placeholder={form.customerType === 'vendor' ? 'vendor@example.com' : 'customer@example.com'} required /><VoiceFieldMic field="email" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('email', sanitizeTextInput(value, 320))} /></div></Field>
+            <Field label={form.customerType === 'vendor' ? 'Vendor Source type' : 'Customer Source type'} name="source"><div className="walkin-source-input" aria-disabled="true"><input id="source" value="Retail walk-in" disabled readOnly tabIndex={-1} aria-readonly="true" /></div></Field>
+            <Field label="Assign executive" name="assignedExecutive" hint={selfAssignSalesperson ? 'Automatically assigned to the salesperson registering this visitor.' : selfAssignOwner ? 'Assigned to you by default. Choose another owner or salesperson when needed.' : enquiryMode ? 'Assigned to the salesperson who opened this enquiry.' : 'Handled automatically based on availability and current workload. The list is for visibility only.'}>{selfAssignSalesperson ? <input id="assignedExecutive" value={currentDisplayName} readOnly /> : <div className="walkin-agent-picker" ref={agentPickerRef}><button type="button" className="walkin-agent-picker-trigger" aria-haspopup="listbox" aria-expanded={agentMenuOpen} onClick={() => setAgentMenuOpen(open => !open)}><span>{selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name || (selectedAgentId === user?.id ? currentDisplayName : 'Selected executive') : 'Automatic assignment'}</span><span className={`walkin-agent-picker-chevron${agentMenuOpen ? ' is-open' : ''}`} aria-hidden="true" /></button>{agentMenuOpen && <div className="walkin-agent-picker-menu" role="listbox">{!selfAssignOwner && <button type="button" className={`walkin-agent-option${selectedAgentId === '' ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(''); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>Automatic assignment</strong><small>Recommended · system chooses the best available executive</small></span><span className="walkin-agent-status recommended">Auto</span></button>}{agents.map((agent) => <button type="button" role="option" aria-selected={selectedAgentId === agent.id} key={agent.id} className={`walkin-agent-option${selectedAgentId === agent.id ? ' is-selected' : ''}`} onClick={() => { setSelectedAgentId(agent.id); setAgentMenuOpen(false) }}><span className="walkin-agent-option-main"><strong>{agent.name}</strong><small>{agent.availability} · {presenceLabel(agent.presenceStatus)} · {agent.openTickets ?? 0} open ticket{agent.openTickets === 1 ? '' : 's'}</small></span><span className={`walkin-agent-status ${agent.presenceStatus === 'active' ? 'active' : agent.presenceStatus === 'inactive' ? 'inactive' : 'away'}`}><i />{presenceLabel(agent.presenceStatus)}</span></button>)}</div>}</div>}</Field>
+            <Field label={<>Customer type <RotatingPrompt prompt="customerType" /></>} name="customerType"><div className="walkin-voice-input"><select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as FormValues['customerType'])}><option value="customer">Retail customer</option><option value="vendor">Vendor</option></select><VoiceFieldMic field="customerType" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('customerType', value === 'vendor' ? 'vendor' : 'customer')} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Organisation Name' : 'Customer Organisation Name'} <RotatingPrompt prompt="organisation" /></>} name="companyName" error={errors.companyName}><div className="walkin-voice-input"><input id="companyName" maxLength={150} autoComplete="organization" value={form.companyName} onChange={(event) => update('companyName', sanitizeTextInput(event.target.value, 150))} placeholder="Not provided" /><VoiceFieldMic field="organisation" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('companyName', sanitizeTextInput(value, 150))} /></div></Field>
+            <Field label={<>{form.customerType === 'vendor' ? 'Vendor Purchase Requirement' : 'Customer Project Requirement'} <RotatingPrompt prompt="requirement" /></>} name="projectName" error={errors.projectName}><div className="walkin-voice-input"><input id="projectName" maxLength={150} value={form.projectName} onChange={(event) => update('projectName', sanitizeTextInput(event.target.value, 150))} placeholder="Not provided" /><VoiceFieldMic field="requirement" workspaceId={workspace?.id || ''} memberId={workspace?.member_id} disabled={voiceBusy || !workspace} onValue={value => update('projectName', sanitizeTextInput(value, 150))} /></div></Field>
           </div>
         </section>
 
         {error && <div className="walkin-alert error" role="alert">{error}</div>}
-        <div className="walkin-form-actions"><Link className="walkin-button secondary" to="/walkins">Cancel</Link><button className="walkin-button primary" type="submit" disabled={saving || !workspace}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
+        <div className="walkin-form-actions"><button type="button" className="walkin-button secondary" disabled={voiceBusy || saving} onClick={() => navigate('/walkins')}>Cancel</button><button className="walkin-button primary" type="submit" disabled={saving || !workspace || voiceBusy}>{saving ? 'Saving visitor…' : <><CheckCircle2 size={17} /> Register visitor</>}</button></div>
       </form>
+      {previewOpen && pendingValues && <div className="walkin-preview-backdrop" role="presentation">
+        <section className="walkin-preview-modal" role="dialog" aria-modal="true" aria-labelledby="walkin-preview-title">
+          <div className="walkin-preview-header"><div><span className="page-kicker">FINAL REVIEW</span><h2 id="walkin-preview-title">Confirm visitor details</h2><p>Review the captured details before creating the visitor.</p></div></div>
+          <div className="walkin-preview-grid">
+            <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Vendor name' : 'Customer name'} value={pendingValues.customerName} />
+            <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Vendor phone' : 'Customer phone'} value={`${pendingValues.phoneCountryCode} ${pendingValues.mobileNumber}`} />
+            <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Vendor email' : 'Customer email'} value={pendingValues.email} />
+            <PreviewValue label="Customer type" value={pendingValues.customerType === 'vendor' ? 'Vendor' : 'Retail customer'} />
+            <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Vendor organisation' : 'Customer organisation'} value={pendingValues.companyName || 'Not provided'} />
+            <PreviewValue label={pendingValues.customerType === 'vendor' ? 'Purchase requirement' : 'Project requirement'} value={pendingValues.projectName || 'Not provided'} />
+            <PreviewValue label="Assignment" value={selfAssignSalesperson ? currentDisplayName : selectedAgentId ? agents.find(agent => agent.id === selectedAgentId)?.name || 'Selected executive' : 'Automatic assignment'} />
+            <PreviewValue label="Source" value="Retail walk-in" />
+          </div>
+          <div className="walkin-preview-actions"><button type="button" className="walkin-button secondary" disabled={saving} onClick={() => { setPreviewOpen(false); setPendingValues(null) }}>Back to form</button><button type="button" className="walkin-button primary" disabled={saving} onClick={() => void confirmRegistration()}>{saving ? 'Creating visitor…' : 'Confirm and register'}</button></div>
+        </section>
+      </div>}
     </div>
   )
+}
+
+const processingSteps = [
+  ['transcribing', 'Transcribing', 'Converting the recording into speech text.'],
+  ['translating', 'Translating', 'Preparing the English conversation.'],
+  ['extracting', 'Extracting details', 'Finding visitor and enquiry information.'],
+  ['filling', 'Filling contact info', 'Applying the extracted values to the form.'],
+] as const
+
+function WalkinProcessingBanner({ stage }: { stage: string }) {
+  const completed = stage === 'completed'
+  const failed = stage === 'failed'
+  const activeIndex = completed ? processingSteps.length : failed ? processingSteps.length - 1 : Math.max(0, processingSteps.findIndex(([key]) => key === stage))
+  return <div className="walkin-processing-banner" role="status" aria-live="polite" aria-label="Registration processing">
+    <div className="walkin-processing-heading"><div><strong id="walkin-processing-title">{completed ? 'Visitor details completed' : failed ? 'Processing needs attention' : 'Preparing visitor details'}</strong><span>{completed ? 'All available details were extracted and filled into the form.' : failed ? 'Audio was saved, but some details may need manual review.' : 'Please wait while the recording is processed.'}</span></div>{completed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : failed ? <CheckCircle2 size={21} className="walkin-processing-complete-icon" /> : <LoaderCircle size={20} className="walkin-processing-spinner" />}</div>
+    <div className="walkin-processing-track" aria-hidden="true"><span style={{ width: `${completed || failed ? 100 : Math.max(8, (activeIndex / (processingSteps.length - 1)) * 100)}%` }} /></div>
+    <div className="walkin-processing-steps">
+      {processingSteps.map(([key, label, detail], index) => <div className={`walkin-processing-step${index < activeIndex ? ' is-complete' : index === activeIndex ? ' is-active' : ''}`} key={key}>
+        <span className="walkin-processing-step-icon">{index < activeIndex || failed ? <Check size={13} /> : index === activeIndex ? <LoaderCircle size={13} className="walkin-processing-spinner" /> : index + 1}</span>
+        <span><strong>{label}</strong><small>{failed ? (index === activeIndex ? 'Review required' : index < activeIndex ? 'Complete' : 'Not reached') : index === activeIndex ? detail : index < activeIndex ? 'Complete' : 'Waiting'}</small></span>
+      </div>)}
+    </div>
+  </div>
+}
+
+function PreviewValue({ label, value }: { label: string; value: string }) {
+  return <div className="walkin-preview-value"><small>{label}</small><strong>{value}</strong></div>
+}
+
+function availabilityRank(value: WalkinAgent['availability']) {
+  return value === 'Available' ? 0 : value === 'Busy' ? 1 : 2
+}
+
+function presenceRank(value: WalkinAgent['presenceStatus']) {
+  return value === 'active' ? 0 : value === 'inactive' ? 2 : 1
+}
+
+function presenceLabel(value: WalkinAgent['presenceStatus']) {
+  return value === 'active' ? 'Active now' : value === 'on_leave' ? 'On leave' : value === 'be_right_back' ? 'Be right back' : 'Inactive'
 }
 
 function Field({
@@ -119,19 +425,21 @@ function Field({
   error,
   hint,
   wide,
+  ai,
   children,
 }: {
-  label: string
+  label: React.ReactNode
   name: string
   required?: boolean
   error?: string
   hint?: string
   wide?: boolean
+  ai?: boolean
   children: React.ReactNode
 }) {
   return (
     <div className={`walkin-field${error ? ' has-error' : ''}${wide ? ' wide' : ''}`}>
-      <label htmlFor={name}>{label}{required && <span aria-label="required"> *</span>}</label>
+      <label htmlFor={name}>{label}{required && <span aria-label="required"> *</span>}{ai && <span className="walkin-ai-badge"> AI populated</span>}</label>
       {children}
       {error && <span className="walkin-field-error" role="alert">{error}</span>}
       {!error && hint && <span className="walkin-field-hint">{hint}</span>}

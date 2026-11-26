@@ -16,9 +16,10 @@ from typing import Any, TypedDict
 from sqlalchemy import text
 
 from .chat import normalize_email, normalize_phone
-from .db import require_db, row_dict
+from .db import require_db, scope_parameters
 from .settings import settings
 from .zoho import zoho
+from recorder.activity_log import monitored_call
 
 
 class AgentState(TypedDict, total=False):
@@ -82,7 +83,9 @@ async def _invoke_with_retry(client, *, model: str, messages: list[dict[str, str
     """Retry transient provider failures without retrying auth/request errors."""
     for attempt in range(attempts):
         try:
-            return await client.chat.completions.create(model=model, temperature=temperature, max_tokens=max_tokens, messages=messages)
+            return await monitored_call(
+                client.chat.completions.create(model=model, temperature=temperature, max_tokens=max_tokens, messages=messages),
+                "openai", "chat.completions.create", metadata={"model": model, "attempt": attempt + 1})
         except Exception as exc:
             status = getattr(exc, 'status_code', None)
             transient = status is None or status in {408, 409, 425, 429, 500, 502, 503, 504}
@@ -261,6 +264,10 @@ def _extract_rows(payload: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def _active_catalogue_row(row: dict[str, Any]) -> bool:
+    return str(row.get('status', row.get('Status', 'active')) or 'active').strip().lower() in {'active', 'enabled'}
+
+
 def item_filters(entities: dict[str, Any]) -> dict[str, Any]:
     query = str(entities.get('product_query') or '').strip()
     query = re.sub(r'\b(show me|find|search for|search|looking for|do you have|what do you have|give me|please|products?|items?)\b', ' ', query, flags=re.I)
@@ -300,7 +307,10 @@ async def _persist_transaction(state: AgentState, fields: dict[str, Any]) -> Non
         return
     assignments = ', '.join(f"{key}=:{key}" for key in fields)
     with require_db() as db:
-        db.execute(text(f"update enquiries set {assignments}, updated_at=now() where session_id=:session"), {'session': session_id, **fields})
+        db.execute(text(f"""update enquiries e set {assignments}, updated_at=now()
+          from chat_sessions s where e.session_id=s.id and s.id=cast(:session as uuid)
+            and s.organisation_id=cast(:org as uuid) and s.member_id=cast(:member as uuid)"""),
+          {**scope_parameters(), 'session': session_id, **fields})
         db.commit()
 
 
@@ -325,12 +335,12 @@ async def execute_node(state: AgentState) -> AgentState:
                 filters = item_filters(state.get('entities', {}))
                 payload = await zoho.books_items(org, filters=filters)
                 rows = _extract_rows(payload, 'items', 'products')
-                active_rows = [row for row in rows if str(row.get('status', '')).lower() == 'active']
+                active_rows = [row for row in rows if _active_catalogue_row(row)]
                 item_id = state.get('entities', {}).get('item_id')
                 if item_id and state.get('intent') == 'product_details':
                     detail = await zoho.books_item(org, item_id)
                     detail_rows = _extract_rows(detail, 'item', 'items', 'data')
-                    active_rows = [row for row in detail_rows if str(row.get('status', '')).lower() == 'active']
+                    active_rows = [row for row in detail_rows if _active_catalogue_row(row)]
                 if len(active_rows) == 1:
                     item = active_rows[0]
                 elif state.get('entities', {}).get('item_id'):
@@ -351,7 +361,7 @@ async def execute_node(state: AgentState) -> AgentState:
                         books_customer = {'contact_id': match.get('contact_id') or match.get('customer_id'), 'record': match}
                         if books_customer.get('contact_id'):
                             with require_db() as db:
-                                db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer'), {'id': books_customer['contact_id'], 'customer': customer['id']}); db.commit()
+                                db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null'), {**scope_parameters(), 'id': books_customer['contact_id'], 'customer': customer['id']}); db.commit()
                 results.append({'tool': tool, 'success': bool(books_customer and books_customer.get('contact_id')), 'data': books_customer or {'missing': 'books_contact_id'}})
             elif tool == 'books_invoices':
                 payload = await zoho.list_invoices(org)
@@ -397,11 +407,10 @@ async def execute_node(state: AgentState) -> AgentState:
                     contact_id = contact.get('contact_id')
                     if contact_id:
                         with require_db() as db:
-                            db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer'), {'id': contact_id, 'customer': customer['id']}); db.commit()
-                note_id = None
+                            db.execute(text('update customers set books_contact_id=:id,updated_at=now() where id=:customer and organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null'), {**scope_parameters(), 'id': contact_id, 'customer': customer['id']}); db.commit()
                 results.append({'tool': tool, 'success': True, 'data': {'books_contact_id': contact_id, 'crm_context_created': bool(contact_id)}})
-    except Exception as exc:
-        results.append({'tool': 'zoho', 'success': False, 'error': str(exc)[:300]})
+    except Exception:
+        results.append({'tool': 'zoho', 'success': False, 'error': 'Zoho operation unavailable'})
     state['tool_results'] = results
     if any(result.get('tool') in {'create_estimate', 'create_sales_order'} and result.get('success') for result in results):
         state['pending_action'] = None
@@ -414,7 +423,6 @@ def verified_context(state: AgentState) -> str:
 
 async def compose_node(state: AgentState) -> AgentState:
     language = state.get('language', 'english')
-    results = state.get('tool_results', [])
     if settings.openai_api_key:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=settings.openai_api_key)

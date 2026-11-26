@@ -79,6 +79,7 @@ describe('isolated standalone storage', () => {
   })
   it('limits legacy browser imports to the original local workspace', async () => {
     const service = await load()
+    expect(service.walkinRecordingsPath('legacy-id')).toBe('/conversations?q=legacy-id&limit=100&audio_bucket=walkin-audio')
     const legacy = [{ ...registration, id: 'legacy-id', visitNumber: 'WI-legacy', checkInAt: '2026-10-14T10:00:00Z', status: 'Registered' }]
     localStorage.setItem('guru-group:walkin-visits', JSON.stringify(legacy))
     expect(await service.listWalkinVisits('different-workspace')).toEqual([])

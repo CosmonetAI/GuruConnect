@@ -30,8 +30,11 @@ export type WalkinAgent = {
   name: string
   department: string
   specialization: string
+  role?: 'salesperson' | 'owner'
   availability: 'Available' | 'Busy' | 'Unavailable'
+  presenceStatus?: 'active' | 'inactive' | 'on_leave' | 'be_right_back'
   openVisits: number | null
+  openTickets?: number
 }
 
 export type WalkinVisit = {
@@ -41,6 +44,9 @@ export type WalkinVisit = {
   mobileNumber: string
   email: string
   companyName: string
+  customerType: 'customer' | 'vendor'
+  projectName?: string
+  preferredContactMethod?: string
   purpose: WalkinPurpose
   purposeDescription: string
   productOrService: string
@@ -59,6 +65,7 @@ export type WalkinVisit = {
   convertedEnquiryReference: string | null
   createdAt: string
   updatedAt: string
+  ticket?: { number: number; token: string; stage: string }
 }
 
 export type WalkinRequirement = {
@@ -101,7 +108,7 @@ export type RegisterWalkinInput = Pick<
   | 'appointmentStatus'
   | 'appointmentReference'
   | 'internalNotes'
->
+> & Partial<Pick<WalkinVisit, 'customerType' | 'projectName' | 'assignedAgentId'>> & { conversationId?: string }
 
 export type WalkinFilters = {
   query?: string

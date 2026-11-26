@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Trash2 } from 'lucide-react';
+import { canDocumentAction } from '../services/documentPermissions';
 import { call } from '../shared/api';
 
 export function ProductValue({ value }) {
@@ -11,7 +14,7 @@ const MONEY_FIELDS = new Set(['rate', 'purchase_rate', 'selling_price', 'sales_r
 
 export function MoneyValue({ field, value }) {
   if (!MONEY_FIELDS.has(field) || typeof value === 'boolean' || value === null || value === undefined || value === '' || (typeof value === 'string' && value.trim().endsWith('%'))) return <ProductValue value={value} />;
-  return <span>â‚¹{value}</span>;
+  return <span>₹{value}</span>;
 }
 
 export function ProductCard({ item }) {
@@ -29,19 +32,29 @@ export function ProductCard({ item }) {
     ['Other details', fields.map(([key]) => key).filter(key => !important.has(key))]
   ].map(([title, keys]) => ({ title, fields: keys.map(key => fields.find(([field]) => field === key)).filter(Boolean) })).filter(section => section.fields.length);
   const save = async values => { const result = await call('/products/' + current.item_id, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.item?.item || result.item || {}) })); };
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">Active</span>{current.sku && <span className="product-sku">SKU: {current.sku}</span>}</div><h3>{current.name || current.item_name || 'Product'}</h3><div className="product-summary"><span>{current.item_id ? 'Item ID: ' + current.item_id : 'Zoho Books item'}</span>{current.rate != null && <strong>₹{current.rate}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>Show more</button></div>{showDetails && <DetailModal eyebrow="ZOHO BOOKS ITEM" title={current.name || current.item_name || 'Product'} fields={fields} editableKeys={['name', 'item_name', 'sku', 'unit', 'description', 'rate', 'purchase_rate', 'reorder_level']} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
+  const status = String(current.status || current.Status || 'active').replaceAll('_', ' ');
+  const statusKey = ['active', 'enabled'].includes(status.toLowerCase()) ? 'active' : status.toLowerCase().replaceAll(' ', '-');
+  return <article className="product-card"><div className="product-card-top"><span className={`active-label product-status-${statusKey}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>{current.sku && <span className="product-sku">SKU: {current.sku}</span>}</div><h3>{current.name || current.item_name || 'Product'}</h3><div className="product-summary"><span>{current.item_id ? 'Item ID: ' + current.item_id : 'Catalogue item'}</span>{current.rate != null && <strong>₹{current.rate}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button></div>{showDetails && <DetailModalPortal eyebrow="CATALOGUE ITEM" title={current.name || current.item_name || 'Product'} fields={fields} editableKeys={['name', 'item_name', 'sku', 'unit', 'description', 'rate', 'purchase_rate', 'reorder_level']} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
 }
 
 export function PhoneExtensionSelect({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const options = [['+91', 'India'], ['+1', 'US/Canada'], ['+44', 'UK'], ['+971', 'UAE']];
-  return <div className="extension-picker"><button type="button" className="extension-current" onClick={() => setOpen(current => !current)}>{value} <span>âŒ„</span></button>{open && <div className="extension-options">{options.map(([code, name]) => <button type="button" key={code} onClick={() => { onChange({ target: { value: code } }); setOpen(false); }}>{code} â€” {name}</button>)}</div>}</div>;
+  return <div className="extension-picker"><button type="button" className="extension-current" onClick={() => setOpen(current => !current)}>{value} <span>₹</span></button>{open && <div className="extension-options">{options.map(([code, name]) => <button type="button" key={code} onClick={() => { onChange({ target: { value: code } }); setOpen(false); }}>{code} · {name}</button>)}</div>}</div>;
 }
 
 export function DetailModal({ eyebrow, title, fields, onClose, action, onSave, editableKeys = [] }) {
   const label = key => key.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
   const [editing, setEditing] = useState(false); const [draft, setDraft] = useState({}); const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(Object.fromEntries(fields)), [fields]);
+  const fieldsSignature = JSON.stringify(fields);
+  useEffect(() => setDraft(Object.fromEntries(fields)), [fieldsSignature]);
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = event => { if (event.key === 'Escape') onClose(); };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', closeOnEscape);
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener('keydown', closeOnEscape); };
+  }, []);
   const groups = [
     ['Identity', ['id', 'contact_id', 'estimate_id', 'estimate_number', 'salesorder_id', 'salesorder_number', 'purchaseorder_id', 'purchaseorder_number', 'invoice_id', 'invoice_number', 'reference_number']],
     ['People & account', ['customer_name', 'customer_id', 'vendor_name', 'vendor_id', 'company_name', 'email', 'phone', 'mobile', 'Full_Name', 'First_Name', 'Last_Name', 'Title', 'Account_Name']],
@@ -54,22 +67,120 @@ export function DetailModal({ eyebrow, title, fields, onClose, action, onSave, e
   const other = fields.filter(([key]) => !used.has(key));
   if (other.length) sections.push({ name: 'Other details', fields: other });
   const isEditable = key => onSave && editableKeys.includes(key) && !['id', 'contact_id', 'estimate_id', 'salesorder_id', 'purchaseorder_id', 'invoice_id'].includes(key);
-  const save = async () => { setSaving(true); try { const values = Object.fromEntries(editableKeys.filter(key => Object.prototype.hasOwnProperty.call(draft, key)).map(key => { let value = draft[key]; if (['line_items', 'billing_address', 'shipping_address'].includes(key) && typeof value === 'string') { try { value = JSON.parse(value); } catch { /* leave invalid JSON for the API to report */ } } return [key, value]; })); await onSave(values); setEditing(false); } finally { setSaving(false); } };
+  const save = async () => { setSaving(true); try { const values = {}; for (const key of editableKeys) { if (!Object.prototype.hasOwnProperty.call(draft, key)) continue; let value = draft[key]; let original = fields.find(([field]) => field === key)?.[1]; if (['line_items', 'billing_address', 'shipping_address', 'contact_persons', 'custom_fields', 'tags'].includes(key) && typeof value === 'string') { try { value = JSON.parse(value); } catch { /* leave invalid JSON for the API to report */ } } if (JSON.stringify(value) !== JSON.stringify(original)) values[key] = value; } await onSave(values); setEditing(false); } finally { setSaving(false); } };
   const editValue = (key, value) => typeof value === 'object' ? JSON.stringify(value, null, 2) : (value ?? '');
   return <div className="modal-backdrop" onClick={onClose}><div className="product-details-modal" onClick={event => event.stopPropagation()}><div className="modal-heading"><div><small>{eyebrow}</small><h3>{title}</h3></div><button type="button" onClick={onClose}>×</button></div>{(action || onSave) && <div className="detail-modal-action">{action}{onSave && !editing && <button type="button" className="secondary" onClick={() => setEditing(true)}>Edit</button>}{onSave && editing && <><button type="button" className="secondary" onClick={() => { setDraft(Object.fromEntries(fields)); setEditing(false); }}>Cancel</button><button type="button" className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></>}</div>}{sections.map(section => <section className="product-detail-section" key={section.name}><h4>{section.name}</h4><div className="product-fields">{section.fields.map(([key, value]) => <div className={'product-field ' + (editing && isEditable(key) ? 'editable-field' : '')} key={key}><span>{label(key)}</span>{editing && isEditable(key) ? (typeof value === 'object' || (typeof value === 'string' && value.length > 80) ? <textarea value={editValue(key, draft[key])} onChange={e => setDraft({ ...draft, [key]: e.target.value })} /> : <input value={editValue(key, draft[key])} onChange={e => setDraft({ ...draft, [key]: e.target.value })} />) : <strong><MoneyValue field={key} value={value} /></strong>}</div>)}</div></section>)}</div></div>;
 }
 
+function DetailModalPortal(props) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(<DetailModal {...props} />, document.body);
+}
+
 export function ContactCard({ contact }) {
-  const [current, setCurrent] = useState(contact); const [showDetails, setShowDetails] = useState(false);
+  const [current, setCurrent] = useState(contact); const [showDetails, setShowDetails] = useState(false); const [saveMessage, setSaveMessage] = useState('');
   useEffect(() => setCurrent(contact), [contact]);
+  if (!current) return null;
   const fields = Object.entries(current).filter(([, value]) => value !== null && value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0) && !String(value).startsWith('__'));
   const name = current.Full_Name || current.contact_name || current.customer_name || [current.First_Name, current.Last_Name].filter(Boolean).join(' ') || [current.first_name, current.last_name].filter(Boolean).join(' ') || 'Contact';
   const email = current.Email || current.email; const phone = current.Mobile || current.mobile || current.Phone || current.phone; const title = current.Title || current.title;
-  const save = async values => { const id = current.id || current.contact_id; const path = current.__source === 'books' ? '/books/contacts/' + id : '/contacts/' + id; const result = await call(path, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.contact?.contact || result.contact || {}) })); };
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">Zoho contact</span><span className="product-sku">{current.id || current.contact_id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Contact record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>Show more</button></div>{showDetails && <DetailModal eyebrow="ZOHO CONTACT" title={name} fields={fields} editableKeys={['First_Name', 'Last_Name', 'Email', 'Mobile', 'Phone', 'Title', 'Description', 'email', 'mobile', 'phone']} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
+  const source = current.__source === 'books' ? 'books' : 'bigin';
+  const sourceLabel = source === 'books' ? 'Customer record' : 'CRM contact';
+  const id = current.id || current.contact_id;
+  const editableKeys = source === 'books' ? ['contact_name', 'company_name', 'contact_type', 'customer_sub_type', 'contact_number', 'salutation', 'contact_salutation', 'first_name', 'last_name', 'website', 'language_code', 'email', 'phone', 'mobile', 'designation', 'department', 'payment_terms', 'payment_terms_label', 'credit_limit', 'is_portal_enabled', 'payment_reminder_enabled', 'billing_address', 'shipping_address', 'contact_persons', 'custom_fields', 'tags', 'pan_no', 'gst_no', 'notes'] : ['First_Name', 'Last_Name', 'Email', 'Mobile', 'Phone', 'Title', 'Description', 'Account_Name', 'Mailing_Street', 'Mailing_City', 'Mailing_State', 'Mailing_Country', 'Mailing_Zip'];
+  const detailFields = [...fields, ...editableKeys.filter(key => !fields.some(([field]) => field === key)).map(key => [key, ''])];
+  const save = async values => { const endpoint = source === 'books' ? '/books/contacts/' + id : '/bigin/contacts/' + String(id).replace(/^bigin:/, ''); const result = await call(endpoint, { method: 'PUT', body: JSON.stringify(values) }); const updated = result.contact?.contact || result.contact || {}; setCurrent(old => ({ ...old, ...updated, __source: source })); setSaveMessage('Contact updated successfully.'); };
+  const remove = async () => { if (!window.confirm('Delete this contact?')) return; await call('/contacts/' + id, { method: 'DELETE' }); setCurrent(null); setShowDetails(false); };
+  return <article className="product-card">{saveMessage && <div className="success">{saveMessage}</div>}<div className="product-card-top"><span className="active-label">{sourceLabel}</span><span className="product-sku">{id || ''}</span></div><h3>{name}</h3><div className="product-summary contact-summary">{email && <span><b>Email</b>{email}</span>}{phone && <span><b>Phone</b>{phone}</span>}{title && <span><b>Title</b>{title}</span>}{!email && !phone && !title && <span>Customer record</span>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button><button type="button" className="secondary" onClick={remove}>Delete</button></div>{showDetails && <DetailModalPortal eyebrow={sourceLabel.toUpperCase()} title={name} fields={detailFields} editableKeys={editableKeys} onSave={save} onClose={() => setShowDetails(false)} />}</article>;
 }
 
-export function RecordCard({ record, type }) {
+const documentKind = type => type === 'Quote' || type === 'quote' ? 'quote' : type === 'Invoice' || type === 'invoice' ? 'invoice' : type === 'Sales order' || type === 'sales-order' ? 'sales-order' : type === 'Purchase order' || type === 'purchase-order' ? 'purchase-order' : '';
+const documentId = record => record?.estimate_id || record?.salesorder_id || record?.purchaseorder_id || record?.invoice_id || record?.external_id || record?.id;
+
+export function DocumentCardActions({ record, type, onRecordUpdate, onRecordDelete, permissions }) {
+  const kind = documentKind(type || record?.__document_type);
+  const id = documentId(record);
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [accountId, setAccountId] = useState('');
+  const [accountError, setAccountError] = useState('');
+  const [partialPayment, setPartialPayment] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  if (!kind || !id) return null;
+  const refresh = async () => {
+    const result = await call(`/${kind === 'quote' ? 'quotes' : 'invoices'}/${id}`);
+    const fresh = result[kind === 'quote' ? 'quote' : 'invoice'] || {};
+    onRecordUpdate?.(fresh);
+    return fresh;
+  };
+  const deletePath = kind === 'quote' ? `/quotes/${id}` : kind === 'invoice' ? `/invoices/${id}` : kind === 'sales-order' ? `/orders/${id}` : `/purchase-orders/${id}`;
+  const action = async (actionName, options = {}) => {
+    if (busy) return;
+    setBusy(actionName); setMessage('');
+    try {
+      if (actionName === 'accept') await call(`/quotes/${id}/accept`, { method: 'POST', body: JSON.stringify({}) });
+      if (actionName === 'paid') await call(`/invoices/${id}/paid`, { method: 'POST', body: JSON.stringify(options) });
+      const fresh = await refresh();
+      setMessage(actionName === 'accept' ? 'Quote accepted' : actionName === 'paid' ? 'Invoice marked paid' : `Status: ${String(fresh.status || fresh.payment_status || 'verified').replaceAll('_', ' ')}`);
+      if (actionName === 'paid') setAccountPickerOpen(false);
+    } catch (error) { setMessage(error.message || 'Unable to update this document'); }
+    finally { setBusy(''); }
+  };
+  const openPaid = async (partial = false) => {
+    setPartialPayment(partial); setPaymentAmount('');
+    setAccountError(''); setAccountPickerOpen(true); setBusy('accounts');
+    try {
+      const result = await call('/documents/options');
+      const allAccounts = result.accounts || [];
+      const selectable = allAccounts.filter(account => /bank|cash/i.test(`${account.account_type || ''} ${account.account_type_name || ''} ${account.type || ''} ${account.account_name || ''} ${account.name || ''}`));
+      const available = selectable.length ? selectable : allAccounts;
+      setAccounts(available);
+      setAccountId(current => current || available[0]?.account_id || available[0]?.id || '');
+    } catch (error) { setAccountError(error.message || 'Unable to load Zoho Books accounts'); }
+    finally { setBusy(''); }
+  };
+  const confirmPaid = () => {
+    if (!accountId) { setAccountError('Select the cash or bank account that received the payment.'); return; }
+    if (partialPayment && (!Number.isFinite(Number(paymentAmount)) || Number(paymentAmount) <= 0)) { setAccountError('Enter the amount received.'); return; }
+    void action('paid', { account_id: accountId, ...(partialPayment ? { amount: Number(paymentAmount), amount_applied: Number(paymentAmount) } : {}) });
+  };
+  const canEdit = permissions ? canDocumentAction(permissions, kind, 'edit') : true;
+  const canDelete = permissions ? canDocumentAction(permissions, kind, 'delete') : false;
+  const canAccept = permissions ? canDocumentAction(permissions, kind, 'accept') : true;
+  const canMarkPaid = permissions ? canDocumentAction(permissions, kind, 'mark-paid') : true;
+  const removeDocument = async () => {
+    if (busy || !canDelete) return;
+    setBusy('delete'); setMessage('');
+    try { await call(deletePath, { method: 'DELETE' }); onRecordDelete?.(id); }
+    catch (error) { setMessage(error.message || 'Unable to delete this document'); }
+    finally { setBusy(''); setConfirmDeleteOpen(false); }
+  };
+  return <>
+  <div className={`document-card-actions document-card-actions-${kind}`} onClick={event => event.stopPropagation()}>
+    <div className="document-card-primary-actions">
+      {kind === 'quote' && canAccept && <button type="button" className="secondary" onClick={() => void action('accept')} disabled={Boolean(busy)}>{busy === 'accept' ? 'Marking accepted...' : 'Mark accepted'}</button>}
+      {kind === 'invoice' && canMarkPaid && <><button type="button" className="secondary" onClick={() => void openPaid(false)} disabled={Boolean(busy)}>{busy === 'paid' ? 'Marking paid...' : 'Mark paid'}</button><button type="button" className="secondary" onClick={() => void openPaid(true)} disabled={Boolean(busy)}>Partial payment</button></>}
+    </div>
+    {canDelete && <button type="button" className="document-card-delete-action" onClick={() => setConfirmDeleteOpen(true)} disabled={Boolean(busy)} aria-label={`Delete ${String(type || kind).toLowerCase()}`} title="Delete document"><Trash2 size={15} aria-hidden="true" /></button>}
+    {message && <span className={/unable|error/i.test(message) ? 'mail-error' : 'mail-success'} role="status">{message}</span>}
+  </div>
+  {confirmDeleteOpen && createPortal(<div className="document-delete-backdrop" role="presentation" onClick={() => { if (!busy) setConfirmDeleteOpen(false); }}><section className="document-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="document-delete-title" onClick={event => event.stopPropagation()}><div className="document-delete-icon"><Trash2 size={19} aria-hidden="true" /></div><div><small>DELETE DOCUMENT</small><h3 id="document-delete-title">Delete this {String(type || kind).toLowerCase()}?</h3><p>This action cannot be undone in Zoho Books.</p></div><div className="document-delete-actions"><button type="button" className="secondary" onClick={() => setConfirmDeleteOpen(false)} disabled={Boolean(busy)}>Cancel</button><button type="button" className="document-delete-confirm" onClick={() => void removeDocument()} disabled={Boolean(busy)}>{busy === 'delete' ? 'Deleting…' : 'Delete document'}</button></div></section></div>, document.body)}
+  {accountPickerOpen && createPortal(<div className="modal-backdrop" onClick={() => { if (!busy) setAccountPickerOpen(false); }}><form className="product-details-modal" onSubmit={event => { event.preventDefault(); confirmPaid(); }} onClick={event => event.stopPropagation()}>
+    <div className="modal-heading"><div><small>ZOHO BOOKS PAYMENT</small><h3>{partialPayment ? 'Record partial payment' : 'Mark invoice paid'}</h3></div><button type="button" onClick={() => setAccountPickerOpen(false)} aria-label="Close account selector">×</button></div>
+    <p>Select the cash or bank account that received this invoice payment. {partialPayment ? 'Enter the amount received; Zoho Books will apply it to this invoice.' : 'Zoho Books will apply the invoice’s full outstanding balance.'}</p>
+    {accountError && <p className="mail-error" role="alert">{accountError}</p>}
+    {partialPayment && <label>Amount received<input required min="0.01" step="0.01" type="number" value={paymentAmount} onChange={event => { setPaymentAmount(event.target.value); setAccountError(''); }} placeholder="Enter amount" /></label>}
+    <label>Received in<select required value={accountId} onChange={event => { setAccountId(event.target.value); setAccountError(''); }} disabled={busy === 'accounts'}><option value="">{busy === 'accounts' ? 'Loading accounts...' : 'Select an account'}</option>{accounts.map(account => <option key={account.account_id || account.id} value={account.account_id || account.id}>{account.account_name || account.name || account.account_type || account.type || account.account_id || account.id}</option>)}</select></label>
+    {!accounts.length && busy !== 'accounts' && !accountError && <p className="mail-error">No Zoho Books accounts were found.</p>}
+    <div className="detail-modal-action"><button type="button" className="secondary" onClick={() => setAccountPickerOpen(false)}>Cancel</button><button type="submit" className="primary" disabled={busy === 'accounts' || !accountId || (partialPayment && !paymentAmount)}>{busy === 'paid' ? 'Recording...' : partialPayment ? 'Record partial payment' : 'Mark invoice paid'}</button></div>
+  </form></div>, document.body)}
+  </>;
+}
+
+export function RecordCard({ record, type, permissions }) {
   const [current, setCurrent] = useState(record); const [mailing, setMailing] = useState(false); const [mailStatus, setMailStatus] = useState(''); const [showDetails, setShowDetails] = useState(false);
   useEffect(() => setCurrent(record), [record]);
   const title = current.estimate_number || current.salesorder_number || current.purchaseorder_number || current.invoice_number || current.reference_number || current.customer_name || current.customer || current.vendor_name || 'Record';
@@ -77,16 +188,30 @@ export function RecordCard({ record, type }) {
   const id = current.estimate_id || current.invoice_id || current.purchaseorder_id || current.salesorder_id;
   const updatePath = type === 'Quote' ? '/quotes/' + id : type === 'Invoice' ? '/invoices/' + id : type === 'Purchase order' ? '/purchase-orders/' + id : '/orders/' + id;
   const emailPath = type === 'Quote' ? '/quotes/' + id + '/email' : type === 'Invoice' ? '/invoices/' + id + '/email' : type === 'Purchase order' ? '/purchase-orders/' + id + '/email' : '/orders/' + id + '/email';
-  const send = async () => { if (!id || mailing) return; setMailing(true); setMailStatus(''); try { await call(emailPath, { method: 'POST' }); setMailStatus('Email sent'); } catch (e) { setMailStatus(e.message || 'Unable to send email'); } finally { setMailing(false); } };
+  const send = async () => { if (!id || mailing) return; setMailing(true); setMailStatus(''); try { const recipient = current.email || current.contact_email || current.vendor_email; const emailPayload = recipient ? { to_mail_ids: [recipient], subject: `${title} from ConnectCosmos`, body: `Please find the ${type.toLowerCase()} attached. Reference: ${current.reference_number || title}.` } : {}; await call(emailPath, { method: 'POST', body: JSON.stringify(emailPayload) }); setMailStatus('Email sent'); } catch (e) { setMailStatus(e.message || 'Unable to send email'); } finally { setMailing(false); } };
   const save = async values => { const result = await call(updatePath, { method: 'PUT', body: JSON.stringify(values) }); setCurrent(old => ({ ...old, ...(result.quote || result.order || result.purchase_order || result.invoice || {}) })); };
   const editable = ['reference_number', 'date', 'due_date', 'expiry_date', 'delivery_date', 'expected_delivery_date', 'notes', 'terms', 'discount', 'shipping_charge', 'adjustment', 'adjustment_description', 'line_items'];
-  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Zoho Books record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>Show more</button>{id && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Email'}</button>}{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModal eyebrow={'ZOHO BOOKS ' + type.toUpperCase()} title={title} fields={fields} editableKeys={editable} onSave={save} onClose={() => setShowDetails(false)} action={id && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
+  const canEdit = permissions ? canDocumentAction(permissions, documentKind(type), 'edit') : true;
+  if (!current) return null;
+  return <article className="product-card"><div className="product-card-top"><span className="active-label">{type}</span><span className="product-sku">{id || ''}</span></div><h3>{title}</h3><div className="product-summary"><span>{current.customer_name || current.vendor_name || current.company_name || current.date || 'Commercial record'}</span>{current.total != null && <strong>{current.currency_symbol || '₹'}{current.total}</strong>}</div><div className="product-card-actions"><button type="button" className="secondary" onClick={() => setShowDetails(true)}>View details</button>{id && canEdit && <button type="button" className="secondary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send'}</button>}<DocumentCardActions record={current} type={type} permissions={permissions} onRecordDelete={() => setCurrent(null)} onRecordUpdate={fresh => setCurrent(old => ({ ...old, ...fresh }))} />{mailStatus && <span className={mailStatus === 'Email sent' ? 'mail-success' : 'mail-error'}>{mailStatus}</span>}</div>{showDetails && <DetailModalPortal eyebrow={type.toUpperCase()} title={title} fields={fields} editableKeys={canEdit ? editable : []} onSave={canEdit ? save : undefined} onClose={() => setShowDetails(false)} action={id && canEdit && <button type="button" className="primary" onClick={send} disabled={mailing}>{mailing ? 'Sending…' : 'Send by email'}</button>} />}</article>;
 }
 
+export function LookupField({ value, onChange, onSearch, options, selected, placeholder, renderOption, required = false }) {
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const timer = useRef(null);
+  const fieldRef = useRef(null);
+  const resourceLabel = /product|item/i.test(placeholder) ? 'products' : 'contacts';
+  const runSearch = async text => { if (!text.trim()) return; setOpen(true); setSearching(true); setHasSearched(false); try { await onSearch(text); } finally { setSearching(false); setHasSearched(true); } };
+  const change = text => { onChange(text); setOpen(Boolean(text.trim())); setHasSearched(false); if (timer.current) clearTimeout(timer.current); if (!text.trim()) return; timer.current = setTimeout(() => runSearch(text), 250); };
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => { const close = event => { if (fieldRef.current && !fieldRef.current.contains(event.target)) setOpen(false); }; document.addEventListener('click', close); return () => document.removeEventListener('click', close); }, []);
+  return <div className="lookup-field" ref={fieldRef}><div className="lookup-input-row"><input required={required} placeholder={placeholder} value={value} onFocus={() => { if (value.trim()) setOpen(true); }} onChange={event => change(event.target.value)} />{resourceLabel === 'contacts' && <button type="button" className="lookup-search-button" onClick={() => runSearch(value)} disabled={!value.trim() || searching}>{searching ? 'Searching…' : 'Search'}</button>}</div>{!selected && open && (searching || options.length > 0 || hasSearched) && <div className="lookup-options">{searching && <div className="lookup-loading"><span className="lookup-spinner" />Searching {resourceLabel}…</div>}{!searching && options.length > 0 && options.map(option => <div className="lookup-option-entry" key={option.contact_id || option.item_id || option.id}>{renderOption(option)}{option.__source && <small>{option.__source === 'bigin' ? 'CRM contact' : 'Customer record'}</small>}</div>)}{!searching && hasSearched && options.length === 0 && <div className="lookup-empty">No {resourceLabel} found. Try another search.</div>}</div>}</div>;
+}
 export function LineItemsEditor({ lines, setLines, items, lookupItems, currency = 'INR' }) {
   const update = (index, key, value) => setLines(current => current.map((line, i) => i === index ? { ...line, [key]: value } : line));
   const add = () => setLines(current => [...current, { item_id: '', item_name: '', quantity: 1, rate: '', description: '', discount: 0, stock_on_hand: null, available_stock: null }]);
   const remove = index => setLines(current => current.length === 1 ? current : current.filter((_, i) => i !== index));
-  return <section className="line-items-editor"><div className="form-section-heading"><h4>Products and quantities</h4><span>Add each product required for this document.</span></div>{lines.map((line, index) => <div className="line-item" key={index}><div className="line-item-heading"><strong>Product {index + 1}</strong>{lines.length > 1 && <button type="button" className="link-button" onClick={() => remove(index)}>Remove</button>}</div><div className="lookup-field"><input required placeholder="Search product name, SKU, or description" value={line.item_name} onChange={event => { update(index, 'item_name', event.target.value); update(index, 'item_id', ''); lookupItems(event.target.value); }} />{items.length > 0 && !line.item_id && <div className="lookup-options">{items.map(item => <button type="button" key={item.item_id} onClick={() => { update(index, 'item_id', item.item_id); update(index, 'item_name', item.name || item.item_name || ''); update(index, 'rate', line.rate || item.rate || item.purchase_rate || ''); update(index, 'stock_on_hand', item.stock_on_hand); update(index, 'available_stock', item.available_stock); }}>{item.name || item.item_name}{item.stock_on_hand != null ? ` - Stock: ${item.stock_on_hand}` : ''}</button>)}</div>}</div><div className="line-item-meta"><input required type="number" min="1" placeholder="Quantity required" value={line.quantity} onChange={event => update(index, 'quantity', event.target.value)} /><input required type="number" min="0" step="0.01" placeholder={`Rate (${currency})`} value={line.rate} onChange={event => update(index, 'rate', event.target.value)} /><input type="number" min="0" step="0.01" placeholder="Discount" value={line.discount} onChange={event => update(index, 'discount', event.target.value)} /></div><div className="inventory-hint">{line.item_id ? `Inventory available: ${line.available_stock ?? line.stock_on_hand ?? 'Not provided'}` : 'Select a product to view inventory.'}</div><input placeholder="Line description (optional)" value={line.description} onChange={event => update(index, 'description', event.target.value)} /></div>)}<button type="button" className="add-line-button" onClick={add}>+ Add another product</button></section>;
+  return <section className="line-items-editor"><div className="form-section-heading"><h4>Products and quantities</h4><span>Add each product required for this document.</span></div>{lines.map((line, index) => { const total = Number(line.quantity || 0) * Number(line.rate || 0); return <div className="line-item" key={index}><div className="line-item-heading"><strong>Product {index + 1}</strong>{lines.length > 1 && <button type="button" className="link-button" onClick={() => remove(index)}>Remove</button>}</div><div className="line-item-row"><div className="line-item-search"><LookupField required placeholder="Search product name, SKU, or description" value={line.item_name} selected={line.item_id} options={items} onChange={value => { update(index, 'item_name', value); update(index, 'item_id', ''); }} onSearch={() => lookupItems(line.item_name)} renderOption={item => <button type="button" key={item.item_id} onClick={() => { update(index, 'item_id', item.item_id); update(index, 'item_name', item.name || item.item_name || ''); update(index, 'rate', line.rate || item.rate || item.purchase_rate || ''); update(index, 'stock_on_hand', item.stock_on_hand); update(index, 'available_stock', item.available_stock); }}>{item.name || item.item_name}{item.stock_on_hand != null ? ` - Stock: ${item.stock_on_hand}` : ''}</button>} /></div><input required type="number" min="1" placeholder="Qty" value={line.quantity} onChange={event => update(index, 'quantity', event.target.value)} /><input required type="number" min="0" step="0.01" placeholder={`Rate (${currency})`} value={line.rate} onChange={event => update(index, 'rate', event.target.value)} /><div className="line-item-total"><span>Total</span><strong>{currency === 'INR' ? '₹' : currency + ' '}{total.toFixed(2)}</strong></div></div><div className="inventory-hint">{line.item_id ? `Inventory available: ${line.available_stock ?? line.stock_on_hand ?? 'Not provided'}` : 'Search and select a product to view inventory.'}</div></div>;})}<button type="button" className="add-line-button" onClick={add}>+ Add another product</button></section>;
 }
-

@@ -6,6 +6,7 @@ const load = () => import('./officeApi')
 
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks()
+  localStorage.removeItem('guruconnect-active-organisation'); localStorage.removeItem('guruconnect-active-workspace')
   vi.stubEnv('VITE_SUPABASE_URL', ''); vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', ''); vi.stubEnv('VITE_SUPABASE_ANON_KEY', '')
   vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:8010'); vi.stubEnv('VITE_LOCAL_MODE', ''); vi.stubEnv('DEV', true)
   vi.stubGlobal('location', { hostname: 'localhost' })
@@ -61,16 +62,58 @@ describe('local and authenticated request boundaries', () => {
     expect(headers.get('Idempotency-Key')).toBe('stable-key-123')
     expect(headers.get('Content-Type')).toBe('application/json')
   })
+  it('keeps the organization scope while sending the selected member view separately', async () => {
+    cloud(); const api = await load()
+    await api.request('/analytics', 'organization-a', {}, 'salesperson-a')
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    const headers = new Headers(init?.headers)
+    expect(headers.get('X-Workspace-ID')).toBe('organization-a')
+    expect(headers.get('X-Workspace-Member-ID')).toBe('salesperson-a')
+  })
+  it('uses the active member scope by default and rejects owner writes to that view', async () => {
+    cloud()
+    mocks.getSession.mockResolvedValue({ data: { session: { access_token: 'fixture-access-token', user: { id: 'owner-a' } } } })
+    localStorage.setItem('guruconnect-active-organisation', 'organization-a')
+    localStorage.setItem('guruconnect-active-workspace', 'salesperson-a')
+    const api = await load()
+    await api.request('/analytics', 'organization-a')
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    expect(new Headers(init?.headers).get('X-Workspace-Member-ID')).toBe('salesperson-a')
+    await expect(api.request('/profile', 'organization-a', api.json('PATCH', { display_name: 'Changed' })))
+      .rejects.toMatchObject({ status: 403, code: 'workspace_read_only' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
   it('rejects a missing cloud session before fetching private records', async () => {
     cloud(); mocks.getSession.mockResolvedValue({ data: { session: null } }); const api = await load()
     await expect(api.request('/enquiries', 'workspace-a')).rejects.toMatchObject({ status: 401, code: 'session_expired' })
     expect(fetch).not.toHaveBeenCalled()
   })
+  it('retains final transcript coverage and window identity for processing recovery', async () => {
+    cloud()
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: { id: 'final-version', run_id: 'run-a', kind: 'final', english_state: 'complete', coverage_samples: 1322608 }, turns: [], speakers: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversation: { id: 'conversation-a', active_version_id: 'final-version' }, jobs: [{ id: 'old-window', run_id: 'run-a', window_id: 'window-a', kind: 'translate', state: 'blocked' }] })))
+    const api = await load()
+    const transcript = await api.request<import('./officeApi').Transcript>('/conversations/conversation-a/transcript', 'workspace-a')
+    const progress = await api.request<import('./officeApi').Progress>('/conversations/conversation-a/progress', 'workspace-a')
+    expect(transcript).toMatchObject({ version_id: 'final-version', run_id: 'run-a', kind: 'final', status: 'complete', covered_seconds: 82.663 })
+    expect(progress.conversation.active_transcript_version_id).toBe('final-version')
+    expect(progress.jobs?.[0]).toMatchObject({ window_id: 'window-a', job_type: 'translate', status: 'blocked' })
+  })
   it('uses safe provider error messages without displaying submitted credential text', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: { code: 'invalid_credentials', message: 'fixture-private-provider-key' } }), { status: 401 }))
     const api = await load()
-    await expect(api.request('/connections')).rejects.toThrow('The provider rejected the saved API key')
+    await expect(api.request('/connections')).rejects.toThrow('The managed service rejected its credentials')
     await expect(api.request('/connections')).rejects.not.toThrow('fixture-private-provider-key')
+  })
+  it.each([
+    ['storage_unavailable', 'check storage access and connectivity'],
+    ['storage_write_failed', 'check storage access and configuration'],
+  ])('explains %s without exposing internal storage diagnostics', async (code, guidance) => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: { code, message: 'internal-storage-diagnostic' } }), { status: 503 }))
+    const api = await load()
+    await expect(api.request('/conversations/conversation-a/progress')).rejects.toThrow(guidance)
+    await expect(api.request('/conversations/conversation-a/progress')).rejects.not.toThrow('internal-storage-diagnostic')
   })
   it('maps backend network failure to an actionable local message', async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
@@ -118,5 +161,17 @@ describe('request deadlines cover auth, fetch and response bodies', () => {
     const api = await load(); const controller = new AbortController(); const pending = api.request('/enquiries', null, { signal: controller.signal })
     const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     controller.abort(new DOMException('cancelled', 'AbortError')); await cancelled
+  })
+})
+
+
+describe('authenticated media cancellation', () => {
+  it('keeps cancellation connected after response headers arrive and while audio is consumed', async () => {
+    const api = await load(); const controller = new AbortController()
+    vi.mocked(fetch).mockResolvedValue(new Response('audio', { headers: { 'Content-Type': 'audio/wav' } }))
+    await api.requestStream('/conversations/c/playback/stream', 'w', { signal: controller.signal })
+    const signal = vi.mocked(fetch).mock.calls[0][1]?.signal as AbortSignal
+    expect(signal.aborted).toBe(false)
+    controller.abort(); expect(signal.aborted).toBe(true)
   })
 })

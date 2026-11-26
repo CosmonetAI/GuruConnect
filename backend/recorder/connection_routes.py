@@ -7,8 +7,9 @@ from psycopg.types.json import Jsonb
 from . import schemas as s
 from .db import one, many
 from .errors import fail
-from .providers import ElevenLabsAdapter, AzureTranslator, ProviderError
-from .openai_translator import OpenAITranslator, OPENAI_TRANSLATION_MODEL
+from .providers import ElevenLabsAdapter, ProviderError
+from .openai_translator import OpenAITranslator, OPENAI_TRANSLATION_MODEL, validate_translation_model
+from .provider_bootstrap import ensure_managed_providers, server_credentials
 from .routes import audit
 from .security import Workspace, workspace, administrator, SecretBox, token_hash
 
@@ -27,7 +28,7 @@ def validate_connection_config(body: s.ConnectionCreate) -> None:
     allowed = {"model", "max_concurrency"} if body.engine_id == "openai-translator" else {"model_revision", "source_pass", "device", "compute_type", "finalisation_enabled", "max_concurrency", "region"}
     if set(body.config) - allowed or len(json.dumps(body.config)) > 5000:
         fail("invalid_engine_configuration")
-    credentials_allowed = {"elevenlabs": {"api_key"}, "azure-translator": {"api_key", "region"}, "openai-translator": {"api_key"}, "faster-whisper": set()}[body.engine_id]
+    credentials_allowed = {"elevenlabs": {"api_key"}, "openai-translator": {"api_key"}, "faster-whisper": set()}[body.engine_id]
     if set(body.credentials) - credentials_allowed:
         fail("unsupported_credential_field")
     if any(not value or len(value) > 2000 for value in body.credentials.values()):
@@ -35,10 +36,11 @@ def validate_connection_config(body: s.ConnectionCreate) -> None:
     if body.engine_id != "faster-whisper" and not body.credentials.get("api_key"):
         fail("provider_api_key_required")
     if body.engine_id == "openai-translator":
-        if body.config.get("model", OPENAI_TRANSLATION_MODEL) != OPENAI_TRANSLATION_MODEL:
-            fail("openai_model_not_allowed")
-        # Persist the requested model explicitly; never silently select a fallback.
+        # Translation model selection is deployment-wide. Do not let an old
+        # workspace connection row or UI payload select another OpenAI model.
         body.config["model"] = OPENAI_TRANSLATION_MODEL
+        try: validate_translation_model(body.config["model"])
+        except ValueError: fail("openai_model_not_allowed")
     for key in {"source_pass", "finalisation_enabled"} & body.config.keys():
         if not isinstance(body.config[key], bool):
             fail("invalid_engine_configuration")
@@ -54,15 +56,18 @@ def validate_connection_config(body: s.ConnectionCreate) -> None:
 @router.get("/connections")
 async def connections(request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
+        await ensure_managed_providers(connection, context.id, request.app.state.settings)
         rows = await many(connection, "select c.*,(select max(last_seen_at) from inference_workers w where w.connection_id=c.id and w.revoked_at is null) as worker_last_seen,(select count(*) from processing_jobs j where j.connection_id=c.id and j.state in ('queued','retry','blocked')) as queued_jobs,(select count(*) from processing_jobs j where j.connection_id=c.id and j.state='running' and j.lease_until>now()) as inflight_jobs from engine_connections c where c.organisation_id=%s order by engine_id", (context.id,))
     configured = {row["engine_id"]: safe_connection(row) for row in rows}
-    for engine_id in ("elevenlabs", "faster-whisper", "azure-translator", "openai-translator"):
+    for engine_id in ("elevenlabs", "faster-whisper", "openai-translator"):
         configured.setdefault(engine_id, {"id": None, "engine_id": engine_id, "state": "disconnected", "generation": None, "config": {}, "tested_at": None, "last_error_code": "not_configured"})
     return {"items": list(configured.values()), "next_cursor": None}
 
 
 @router.post("/connections", status_code=201)
 async def connect(body: s.ConnectionCreate, request: Request, context: Workspace = Depends(administrator)):
+    if server_credentials(request.app.state.settings, body.engine_id):
+        fail("provider_managed_by_server", 409, "This provider is configured by the server administrator")
     validate_connection_config(body)
     # Credential values never appear in audit events, errors or responses.
     ciphertext = SecretBox(request.app.state.settings).encrypt(body.credentials) if body.credentials else None
@@ -70,6 +75,8 @@ async def connect(body: s.ConnectionCreate, request: Request, context: Workspace
     async with request.app.state.db.connection() as connection:
         await connection.execute("select pg_advisory_xact_lock(hashtextextended(%s,0))", (f"connection:{context.id}:{body.engine_id}",))
         old = await one(connection, "select * from engine_connections where organisation_id=%s and engine_id=%s for update", (context.id, body.engine_id))
+        if old and old.get("config", {}).get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         if old and old["safe_metadata"].get("idempotency_key") == body.idempotency_key:
             if old["safe_metadata"].get("request_hash") != identity:
                 fail("idempotency_conflict", 409)
@@ -87,7 +94,7 @@ async def connect(body: s.ConnectionCreate, request: Request, context: Workspace
             await connection.execute("insert into provider_secrets(connection_id,encrypted_value,encryption_key_version) values(%s,%s,%s) on conflict(connection_id) do update set encrypted_value=excluded.encrypted_value,encryption_key_version=excluded.encryption_key_version,updated_at=now()", (row["id"], ciphertext, request.app.state.settings.credential_key_version))
         await connection.execute("update engine_connections set max_concurrency=%s where id=%s", (body.config.get("max_concurrency", 2), row["id"]))
         row["max_concurrency"] = body.config.get("max_concurrency", 2)
-        if body.engine_id in {"azure-translator", "openai-translator"}:
+        if body.engine_id == "openai-translator":
             await connection.execute("update workspace_engine_settings set translator_connection_id=%s where organisation_id=%s", (row["id"], context.id))
         await audit(connection, context, "connection.configured", {"connection_id": str(row["id"]), "engine_id": body.engine_id, "generation": row["generation"]})
     return safe_connection(row)
@@ -104,21 +111,23 @@ async def get_connection(connection, context, connection_id, lock=False):
 async def test(connection_id: UUID, body: s.TestConnection, request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
         row = await get_connection(connection, context, connection_id, True)
+        if row["config"].get("platform_managed"):
+            fail("provider_managed_by_server", 409, "Provider access is reported by session processing")
         if row["state"] == "disconnected":
             fail("connection_requires_configuration", 409)
         secret = await one(connection, "select encrypted_value from provider_secrets where connection_id=%s", (connection_id,))
         workers = await one(connection, "select count(*) as ready from inference_workers where connection_id=%s and connection_generation=%s and revoked_at is null and state in ('ready','busy') and last_seen_at>now()-interval '2 minutes'", (connection_id, row["generation"]))
-        await connection.execute("update engine_connections set state='checking',updated_at=now() where id=%s", (connection_id,))
+        # Keep a working provider operational during diagnostics. Generation and
+        # state checks still reject concurrent reconfiguration/disconnection.
+        await connection.execute("update engine_connections set updated_at=now() where id=%s", (connection_id,))
     error = None
     smoke = None
     try:
         credentials = SecretBox(request.app.state.settings).decrypt(secret["encrypted_value"]) if secret else {}
         if row["engine_id"] == "elevenlabs":
-            smoke = await ElevenLabsAdapter(credentials.get("api_key", "")).test(functional=body.functional)
-        elif row["engine_id"] == "azure-translator":
-            smoke = await AzureTranslator(credentials.get("api_key", ""), credentials.get("region") or row["config"].get("region", "")).test(functional=body.functional)
+            smoke = await ElevenLabsAdapter(credentials.get("api_key", ""), model_id=request.app.state.settings.elevenlabs_transcription_model).test(functional=body.functional)
         elif row["engine_id"] == "openai-translator":
-            smoke = await OpenAITranslator(credentials.get("api_key", "")).test(functional=body.functional)
+            smoke = await OpenAITranslator(credentials.get("api_key", ""), model=OPENAI_TRANSLATION_MODEL).test(functional=body.functional)
         else:
             if not workers["ready"]:
                 fail("inference_worker_unavailable", 409)
@@ -132,7 +141,7 @@ async def test(connection_id: UUID, body: s.TestConnection, request: Request, co
     finally:
         async with request.app.state.db.connection() as connection:
             current = await get_connection(connection, context, connection_id, True)
-            if current["generation"] != row["generation"] or current["state"] != "checking":
+            if current["generation"] != row["generation"] or current["state"] != row["state"]:
                 fail("connection_changed_during_test", 409)
             validated = error is None and bool(smoke and (smoke.get("connected") or smoke.get("ready")))
             ready = validated
@@ -158,6 +167,8 @@ async def test(connection_id: UUID, body: s.TestConnection, request: Request, co
 async def enable(connection_id: UUID, request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
         row = await get_connection(connection, context, connection_id, True)
+        if row["config"].get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         if row["state"] != "disabled" or not row["tested_at"]:
             fail("connection_test_required", 409)
         if row["engine_id"] == "openai-translator" and not row.get("safe_metadata", {}).get("functional_translation_ready"):
@@ -170,7 +181,9 @@ async def enable(connection_id: UUID, request: Request, context: Workspace = Dep
 @router.post("/connections/{connection_id}/disable")
 async def disable(connection_id: UUID, request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        await get_connection(connection, context, connection_id, True)
+        current = await get_connection(connection, context, connection_id, True)
+        if current["config"].get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         row = await one(connection, "select disconnect_connection(%s,%s,false,true) as impact", (connection_id, context.user.id))
     return row["impact"]
 
@@ -178,7 +191,9 @@ async def disable(connection_id: UUID, request: Request, context: Workspace = De
 @router.post("/connections/{connection_id}/disconnect")
 async def disconnect(connection_id: UUID, body: s.Disconnect, request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        await get_connection(connection, context, connection_id, True)
+        current = await get_connection(connection, context, connection_id, True)
+        if current["config"].get("platform_managed"):
+            fail("provider_managed_by_server", 409)
         row = await one(connection, "select disconnect_connection(%s,%s,%s,false) as impact", (connection_id, context.user.id, body.finish_in_flight))
     return row["impact"]
 
@@ -186,7 +201,9 @@ async def disconnect(connection_id: UUID, body: s.Disconnect, request: Request, 
 @router.get("/engine-settings")
 async def engine_settings(request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        return await one(connection, "select * from workspace_engine_settings where organisation_id=%s", (context.id,))
+        await ensure_managed_providers(connection, context.id, request.app.state.settings)
+        row = await one(connection, "select * from workspace_engine_settings where organisation_id=%s", (context.id,))
+        return {**row, "server_managed_providers": bool(server_credentials(request.app.state.settings, "elevenlabs") or server_credentials(request.app.state.settings, "openai-translator"))}
 
 
 @router.patch("/engine-settings")

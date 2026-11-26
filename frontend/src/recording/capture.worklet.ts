@@ -13,9 +13,11 @@ class CaptureProcessor extends AudioWorkletProcessor {
   private total = 0;
   private blocks = 0;
   private maxSamples: number;
-  constructor(options?: { processorOptions?: { maxSamples?: number } }) {
+  private chunkSamples: number;
+  constructor(options?: { processorOptions?: { maxSamples?: number; chunkSamples?: number } }) {
     super();
     this.maxSamples = options?.processorOptions?.maxSamples ?? 115200000;
+    this.chunkSamples = Math.max(1, Number(options?.processorOptions?.chunkSamples) || 10 * 16000);
     this.port.onmessage = ({ data }: MessageEvent<{ type: string; id: number }>) => {
       if (data.type === 'pause' || data.type === 'stop') {
         this.add(this.resampler.push(new Float32Array(), true));
@@ -28,7 +30,8 @@ class CaptureProcessor extends AudioWorkletProcessor {
   private add(samples: Float32Array) {
     const room = Math.max(0, this.maxSamples - this.total - this.pending.length);
     for (const value of samples.subarray(0,room)) this.pending.push(value);
-    while (this.pending.length >= 80000) this.emit(80000);
+    // The page chooses durable upload boundaries independently of STT windows.
+    while (this.pending.length >= this.chunkSamples) this.emit(this.chunkSamples);
     if (this.total + this.pending.length >= this.maxSamples && !this.paused) {
       this.flush(); this.paused = true; this.port.postMessage({ type: 'limit', samples: this.total });
     }

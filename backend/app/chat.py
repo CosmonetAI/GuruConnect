@@ -1,6 +1,8 @@
 from sqlalchemy import text
-from .db import require_db, row_dict
+from starlette.concurrency import run_in_threadpool
+from .db import require_db, row_dict, scope_parameters
 from .settings import settings
+from recorder.activity_log import monitored_call
 
 def normalize_phone(v): return ''.join(c for c in (v or '') if c.isdigit())[-15:] or None
 def normalize_email(v): return (v or '').strip().lower() or None
@@ -15,15 +17,27 @@ async def openai_answer(message,history,customer):
     from openai import AsyncOpenAI
     client=AsyncOpenAI(api_key=settings.openai_api_key)
     system='You are Guru Group sales assistant. Be multilingual. Never invent product, price, stock, quote or delivery facts. Ask for missing product/model, quantity and requirements. Escalate uncertain pricing to a salesperson.'
-    r=await client.chat.completions.create(model=settings.openai_model,temperature=.2,messages=[{'role':'system','content':system},*history[-10:],{'role':'user','content':message}])
+    r=await monitored_call(
+        client.chat.completions.create(model=settings.openai_model,temperature=.2,messages=[{'role':'system','content':system},*history[-10:],{'role':'user','content':message}]),
+        "openai", "chat.completions.create", metadata={"model": settings.openai_model})
     return r.choices[0].message.content or None
 async def run_graph(message,customer,history):
     from .agent import run_sales_agent
     return await run_sales_agent(message, customer, history)
 async def get_or_create_customer(name,phone,email):
+    return await run_in_threadpool(get_or_create_customer_sync, name, phone, email)
+
+def get_or_create_customer_sync(name,phone,email):
     phone,email=normalize_phone(phone),normalize_email(email)
     if not phone and not email: raise ValueError('Phone or email is required')
     with require_db() as db:
-        row=db.execute(text("select * from customers where (cast(:phone as text) is not null and right(normalized_phone, 10)=right(cast(:phone as text), 10)) or (cast(:email as text) is not null and normalized_email=cast(:email as text)) limit 1"),{'phone':phone,'email':email}).first()
+        params = {**scope_parameters(), 'phone': phone, 'email': email, 'name': name.strip()}
+        row=db.execute(text("""select * from customers
+          where organisation_id=cast(:org as uuid) and owner_id=cast(:member as uuid) and deleted_at is null
+            and ((cast(:phone as text) is not null and right(normalized_phone,10)=right(cast(:phone as text),10))
+              or (cast(:email as text) is not null and normalized_email=cast(:email as text))) limit 1"""),params).first()
         if row: return row_dict(row)
-        row=db.execute(text("insert into customers(name,phone,email,normalized_phone,normalized_email) values(:name,:phone,:email,:phone,:email) returning *"),{'name':name,'phone':phone,'email':email}).first(); db.commit(); return row_dict(row)
+        row=db.execute(text("""insert into customers(name,phone,email,normalized_phone,normalized_email,organisation_id,owner_id,member_id)
+          values(:name,:phone,:email,:phone,:email,cast(:org as uuid),cast(:member as uuid),cast(:member as uuid)) returning *"""),params).first()
+        db.commit()
+        return row_dict(row)

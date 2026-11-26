@@ -1,7 +1,7 @@
 import workletUrl from './capture.worklet.ts?worker&url';
 import { apiBase, localMode } from '../services/officeApi';
-import { finishRecovery, listRecoveries, pending, putChunk, removeChunk, saveRecovery, scopeKey, type ChunkMeta, type Recovery, type Scope } from './outbox';
-export { listRecoveries } from './outbox';
+import { discardRecovery, finishRecovery, listRecoveries, pending, putChunk, removeChunk, saveRecovery, scopeKey, type ChunkMeta, type Recovery, type Scope } from './outbox';
+export { discardRecovery, listRecoveries } from './outbox';
 export type { Scope, ChunkMeta } from './outbox';
 export interface Manifest { part_id: string; expected_chunks: number; total_samples: number; lease_token: string }
 export interface CaptureState { capture: 'idle' | 'recording' | 'paused' | 'stopped' | 'interrupted'; samples: number; elapsedSeconds: number; level: number; pendingChunks: number; pendingBytes: number; confirmedSamples: number; saving: boolean; error?: string }
@@ -12,7 +12,7 @@ export interface RecordingHooks {
   event(kind: string, sample: number): Promise<void>;
   finalize(manifest: Manifest): Promise<void>;
 }
-export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; outboxLimitBytes?: number }
+export interface RecordingOptions { scope: Scope; conversationId: string; partId: string; leaseToken: string; deviceId?: string; hooks: RecordingHooks; onState(state: CaptureState): void; maxSeconds?: number; chunkSeconds?: number; outboxLimitBytes?: number; signal?: AbortSignal }
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
   signal?.throwIfAborted();
   const aborted = () => { clearTimeout(timer); signal?.removeEventListener('abort', aborted); reject(signal?.reason ?? new DOMException('The audio upload was cancelled.', 'AbortError')); };
@@ -71,7 +71,7 @@ export async function uploadPending(scope: Scope, conversationId: string, hooks:
       const supabaseOrigin = import.meta.env.VITE_SUPABASE_URL ? new URL(import.meta.env.VITE_SUPABASE_URL).origin : undefined;
       const localOrigin = new URL(apiBase).origin;
       const localDestination = localMode && target.origin === localOrigin && ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) && target.pathname.startsWith('/api/v1/local-audio/');
-      const hostedDestination = target.origin === supabaseOrigin && target.pathname.startsWith('/storage/v1/object/recorder-audio/');
+      const hostedDestination = target.origin === supabaseOrigin && ['/storage/v1/object/session-audio/', '/storage/v1/object/walkin-audio/'].some(prefix => target.pathname.startsWith(prefix));
       if (target.username || target.password || (!localDestination && !hostedDestination)) throw new Error('Upload authorization has an invalid storage destination.');
       const timeout = AbortSignal.timeout(30000);
       const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
@@ -95,7 +95,9 @@ export async function recoverRecording(scope: Scope, conversationId: string, hoo
   if (!navigator.locks) throw new Error('This browser cannot safely recover recording tabs. Use a current browser.');
   await navigator.locks.request(`guruconnect-recording:${scope.userId}`,{ifAvailable:true},async lock=>{
     if (!lock) throw new Error('A recording is active in another tab. Stop it before recovering audio.');
-    const heartbeat=setInterval(()=>{void hooks.heartbeat().catch(()=>undefined);},15000);
+    // The lease lasts 90 seconds. A 30-second renewal keeps recovery safe
+    // while avoiding another request every few seconds during upload.
+    const heartbeat=setInterval(()=>{void hooks.heartbeat().catch(()=>undefined);},30000);
     try {
       if(leaseToken){recovery.leaseToken=leaseToken;await saveRecovery(recovery);}
       await uploadPending(scope, conversationId, hooks, leaseToken, undefined, { retry: true, signal });
@@ -122,10 +124,13 @@ export class RecorderSession {
   private closing = false;
   private disposed = false;
   private finalized = false;
+  private listeners = new Set<(state: CaptureState) => void>();
   constructor(private readonly options: RecordingOptions) {
     this.recovery = { key: `${scopeKey(options.scope)}/${options.conversationId}`, scope: scopeKey(options.scope), conversationId: options.conversationId, partId: options.partId, leaseToken: options.leaseToken, totalSamples: 0, chunkCount: 0, stopped: false, updatedAt: new Date().toISOString() };
   }
-  private update(values: Partial<CaptureState>) { this.state = { ...this.state, ...values }; this.options.onState({ ...this.state }); }
+  private update(values: Partial<CaptureState>) { this.state = { ...this.state, ...values }; const snapshot = { ...this.state }; this.options.onState(snapshot); this.listeners.forEach(listener => listener(snapshot)); }
+  snapshot() { return { ...this.state }; }
+  subscribe(listener: (state: CaptureState) => void) { this.listeners.add(listener); listener(this.snapshot()); return () => this.listeners.delete(listener); }
   private unload = (event: BeforeUnloadEvent) => { if (this.state.capture === 'recording' || this.state.pendingChunks) { event.preventDefault(); event.returnValue = ''; } };
   private async lock() {
     if (!navigator.locks) throw new Error('This browser cannot safely coordinate recording tabs. Use a current browser.');
@@ -148,7 +153,7 @@ export class RecorderSession {
       const prepared = await prepareMicrophone(this.options.deviceId); this.stream = prepared.stream;
       this.checkActive();
       this.context = new AudioContext(); await this.context.audioWorklet.addModule(workletUrl); this.checkActive(); await this.context.resume(); this.checkActive();
-      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000 } });
+      this.node = new AudioWorkletNode(this.context, 'guru-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { maxSamples: (this.options.maxSeconds ?? 7200) * 16000, chunkSamples: (this.options.chunkSeconds ?? 10) * 16000 } });
       this.node.port.onmessage = (event: MessageEvent) => this.message(event.data);
       const mute = this.context.createGain(); mute.gain.value = 0;
       this.context.createMediaStreamSource(this.stream).connect(this.node).connect(mute).connect(this.context.destination);
@@ -158,14 +163,16 @@ export class RecorderSession {
       this.update({ capture: 'recording' });
       await this.options.hooks.event('started', 0);
       this.checkActive();
-      this.heartbeatTimer = setInterval(() => { void this.options.hooks.heartbeat().catch(() => this.interrupt('Recording authorization expired or access changed. Pending audio stays with this account.')); }, 15000);
+      // The server lease lasts 90 seconds; renew at 30 seconds so a slow
+      // database does not get hammered by overlapping heartbeats.
+      this.heartbeatTimer = setInterval(() => { void this.options.hooks.heartbeat().catch(() => this.interrupt('Recording authorization expired or access changed. Pending audio stays with this account.')); }, 30000);
     } catch (error) {
       await this.cleanup();
       if (!this.recovery.totalSamples && !(await pending(this.options.scope, this.options.conversationId).catch(() => [])).length) await finishRecovery(this.recovery.key).catch(() => undefined);
       this.update({ capture: 'interrupted', error: error instanceof Error ? error.message : 'Microphone preparation failed' }); throw error;
     }
   }
-  private checkActive() { if (this.disposed) throw new DOMException('The recording page was closed. Recover any saved audio before recording again.', 'AbortError'); }
+  private checkActive() { this.options.signal?.throwIfAborted(); if (this.disposed) throw new DOMException('The recording page was closed. Recover any saved audio before recording again.', 'AbortError'); }
   /** Cancel pending permission as well as active capture without losing committed chunks. */
   async dispose() {
     if (this.disposed) return;
@@ -197,9 +204,9 @@ export class RecorderSession {
     if (this.uploading) return;
     this.uploading = true; let attempts = 0;
     try {
-      while ((await pending(this.options.scope, this.options.conversationId)).length) {
-        try { const count = await uploadPending(this.options.scope, this.options.conversationId, this.options.hooks); this.update({ confirmedSamples: this.state.confirmedSamples + count, error: undefined }); attempts = 0; }
-        catch (error) { this.update({ error: error instanceof Error ? error.message : 'Upload interrupted' }); if (++attempts >= 5) break; await delay(Math.min(5000, 300 * 2**attempts) + Math.random()*150); }
+      while (!this.disposed && !this.options.signal?.aborted && (await pending(this.options.scope, this.options.conversationId)).length) {
+        try { const count = await uploadPending(this.options.scope, this.options.conversationId, this.options.hooks, undefined, undefined, { retry: true, signal: this.options.signal, checkLease: () => this.checkActive() }); this.update({ confirmedSamples: this.state.confirmedSamples + count, error: undefined }); attempts = 0; }
+        catch (error) { this.update({ error: error instanceof Error ? error.message : 'Upload interrupted' }); if (this.disposed || this.options.signal?.aborted || !transientAudioError(error) || ++attempts >= 5) break; await delay(Math.min(5000, 300 * 2**attempts) + Math.random()*150); }
         await this.refreshQueue();
       }
     } finally { this.uploading = false; await this.refreshQueue(); }
@@ -231,11 +238,21 @@ export class RecorderSession {
       await finishRecovery(this.recovery.key); await this.cleanup(); this.finalized = true; this.update({ saving: false, error: undefined, samples: this.recovery.totalSamples, elapsedSeconds: this.recovery.totalSamples / 16000 });
     } catch (error) { await this.cleanup(); this.update({ saving: false, error: error instanceof Error ? error.message : 'Finalization needs recovery' }); throw error; }
   }
+  async discard() {
+    if (this.finalized) return;
+    this.closing = true;
+    await this.command('stop').catch(() => undefined);
+    await this.persisting.catch(() => undefined);
+    await this.cleanup();
+    await discardRecovery(this.options.scope, this.options.conversationId).catch(() => undefined);
+    this.finalized = true;
+    this.update({ capture: 'stopped', saving: false, level: 0, error: undefined });
+  }
   private async interrupt(reason: string) {
     if (this.closing) return; this.closing = true; this.update({ capture: 'interrupted', error: reason, level: 0 });
     await this.command('stop').catch(() => undefined); await this.persisting.catch(() => undefined);
     await saveRecovery({ ...this.recovery, stopped: true }).catch(() => undefined); await this.cleanup();
-    await this.options.hooks.event('interrupted', this.recovery.totalSamples).catch(() => undefined); void this.pump();
+    await this.options.hooks.event('interrupted', this.recovery.totalSamples).catch(() => undefined); if (!this.disposed && !this.options.signal?.aborted) void this.pump();
   }
   private async cleanup(keepLease = false) {
     if (!keepLease && this.heartbeatTimer) clearInterval(this.heartbeatTimer);

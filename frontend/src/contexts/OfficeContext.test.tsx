@@ -9,14 +9,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../services/officeApi', () => ({
   get configured() { return mocks.configured }, get localMode() { return mocks.localMode },
   get supabase() { return mocks.cloud ? { auth: { getSession: mocks.getSession, onAuthStateChange: (callback: (event: string, session: unknown) => void) => { mocks.handler = callback; return { data: { subscription: { unsubscribe: mocks.unsubscribe } } } } } } : null },
-  request: mocks.request, message: (error: unknown) => error instanceof Error ? error.message : 'Workspace error',
+  request: mocks.request, json: () => ({}), message: (error: unknown) => error instanceof Error ? error.message : 'Workspace error',
 }))
 import { OfficeProvider, useOffice } from './OfficeContext'
 
 function Probe() {
   const state = useOffice()
-  return <div><output data-testid="identity">{state.user?.id || 'anonymous'}</output><output data-testid="workspace">{state.workspace?.name || 'none'}</output><output data-testid="mode">{state.configured ? 'available' : 'unconfigured'}:{state.localMode ? 'local' : 'cloud'}</output><output data-testid="busy">{String(state.captureBusy)}</output><output data-testid="error">{state.error}</output>
-    <button onClick={() => state.setCaptureBusy(true)}>Capture active</button><button onClick={() => state.setCaptureBusy(false)}>Capture stopped</button><button onClick={() => state.setWorkspace('workspace-b')}>Choose B</button>
+  return <div><output data-testid="identity">{state.user?.id || 'anonymous'}</output><output data-testid="workspace">{state.workspace?.name || 'none'}</output><output data-testid="mode">{state.configured ? 'available' : 'unconfigured'}:{state.localMode ? 'local' : 'cloud'}</output><output data-testid="busy">{String(state.captureBusy)}</output><output data-testid="read-only">{String(state.readOnly)}</output><output data-testid="error">{state.error}</output>
+    <button onClick={() => state.setCaptureBusy(true)}>Capture active</button><button onClick={() => state.setCaptureBusy(false)}>Capture stopped</button><button onClick={() => state.setPresencePaused(true)}>Pause presence</button><button onClick={() => state.setPresencePaused(false)}>Resume presence</button><button onClick={() => state.setWorkspace('workspace-b')}>Choose B</button>
   </div>
 }
 const session = (id: string): Session => ({ user: { id, email: `${id}@example.test`, user_metadata: { display_name: id }, app_metadata: {}, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' }, access_token: `fixture-${id}`, refresh_token: `fixture-refresh-${id}`, expires_in: 3600, token_type: 'bearer' })
@@ -24,7 +24,7 @@ function setup() { return render(<OfficeProvider><Probe /></OfficeProvider>) }
 beforeEach(() => {
   vi.clearAllMocks(); mocks.configured = true; mocks.localMode = false; mocks.cloud = true; mocks.handler = null
   mocks.getSession.mockResolvedValue({ data: { session: null }, error: null })
-  mocks.request.mockResolvedValue({ items: [{ id: 'workspace-a', name: 'Private workspace A', role: 'owner' }, { id: 'workspace-b', name: 'Private workspace B', role: 'owner' }] })
+  mocks.request.mockResolvedValue({ items: [{ id: 'organisation-a', member_id: 'alice', name: 'Private workspace A', role: 'owner' }, { id: 'organisation-b', member_id: 'workspace-b', name: 'Private workspace B', role: 'salesperson' }] })
 })
 describe('workspace identity and explicit local mode', () => {
   it('provides only the fixed local account and local workspace when loopback local mode is enabled', () => {
@@ -51,23 +51,41 @@ describe('workspace identity and explicit local mode', () => {
   })
   it('clears the previous private workspace immediately and ignores its delayed list on account switch', async () => {
     let resolveAlice: (value: object) => void = () => undefined
-    mocks.request.mockImplementationOnce(() => new Promise(resolve => { resolveAlice = resolve })).mockResolvedValueOnce({ items: [{ id: 'workspace-b', name: 'Private Bob workspace', role: 'owner' }] })
+    let workspaceCalls = 0
+    mocks.request.mockImplementation((path: string) => {
+      if (path === '/presence') return Promise.resolve({})
+      workspaceCalls += 1
+      return workspaceCalls === 1
+        ? new Promise(resolve => { resolveAlice = resolve })
+        : Promise.resolve({ items: [{ id: 'organisation-b', member_id: 'bob', name: 'Private Bob workspace', role: 'owner' }] })
+    })
     setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
-    await waitFor(() => expect(mocks.request).toHaveBeenCalledOnce())
+    await waitFor(() => expect(workspaceCalls).toBe(1))
     act(() => { mocks.handler?.('SIGNED_IN', session('bob')) })
     expect(screen.getByTestId('identity')).toHaveTextContent('bob'); expect(screen.getByTestId('workspace')).toHaveTextContent('none')
     await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private Bob workspace'))
-    await act(async () => { resolveAlice({ items: [{ id: 'workspace-a', name: 'Private Alice workspace', role: 'owner' }] }) })
+    await act(async () => { resolveAlice({ items: [{ id: 'organisation-a', member_id: 'alice', name: 'Private Alice workspace', role: 'owner' }] }) })
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private Bob workspace')
   })
   it('prevents workspace switching while audio is active and clears access on sign-out', async () => {
     setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
     await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A'))
+    expect(screen.getByTestId('read-only')).toHaveTextContent('false')
     fireEvent.click(screen.getByRole('button', { name: 'Capture active' })); fireEvent.click(screen.getByRole('button', { name: 'Choose B' }))
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A')
     fireEvent.click(screen.getByRole('button', { name: 'Capture stopped' })); fireEvent.click(screen.getByRole('button', { name: 'Choose B' }))
     expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace B')
+    expect(screen.getByTestId('read-only')).toHaveTextContent('true')
     act(() => { mocks.handler?.('SIGNED_OUT', null) })
     expect(screen.getByTestId('identity')).toHaveTextContent('anonymous'); expect(screen.getByTestId('workspace')).toHaveTextContent('none'); expect(screen.getByTestId('busy')).toHaveTextContent('false')
+  })
+  it('pauses and resumes the presence heartbeat on capture pages', async () => {
+    setup(); act(() => { mocks.handler?.('SIGNED_IN', session('alice')) })
+    await waitFor(() => expect(screen.getByTestId('workspace')).toHaveTextContent('Private workspace A'))
+    await waitFor(() => expect(mocks.request.mock.calls.filter(([path]) => path === '/presence')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause presence' }))
+    const pausedCalls = mocks.request.mock.calls.filter(([path]) => path === '/presence').length
+    fireEvent.click(screen.getByRole('button', { name: 'Resume presence' }))
+    await waitFor(() => expect(mocks.request.mock.calls.filter(([path]) => path === '/presence')).toHaveLength(pausedCalls + 1))
   })
 })

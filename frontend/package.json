@@ -1,5 +1,5 @@
 {
-  "name": "guruconnect",
+  "name": "connectcosmos",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,7 +9,6 @@
     "build:production": "node scripts/build-production.mjs",
     "preview": "vite preview",
     "dev:api": "node scripts/run-backend.mjs api",
-    "dev:worker": "node scripts/run-backend.mjs worker",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:scripts": "node --test tests/scripts/*.test.mjs",
@@ -18,23 +17,24 @@
     "test:backend": "node scripts/check-backend.mjs",
     "contracts": "node scripts/generate-contracts.mjs",
     "dev:web": "vite --host 127.0.0.1 --port 5176 --strictPort",
-    "setup": "node scripts/setup-backend.mjs"
+    "setup": "node scripts/setup-backend.mjs",
+    "test:live-workspace": "node tests/browser/live-workspace.qa.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/node": "26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "30.1.2",
+    "openapi-typescript": "7.13.0",
     "typescript": "5.9.3",
     "vite": "^8.3.0",
-    "vitest": "5.0.4",
-    "@testing-library/react": "16.3.3",
-    "@testing-library/jest-dom": "7.0.1",
-    "@testing-library/user-event": "14.6.7",
-    "jsdom": "30.1.2",
-    "fake-indexeddb": "6.2.5",
-    "@playwright/test": "1.64.0",
-    "@types/node": "26.6.5",
-    "@vitejs/plugin-react": "6.1.2",
-    "openapi-typescript": "7.13.0"
+    "vitest": "5.0.4"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
@@ -47,6 +47,7 @@
     "react-hook-form": "^7.90.0",
     "react-router-dom": "7.18.4",
     "recharts": "^3.10.1",
+    "xlsx": "^0.18.5",
     "zod": "^4.6.6"
   },
   "engines": {

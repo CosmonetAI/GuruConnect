@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, useBlocker, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom'
+import PageLoader from '../../components/PageLoader'
 import {
   AlertCircle,
   ArrowLeft,
@@ -21,9 +22,12 @@ import {
   UsersRound,
 } from 'lucide-react'
 import { EnquiryDraftValuesSchema, NewEnquirySchema, productHasDetails, type NewEnquiryForm } from '../../schemas/enquirySchema'
-import { createEnquiry } from '../../services/enquiryService'
+import { createEnquiry, updateEnquiry } from '../../services/enquiryService'
+import type { Enquiry } from '../../types/enquiry'
+import { useScopedResource } from '../../hooks/useScopedResource'
 import { message } from '../../services/officeApi'
 import { useOffice } from '../../contexts/OfficeContext'
+import { sanitizePhoneNumber, validateEmail, validatePhoneNumber, validateText } from '../../utils/formValidation'
 import ConversationRecorder from './ConversationRecorder'
 import './NewEnquiry.css'
 
@@ -44,7 +48,7 @@ const defaultValues: NewEnquiryForm = {
   channel: 'Incoming Call',
   branch: '',
   assignedExecutive: '',
-  customerType: 'Retail',
+  customerType: 'Retail customer',
   company: '',
   projectName: '',
   preferredContactMethod: '',
@@ -149,26 +153,68 @@ function SectionHeader({
   )
 }
 
-type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+type WalkinConversion = { visitId: string; visitNumber: string; customerName: string; phone: string; email: string; company: string; customerType?: 'Retail customer' | 'Vendor' | 'Project' | 'Retail' | 'Dealer'; assignedExecutive: string; purpose: string; productOrService: string; quantity: string; budget: string; timeline: string; requirements: string; notes: string; followUpDate: string; conversationId?: string }
+function normalizeCustomerType(value: string | undefined): NewEnquiryForm['customerType'] {
+  if (value === 'Vendor' || value === 'Dealer' || value === 'vendor') return 'Vendor'
+  if (value === 'Project') return 'Project'
+  return 'Retail customer'
+}
 function convertedValues(source: WalkinConversion): NewEnquiryForm {
-  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, company: source.company,
+  return { ...defaultValues, customerName: source.customerName, phone: source.phone, email: source.email, channel: 'Retail Walk-in', assignedExecutive: source.assignedExecutive, customerType: normalizeCustomerType(source.customerType), company: source.company,
     customerNotes: `${source.purpose} · Visit ${source.visitNumber}\n${source.notes}`.trim(), requirementsSummary: source.requirements, followUpDate: source.followUpDate,
     productRequirements: [{ ...defaultValues.productRequirements[0], product: source.productOrService, quantity: /^\d+$/.test(source.quantity) && Number(source.quantity) > 0 ? Number(source.quantity) : 0, budget: source.budget, timeline: source.timeline, notes: source.requirements }],
+  }
+}
+
+function existingValues(source: Enquiry): NewEnquiryForm {
+  return {
+    ...defaultValues,
+    customerName: source.customerName,
+    phone: source.phone || '',
+    email: source.email || '',
+    channel: ['Incoming Call', 'Outgoing Call', 'Retail Walk-in', 'Dealership', 'Project', 'Supported WhatsApp', 'Email', 'Other'].includes(source.channel) ? source.channel as NewEnquiryForm['channel'] : 'Other',
+    branch: source.branch,
+    assignedExecutive: source.assignedExecutive,
+    customerType: normalizeCustomerType(source.customerType),
+    company: source.company || '',
+    projectName: source.projectName || '',
+    preferredContactMethod: source.preferredContactMethod || '',
+    customerNotes: source.customerNotes || '',
+    salespersonNotes: source.salespersonNotes || '',
+    requirementsSummary: source.requirementsSummary || '',
+    productRequirements: source.productRequirements?.length ? source.productRequirements : [{
+      ...defaultValues.productRequirements[0],
+      product: source.product || '',
+      quantity: source.quantity || 1,
+      unit: source.unit || 'nos',
+      notes: source.notes || '',
+    }],
+    followUpDate: source.followUpDate || '',
+    followUpOwner: source.followUpOwner || '',
+    priority: source.priority || 'Normal',
   }
 }
 
 export default function NewEnquiry() {
   const { user, workspace } = useOffice()
   const location = useLocation()
+  const { id } = useParams()
   const conversion = (location.state as { walkinConversion?: WalkinConversion } | null)?.walkinConversion
-  if (!user || !workspace) return <p role="status">Loading your workspace…</p>
-  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} />
+  const resource = useScopedResource<Enquiry>(id ? `/enquiries/${encodeURIComponent(id)}` : null)
+  if (!user || !workspace) return <PageLoader kind="enquiries" label="Loading your workspace" detail="Preparing the enquiry capture workspace." />
+  if (id && !resource.data) return resource.loading ? <PageLoader kind="enquiries" label="Loading enquiry" detail="Preparing the saved customer opportunity." /> : <p role="status">{resource.error || 'Enquiry unavailable.'}</p>
+  return <ScopedNewEnquiry key={`${user.id}:${workspace.id}:${workspace.member_id ?? user.id}:${id || conversion?.visitId || "new"}`} storageKey={`guruconnect:enquiry-draft:${user.id}:${workspace.id}${workspace.member_id && workspace.member_id !== user.id ? `:member:${workspace.member_id}` : ""}${id ? `:edit:${id}` : conversion ? `:walkin:${conversion.visitId}` : ""}`} conversion={conversion} existing={resource.data} />
 }
 
-function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conversion?: WalkinConversion }) {
+function ScopedNewEnquiry({ storageKey, conversion, existing }: { storageKey: string; conversion?: WalkinConversion; existing?: Enquiry }) {
   const navigate = useNavigate()
   const { workspace, setCaptureBusy } = useOffice()
-  const [draft] = useState(() => { const saved = readDraft(storageKey); return conversion && !saved.restored ? { ...saved, values: convertedValues(conversion), conversationId: conversion.conversationId ?? null } : saved })
+  const [draft] = useState(() => {
+    const saved = readDraft(storageKey)
+    if (saved.restored) return saved
+    if (existing) return { ...saved, values: existingValues(existing), conversationId: existing.conversationId || null }
+    return conversion ? { ...saved, values: convertedValues(conversion), conversationId: conversion.conversationId ?? null } : saved
+  })
   const [form, setForm] = useState<NewEnquiryForm>(draft.values)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formMessage, setFormMessage] = useState(draft.warning)
@@ -208,9 +254,22 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
 
   const update = <K extends EnquiryField>(field: K, value: NewEnquiryForm[K]) => {
     setForm((previous) => ({ ...previous, [field]: value }))
+    const textValue = String(value)
+    const validation = field === 'customerName'
+      ? validateText(textValue, 'Customer name', { required: true, minLength: 2, maxLength: 200 })
+      : field === 'phone'
+        ? validatePhoneNumber(textValue)
+        : field === 'email'
+          ? validateEmail(textValue)
+          : field === 'branch'
+            ? validateText(textValue, 'Branch / showroom', { required: true, maxLength: 160 })
+            : field === 'assignedExecutive'
+              ? validateText(textValue, 'Assigned sales executive', { required: true, maxLength: 160 })
+              : undefined
     setErrors((previous) => {
       const next = { ...previous }
-      delete next[field]
+      if (validation) next[field] = validation
+      else delete next[field]
       return next
     })
     setIsDraftSaved(false)
@@ -273,7 +332,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
       }
       const requirements = data.productRequirements.filter(productHasDetails)
       const firstProduct = requirements[0]
-      const created = await createEnquiry(workspace.id, {
+      const enquiryData = {
         customerName: data.customerName,
         phone: data.phone,
         email: data.email || undefined,
@@ -295,7 +354,10 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
         priority: data.priority,
         ...(conversationId ? { conversationId } : {}),
         ...(conversion ? { sourceEventId: `walkin:${conversion.visitId}` } : {}),
-      }, conversion ? `walkin:${conversion.visitId}` : saveKey)
+      }
+      const created = existing
+        ? await updateEnquiry(workspace.id, existing.id, enquiryData, workspace.member_id)
+        : await createEnquiry(workspace.id, enquiryData, conversion ? `walkin:${conversion.visitId}` : saveKey, workspace.member_id)
       let draftCleanupMessage = ''
       if (conversion && walkinService!.isWalkinDemoMode()) { try { await walkinService!.markWalkinConverted(workspace.id, conversion.visitId, created.id) } catch { draftCleanupMessage = ' The enquiry is saved; the walk-in status could not be updated. Review the visit before converting again.' } }
       try {
@@ -306,7 +368,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
       allowLeave.current = true
       navigate(`/enquiries/${encodeURIComponent(created.id)}`, {
         state: {
-          confirmation: `Enquiry ${created.enquiryNumber || created.id} was saved in your workspace.${conversationId ? ' Transcription and English translation continue in the background.' : ''}${draftCleanupMessage}`,
+          confirmation: `Enquiry ${created.enquiryNumber || created.id} was ${existing ? 'updated' : 'saved'} in your workspace.${conversationId ? ' Transcription and English translation continue in the background.' : ''}${draftCleanupMessage}`,
         },
       })
     } catch (error) {
@@ -352,14 +414,14 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
     <form className="new-enquiry-page" noValidate onSubmit={(event) => { event.preventDefault(); void submitEnquiry() }}>
       <div className="enquiry-topline">
         <Link className="back-link" to="/enquiries"><ArrowLeft size={16} /> Back to enquiries</Link>
-        <span className="enquiry-id-label"><span className="draft-dot" /> New enquiry</span>
+        <span className="enquiry-id-label"><span className="draft-dot" /> {existing ? `Edit ${existing.enquiryNumber || 'enquiry'}` : 'New enquiry'}</span>
       </div>
 
       <header className="enquiry-page-header">
         <div>
           <div className="page-kicker"><Sparkles size={14} /> SALES WORKSPACE</div>
-          <h1>Capture a new enquiry</h1>
-          <p>Start with the essentials. You can add more detail as the conversation develops.</p>
+          <h1>{existing ? 'Edit enquiry' : 'Capture a new enquiry'}</h1>
+          <p>{existing ? 'Update customer details, requirements, and conversation audio.' : 'Start with the essentials. You can add more detail as the conversation develops.'}</p>
         </div>
         <div className="required-note"><span className="required-mark">*</span> Required fields</div>
       </header>
@@ -387,10 +449,10 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
                 <input id="customerName" maxLength={200} disabled={!!conversationId} aria-describedby={conversationId ? 'customerName-hint' : errors.customerName ? 'customerName-error' : undefined} aria-invalid={!!errors.customerName} autoComplete="name" placeholder="e.g. Priya Sharma" value={form.customerName} onChange={(event) => update('customerName', event.target.value)} />
               </Field>
               <Field label="Phone number" htmlFor="phone" required error={errors.phone}>
-                <input id="phone" type="tel" maxLength={20} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
+                <input disabled={!!conversationId} id="phone" type="tel" maxLength={14} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? 'phone-error' : undefined} autoComplete="tel" inputMode="numeric" placeholder="+919876543210" value={form.phone} onChange={(event) => update('phone', sanitizePhoneNumber(event.target.value, 13))} />
               </Field>
               <Field label="Email address" htmlFor="email" error={errors.email}>
-                <input id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
+                <input disabled={!!conversationId} id="email" type="email" maxLength={320} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} autoComplete="email" placeholder="name@company.com" value={form.email} onChange={(event) => update('email', event.target.value)} />
               </Field>
               <Field label="Enquiry source" htmlFor="channel" required error={errors.channel}>
                 <select id="channel" value={form.channel} onChange={(event) => update('channel', event.target.value as NewEnquiryForm['channel'])}>
@@ -405,8 +467,8 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
               </Field>
               <Field label="Customer type" htmlFor="customerType">
                 <select id="customerType" value={form.customerType} onChange={(event) => update('customerType', event.target.value as NewEnquiryForm['customerType'])}>
-                  <option value="Retail">Retail</option>
-                  <option value="Dealer">Dealer</option>
+                  <option value="Retail customer">Retail customer</option>
+                  <option value="Vendor">Vendor</option>
                   <option value="Project">Project</option>
                 </select>
               </Field>
@@ -416,7 +478,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
                   <option>Phone</option><option>Email</option><option>WhatsApp</option>
                 </select>
               </Field>
-              {(form.customerType === 'Dealer' || form.customerType === 'Project') && (
+              {(form.customerType === 'Vendor' || form.customerType === 'Project') && (
                 <Field label="Company / dealership name" htmlFor="company">
                   <input id="company" maxLength={200} autoComplete="organization" placeholder="Business or dealership name" value={form.company} onChange={(event) => update('company', event.target.value)} />
                 </Field>
@@ -441,7 +503,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
               description="Capture context now; review it later."
               step="02"
             />
-            <ConversationRecorder customerName={form.customerName.trim().length >= 2 ? form.customerName : ''} title="Sales enquiry conversation" initialConversationId={conversationId} onConversationChange={changeConversation} onBusyChange={setRecordingBusy} onSaved={audioSaved} />
+            <ConversationRecorder customerName={form.customerName.trim().length >= 2 ? form.customerName : ''} customerPhone={form.phone} customerEmail={form.email} title="Sales enquiry conversation" initialConversationId={conversationId} onConversationChange={changeConversation} onBusyChange={setRecordingBusy} onSaved={audioSaved} />
           </section>
 
           <section className="enquiry-card" aria-labelledby="products-section-title">
@@ -591,7 +653,7 @@ function ScopedNewEnquiry({ storageKey, conversion }: { storageKey: string; conv
         <button type="button" className="button button-secondary" onClick={saveDraft} disabled={isSaving}><Save size={16} /> Save draft</button>
         <button type="submit" className="button button-primary" disabled={isSaving || hasUnfinishedAudio}>
           {isSaving ? <span className="button-spinner" /> : <Check size={16} />}
-          {isSaving ? 'Saving…' : 'Save enquiry'}
+          {isSaving ? 'Saving…' : existing ? 'Save changes' : 'Save enquiry'}
           <ChevronDown className="button-arrow" size={15} />
         </button>
         </div>

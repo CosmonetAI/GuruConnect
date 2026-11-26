@@ -1,36 +1,1072 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { useOffice } from '../contexts/OfficeContext'
-import { useScopedResource } from '../hooks/useScopedResource'
-import { json, message, request, type Member } from '../services/officeApi'
-import ProviderConnections from './Integrations'
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  FileCog,
+  KeyRound,
+  LogOut,
+  Mail,
+  ReceiptText,
+  RefreshCw,
+  UserPlus,
+  X,
+} from "lucide-react";
+import { useOffice } from "../contexts/OfficeContext";
+import { useScopedResource } from "../hooks/useScopedResource";
+import {
+  json,
+  message,
+  request,
+  supabase,
+  type Member,
+} from "../services/officeApi";
+import PageLoader from "../components/PageLoader";
+import { call as zohoCall } from "../zoho/shared/api.js";
+import {
+  DOCUMENT_TYPES,
+  defaultRoleDocumentPermissions,
+  type DocumentAction,
+  type DocumentType,
+  type RoleDocumentPermissionResponse,
+} from "../services/documentPermissions";
+
+type Profile = {
+  display_name: string;
+  phone?: string;
+  avatar_path?: string;
+  availability_status?: string;
+  leave_end_date?: string | null;
+  final_status?: string;
+  final_status_until?: string | null;
+  preferences: Record<string, unknown>;
+};
+type ProfileDraft = {
+  name: string;
+  phone: string;
+  availability_status: "active" | "inactive" | "on_leave" | "be_right_back";
+  leave_end_date: string;
+};
+type ConfigurableRole = Exclude<Member["role"], "receptionist">;
+type ZohoTax = {
+  tax_id?: string;
+  tax_name?: string;
+  tax_display_name?: string;
+  tax_percentage?: number;
+  tax_type?: string;
+  output_tax_account_name?: string;
+  status?: string;
+  is_inactive?: boolean;
+};
+type ZohoTaxResponse = {
+  taxes: ZohoTax[];
+  zoho_region?: string;
+  zoho_region_label?: string;
+  organization_id?: string;
+  updated_at?: string | null;
+  cached?: boolean;
+  available?: boolean;
+};
+
+function TeamPill({ kind, value }: { kind: "role" | "status"; value: string }) {
+  return (
+    <span
+      className={`team-pill ${kind === "role" ? `team-pill-role-${value}` : `team-pill-status-${value}`}`}
+    >
+      {value.replaceAll("_", " ")}
+    </span>
+  );
+}
+
 export default function Settings() {
-  const { workspace, user, localMode } = useOffice()
-  const profile = useScopedResource<{ display_name: string; preferences: Record<string, unknown> }>('/profile')
-  const team = useScopedResource<{ items: Member[] }>(!localMode && workspace?.role !== 'salesperson' ? '/team' : null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [invite, setInvite] = useState('')
+  const { workspace, user: rawUser, localMode, readOnly } = useOffice();
+  const user = rawUser
+    ? { ...rawUser, email: rawUser.email?.toLowerCase() }
+    : rawUser;
+  const isOwner = localMode || workspace?.role === "owner";
+  const isReceptionist = workspace?.role === "receptionist";
+  const profile = useScopedResource<Profile>("/profile");
+  const team = useScopedResource<{ items: Member[] }>(
+    isOwner && !localMode ? "/team" : null,
+  );
+  const documentPermissionResource =
+    useScopedResource<RoleDocumentPermissionResponse>(
+      isOwner && !localMode ? "/role-document-permissions" : null,
+    );
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [inviteOpen, setInviteOpen] = useState(false);
+  const [draft, setDraft] = useState<ProfileDraft>({
+    name: "",
+    phone: "",
+    availability_status: "active",
+    leave_end_date: "",
+  });
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [roleConfigRole, setRoleConfigRole] = useState<ConfigurableRole | null>(
+    null,
+  );
+  const [roleConfigDraft, setRoleConfigDraft] = useState(
+    defaultRoleDocumentPermissions(),
+  );
+  const [selectedPermissionTypes, setSelectedPermissionTypes] = useState<
+    DocumentType[]
+  >([...DOCUMENT_TYPES]);
+  const [zohoTaxes, setZohoTaxes] = useState<ZohoTaxResponse | null>(null);
+  const [zohoRegion, setZohoRegion] = useState<string | null>(null);
+  const [taxesOpen, setTaxesOpen] = useState(false);
+  const [taxesBusy, setTaxesBusy] = useState(false);
+  const [taxesNotice, setTaxesNotice] = useState("");
   useEffect(() => {
-    if (window.location.hash === '#connections') document.getElementById('connections')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
+    if (!workspace || localMode) {
+      setZohoRegion(null);
+      setTaxesOpen(false);
+      return undefined;
+    }
+    let alive = true;
+    setZohoRegion(null);
+    void zohoCall("/zoho/status", {
+      headers: {
+        "X-Workspace-ID": workspace.id,
+        "X-Workspace-Member-ID": workspace.member_id,
+      },
+    })
+      .then((status) => {
+        if (alive) setZohoRegion(status?.zoho_region || null);
+      })
+      .catch(() => {
+        if (alive) setZohoRegion(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [workspace?.id, workspace?.member_id, localMode]);
+  useEffect(() => {
+    if (profile.data) {
+      const profileStatus =
+        profile.data.final_status ?? profile.data.availability_status;
+      const availability_status = isReceptionist
+        ? profileStatus === "active"
+          ? "active"
+          : "inactive"
+        : profileStatus === "inactive" ||
+            profileStatus === "on_leave" ||
+            profileStatus === "be_right_back"
+          ? profileStatus
+          : "active";
+      setDraft({
+        name: profile.data.display_name ?? "",
+        phone: profile.data.phone ?? "",
+        availability_status,
+        leave_end_date:
+          profile.data.final_status_until ?? profile.data.leave_end_date ?? "",
+      });
+      setAvatarFile(null);
+    }
+  }, [profile.data, isReceptionist]);
+  const profileChanged = useMemo(
+    () =>
+      !!avatarFile ||
+      draft.name.trim() !== (profile.data?.display_name ?? "") ||
+      draft.phone.trim() !== (profile.data?.phone ?? "") ||
+      draft.availability_status !==
+        (profile.data?.availability_status ?? "active") ||
+      draft.leave_end_date !== (profile.data?.leave_end_date ?? ""),
+    [avatarFile, draft, profile.data],
+  );
   async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy) return
-    const name = String(new FormData(event.currentTarget).get('name') ?? '').trim()
-    setBusy(true); setError(''); setNotice('')
-    try { await request('/profile', workspace?.id, json('PATCH', { display_name: name, preferences: profile.data?.preferences ?? {} })); setNotice('Your display name was saved.'); await profile.reload() } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
+    event.preventDefault();
+    if (busy || !workspace) return;
+    const name = draft.name.trim(),
+      phone = draft.phone.trim(),
+      file = avatarFile;
+    if (draft.availability_status === "on_leave" && !draft.leave_end_date) {
+      setError("Choose a leave end date.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      let avatar_path = profile.data?.avatar_path ?? null;
+      if (
+        file &&
+        (!["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+          file.size > 5 * 1024 * 1024)
+      )
+        throw new Error(
+          "Profile picture must be PNG, JPG, or WebP and no larger than 5 MB.",
+        );
+      if (file && supabase && user) {
+        avatar_path = `${user.id}/avatar.${file.name.split(".").pop() || "jpg"}`;
+        const upload = await supabase.storage
+          .from("profile-avatars")
+          .upload(avatar_path, file, { upsert: true, contentType: file.type });
+        if (upload.error) throw upload.error;
+      }
+      await request(
+        "/profile",
+        workspace.id,
+        json("PATCH", {
+          display_name: name,
+          phone: phone || null,
+          avatar_path,
+          availability_status: draft.availability_status,
+          leave_end_date:
+            draft.availability_status === "on_leave"
+              ? draft.leave_end_date
+              : null,
+          final_status: draft.availability_status,
+          final_status_until:
+            draft.availability_status === "on_leave"
+              ? draft.leave_end_date
+              : null,
+          preferences: profile.data?.preferences ?? {},
+        }),
+      );
+      setNotice("Your profile was updated.");
+      await profile.reload();
+      window.dispatchEvent(new Event("guruconnect-profile-updated"));
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
   }
   async function createInvite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || !workspace) return
-    const form = new FormData(event.currentTarget)
-    setBusy(true); setError(''); setInvite('')
-    try { const result = await request<{ token: string }>('/invites', workspace.id, json('POST', { email: String(form.get('email')), role: String(form.get('role')) })); setInvite(result.token); setNotice('Invitation created. Share its token directly with the intended teammate.'); await team.reload() } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
+    event.preventDefault();
+    if (busy || !workspace) return;
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    setError("");
+    try {
+      await request(
+        "/invites",
+        workspace.id,
+        json("POST", {
+          name: String(form.get("name")),
+          email: String(form.get("email")),
+          role: String(form.get("role")),
+        }),
+      );
+      setNotice(
+        "Invitation sent. The member will appear in the workspace immediately and can set their password from the email link.",
+      );
+      await team.reload();
+      event.currentTarget.reset();
+      setInviteOpen(false);
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
   }
-  return <div><header className="flow-page-header"><div><div className="page-kicker">WORKSPACE PREFERENCES</div><h1 className="page-title">Team & account</h1><p>Manage your profile and workspace access.</p></div></header>
-    {(error || profile.error || team.error) && <p role="alert" className="flow-error">{error || profile.error || team.error}</p>}{notice && <p role="status" className="flow-note">{notice}</p>}
-    {localMode && <p className="flow-note">Local mode opens without sign-in. Enquiries and audio are stored on this computer. Connected transcription and translation providers require internet access. Configure your new Supabase project when you need team accounts.</p>}
-    <section className="flow-panel"><h2>Your profile</h2><p>{localMode ? 'Local account' : user?.email} · {workspace?.name} · {workspace?.role}</p>{profile.loading && <p role="status">Loading profile…</p>}<form className="settings-form" key={profile.data?.display_name ?? 'profile'} onSubmit={event => void save(event)}><label>Display name<input name="name" required minLength={2} maxLength={120} defaultValue={profile.data?.display_name ?? user?.user_metadata.display_name ?? ''} /></label><button className="button button-primary" disabled={busy || profile.loading}>Save profile</button></form></section>
-    <section id="connections" className="flow-panel"><h2>Transcription & translation</h2><p>Provider connections and processing policy are managed separately from your personal profile.</p><ProviderConnections /></section>
-    {!localMode && workspace?.role !== 'salesperson' && <section className="flow-panel"><h2>Your team</h2>{team.loading && <p role="status">Loading team…</p>}{team.data?.items.map(member => <div className="team-row" key={member.user_id}><span>{member.display_name || member.email || 'Workspace member'}</span><span>{member.role} · {member.status}</span></div>)}<h3>Invite a teammate</h3><form className="settings-form" onSubmit={event => void createInvite(event)}><label>Teammate email<input name="email" type="email" required maxLength={254} /></label><label>Role<select name="role"><option value="salesperson">Salesperson</option>{workspace?.role === 'owner' && <option value="admin">Administrator</option>}</select></label><button className="button button-primary" disabled={busy}>Create invitation</button></form>{invite && <label className="settings-form">One-time invitation token<input aria-label="Invitation token" readOnly value={invite} onFocus={event => event.target.select()} /></label>}</section>}
-  </div>
+  async function resendInvite(member: Member) {
+    if (
+      !workspace ||
+      busy ||
+      localMode ||
+      member.status !== "invited" ||
+      !member.email ||
+      member.role === "owner"
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await request(
+        `/team/${encodeURIComponent(member.user_id)}/resend-invite`,
+        workspace.id,
+        json("POST"),
+      );
+      setNotice(`Invitation resent to ${member.email}.`);
+      await team.reload();
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function resetPassword() {
+    if (!supabase || !user?.email || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await supabase.auth.resetPasswordForEmail(user.email, {
+        redirectTo: `${window.location.origin}/reset`,
+      });
+      if (result.error) throw result.error;
+      setNotice("Password reset instructions have been sent to your email.");
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function logout() {
+    if (!supabase || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await supabase.auth.signOut();
+      if (result.error) throw result.error;
+    } catch (failure) {
+      setError(message(failure));
+      setBusy(false);
+    }
+  }
+  async function loadZohoTaxes(refresh = false) {
+    if (
+      !workspace ||
+      localMode ||
+      !["owner", "salesperson"].includes(workspace.role) ||
+      taxesBusy
+    )
+      return;
+    setTaxesBusy(true);
+    setError("");
+    try {
+      let result: ZohoTaxResponse;
+      try {
+        result = (await zohoCall(
+          refresh ? "/zoho/taxes/refresh" : "/zoho/taxes",
+          refresh ? { method: "POST", headers: { "X-Workspace-ID": workspace.id, "X-Workspace-Member-ID": workspace.member_id } } : { headers: { "X-Workspace-ID": workspace.id, "X-Workspace-Member-ID": workspace.member_id } },
+        )) as ZohoTaxResponse;
+      } catch (failure) {
+        if (refresh) throw failure;
+        result = (await zohoCall(
+          "/zoho/taxes/refresh",
+          { method: "POST", headers: { "X-Workspace-ID": workspace.id, "X-Workspace-Member-ID": workspace.member_id } },
+        )) as ZohoTaxResponse;
+      }
+      if (!refresh && !result.taxes?.length) {
+        try {
+          result = (await zohoCall(
+            "/zoho/taxes/refresh",
+            { method: "POST", headers: { "X-Workspace-ID": workspace.id, "X-Workspace-Member-ID": workspace.member_id } },
+          )) as ZohoTaxResponse;
+        } catch {
+          // Keep the empty response and show setup guidance in the modal.
+        }
+      }
+      const taxes = Array.isArray(result.taxes) ? result.taxes : [];
+      setZohoTaxes({ ...result, taxes });
+      setTaxesNotice(
+        taxes.length
+          ? ""
+          : result.available === false
+            ? "Connect Zoho Books and select an organization before loading GST rules."
+            : "No GST rules are configured in this Zoho Books organization. Add GST or tax rules in Zoho Books, then refresh here.",
+      );
+      setTaxesOpen(true);
+    } catch (failure) {
+      setZohoTaxes((current) => current || { taxes: [] });
+      setTaxesNotice(
+        "No GST rules were returned. Add GST or tax rules in Zoho Books, then try Refresh from Zoho again.",
+      );
+      setTaxesOpen(true);
+    } finally {
+      setTaxesBusy(false);
+    }
+  }
+  async function deleteMember(member: Member) {
+    if (
+      !workspace ||
+      busy ||
+      localMode ||
+      !user ||
+      member.user_id === user.id ||
+      member.role === "owner"
+    )
+      return;
+    if (
+      !window.confirm(
+        `Delete ${member.display_name || member.email || "this user"} permanently? Their Zoho credentials and cached Zoho data will also be deleted.`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await request(
+        `/team/${encodeURIComponent(member.user_id)}/delete`,
+        workspace.id,
+        json("DELETE"),
+      );
+      setNotice("User and their Zoho data were deleted.");
+      await team.reload();
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const documentLabels: Record<
+    DocumentType,
+    { title: string; subtitle: string }
+  > = {
+    quote: {
+      title: "Quotes",
+      subtitle: "Estimates and quotations for customers.",
+    },
+    invoice: {
+      title: "Invoices",
+      subtitle: "Customer billing and payment documents.",
+    },
+    "sales-order": {
+      title: "Sales orders",
+      subtitle: "Confirmed customer orders.",
+    },
+    "purchase-order": {
+      title: "Purchase orders",
+      subtitle: "Supplier purchase requests.",
+    },
+  };
+  const configRoles: ConfigurableRole[] = ["owner", "salesperson"];
+  const actionLabels: Record<
+    DocumentType,
+    Array<{ key: DocumentAction; label: string }>
+  > = {
+    quote: [
+      { key: "create", label: "Create" },
+      { key: "edit", label: "Edit" },
+      { key: "delete", label: "Delete" },
+      { key: "accept", label: "Mark accepted" },
+    ],
+    invoice: [
+      { key: "create", label: "Create" },
+      { key: "edit", label: "Edit" },
+      { key: "delete", label: "Delete" },
+      { key: "mark-paid", label: "Mark paid" },
+    ],
+    "sales-order": [
+      { key: "create", label: "Create" },
+      { key: "edit", label: "Edit" },
+      { key: "delete", label: "Delete" },
+    ],
+    "purchase-order": [
+      { key: "create", label: "Create" },
+      { key: "edit", label: "Edit" },
+      { key: "delete", label: "Delete" },
+    ],
+  };
+  function openRoleConfig(role: ConfigurableRole) {
+    const selectedRole = roleConfigRole ? role : "salesperson";
+    const configured = documentPermissionResource.data?.roles?.[selectedRole];
+    setRoleConfigDraft(
+      configured || defaultRoleDocumentPermissions(selectedRole),
+    );
+    setSelectedPermissionTypes([...DOCUMENT_TYPES]);
+    setRoleConfigRole(selectedRole);
+  }
+  function applyBulkPermission(enabled: boolean) {
+    setRoleConfigDraft((current) => {
+      const next = { ...current };
+      selectedPermissionTypes.forEach((type) => {
+        next[type] = {
+          ...next[type],
+          create: enabled,
+          edit: enabled,
+          delete: enabled,
+          accept: type === "quote" ? enabled : false,
+          "mark-paid": type === "invoice" ? enabled : false,
+        };
+      });
+      return next;
+    });
+  }
+  async function saveRoleConfig() {
+    if (!workspace || !roleConfigRole || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await request(
+        `/role-document-permissions/${roleConfigRole}`,
+        workspace.id,
+        json("PATCH", { permissions: roleConfigDraft }),
+      );
+      setNotice(
+        `${roleConfigRole.replaceAll("_", " ")} document permissions updated.`,
+      );
+      await documentPermissionResource.reload();
+      setRoleConfigRole(null);
+    } catch (failure) {
+      setError(message(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const roleConfigLabel = roleConfigRole
+    ? roleConfigRole[0].toUpperCase() + roleConfigRole.slice(1)
+    : "";
+  const canViewZohoTaxes =
+    !localMode &&
+    zohoRegion === "in" &&
+    (workspace?.role === "owner" || workspace?.role === "salesperson");
+  return (
+    <div className="settings-page">
+      <header className="flow-page-header">
+        <div>
+          <div className="page-kicker">WORKSPACE PREFERENCES</div>
+          <h1 className="page-title">Team & account</h1>
+          <p>
+            {isOwner
+              ? "Manage your workspace, team, and profile."
+              : "Manage your profile."}
+          </p>
+        </div>
+      </header>
+      {(error ||
+        profile.error ||
+        team.error ||
+        documentPermissionResource.error) && (
+        <p role="alert" className="flow-error">
+          {error ||
+            profile.error ||
+            team.error ||
+            documentPermissionResource.error}
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="flow-note">
+          {notice}
+        </p>
+      )}
+      {localMode && (
+        <p className="flow-note">
+          Local mode opens without sign-in. Ask your administrator when team
+          accounts are needed.
+        </p>
+      )}
+      {canViewZohoTaxes && (
+        <div className="settings-account-actions settings-tax-actions">
+          <button
+            type="button"
+            className="button button-secondary settings-taxes-button"
+            disabled={taxesBusy}
+            onClick={() => void loadZohoTaxes()}
+          >
+            <ReceiptText size={16} /> GST &amp; tax rules
+          </button>
+        </div>
+      )}
+      {taxesOpen && (
+        <div
+          className="zoho-taxes-backdrop"
+          role="presentation"
+          onClick={() => setTaxesOpen(false)}
+        >
+          <section
+            className="zoho-taxes-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="zoho-taxes-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="zoho-taxes-heading">
+              <div>
+                <small>{zohoTaxes?.zoho_region_label || "Zoho Books"} TAX SETTINGS</small>
+                <h2 id="zoho-taxes-title">GST and tax rules</h2>
+                <p>
+                  {zohoTaxes?.updated_at
+                    ? `Last refreshed ${new Date(zohoTaxes.updated_at).toLocaleString()}.`
+                    : "Tax rules have not been loaded yet."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="button button-quiet"
+                aria-label="Close tax settings"
+                onClick={() => setTaxesOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="zoho-taxes-list">
+              {zohoTaxes?.taxes?.length ? (
+                zohoTaxes.taxes.map((tax) => (
+                  <article className="zoho-tax-row" key={tax.tax_id || tax.tax_name}>
+                    <div>
+                      <strong>{tax.tax_display_name || tax.tax_name || "Unnamed tax"}</strong>
+                      <small>
+                        {tax.tax_type === "tax_group" ? "Tax group" : "Tax"}
+                        {tax.output_tax_account_name ? ` · ${tax.output_tax_account_name}` : ""}
+                      </small>
+                    </div>
+                    <b>{tax.tax_percentage ?? 0}%</b>
+                  </article>
+                ))
+              ) : (
+                <p className="zoho-taxes-empty">{taxesNotice || "No GST rules are configured in this Zoho Books organization. Add GST or tax rules in Zoho Books, then refresh here."}</p>
+              )}
+            </div>
+            <div className="zoho-taxes-footer">
+              <span>These rules are available when a salesperson selects tax on a document.</span>
+              <button
+                type="button"
+                className="button button-primary"
+                disabled={taxesBusy}
+                onClick={() => void loadZohoTaxes(true)}
+              >
+                <RefreshCw size={15} className={taxesBusy ? "spin" : ""} />
+                {taxesBusy ? "Refreshing…" : "Refresh from Zoho"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      <section className="flow-panel">
+        <div className="settings-profile-heading">
+          <div>
+        <h2>Your profile</h2>
+        <p>
+          {localMode ? "Local account" : user?.email} · {workspace?.name} ·{" "}
+          {workspace?.role}
+        </p>
+          </div>
+          <div className="settings-account-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy || localMode}
+              onClick={() => void resetPassword()}
+            >
+              <KeyRound size={16} /> Reset password
+            </button>
+            <button
+              type="button"
+              className="button button-quiet"
+              disabled={busy || localMode}
+              onClick={() => void logout()}
+              aria-label="Log out"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
+        </div>
+        {profile.loading && (
+          <PageLoader
+            kind="settings"
+            label="Loading your profile"
+            detail="Preparing your workspace preferences."
+          />
+        )}
+        <form
+          className="settings-form"
+          onSubmit={(event) => {
+            if (readOnly) {
+              event.preventDefault();
+              return;
+            }
+            void save(event);
+          }}
+        >
+          <label>
+            Display name
+            <input
+              name="name"
+              required
+              minLength={2}
+              maxLength={120}
+              value={draft.name}
+              onChange={(event) =>
+                setDraft({ ...draft, name: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            Phone number
+            <input
+              name="phone"
+              type="tel"
+              pattern="\+?[0-9][0-9 ()-]{7,19}"
+              value={draft.phone}
+              onChange={(event) =>
+                setDraft({ ...draft, phone: event.target.value })
+              }
+              placeholder="+91 98765 43210"
+            />
+          </label>
+          <label>
+            Status
+            <select
+              name="availability_status"
+              value={draft.availability_status}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  availability_status: event.target
+                    .value as ProfileDraft["availability_status"],
+                })
+              }
+            >
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="on_leave">On leave</option>
+              <option value="be_right_back">Be right back</option>
+            </select>
+          </label>
+          {draft.availability_status === "on_leave" && (
+            <label>
+              Leave ends
+              <input
+                name="leave_end_date"
+                type="date"
+                required
+                min={new Date().toISOString().slice(0, 10)}
+                value={draft.leave_end_date}
+                onChange={(event) =>
+                  setDraft({ ...draft, leave_end_date: event.target.value })
+                }
+              />
+            </label>
+          )}
+          <label>
+            Profile picture
+            <input
+              name="avatar"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(event) =>
+                setAvatarFile(event.target.files?.[0] ?? null)
+              }
+            />
+            {avatarFile && <small>{avatarFile.name}</small>}
+          </label>
+          <button
+            className="button button-primary"
+            disabled={busy || profile.loading || !profileChanged || readOnly}
+          >
+            Update profile
+          </button>
+        </form>
+      </section>
+      {isOwner && !localMode && (
+        <section className="flow-panel">
+          <div className="team-section-heading">
+            <h2>Your team</h2>
+            <div className="team-section-actions">
+              <button
+                type="button"
+                className="team-invite-button"
+                disabled={busy}
+                onClick={() => setInviteOpen(true)}
+              >
+                <UserPlus size={14} /> Invite teammate
+              </button>
+              <button
+                type="button"
+                className="team-configure-button"
+                disabled={busy || documentPermissionResource.loading}
+                onClick={() =>
+                  openRoleConfig(
+                    workspace?.role === "owner" ? "owner" : "salesperson",
+                  )
+                }
+              >
+                <FileCog size={14} /> Configure role
+              </button>
+            </div>
+          </div>
+          {team.loading && (
+            <PageLoader
+              kind="settings"
+              label="Loading your team"
+              detail="Bringing your workspace members into view."
+            />
+          )}
+          {team.data?.items.map((member) => (
+            <div className="team-row" key={member.user_id}>
+              <div className="team-member-info">
+                <strong>
+                  {member.display_name || member.email || "Workspace member"}
+                </strong>
+                {member.email && member.display_name && (
+                  <small>{member.email}</small>
+                )}
+              </div>
+              <div className="team-row-actions">
+                <div className="team-pills">
+                  <TeamPill kind="role" value={member.role} />
+                  <TeamPill kind="status" value={member.status} />
+                </div>
+                <span
+                  className={`team-pill team-pill-status-${member.availability_status || "inactive"}`}
+                >
+                  {(member.availability_status || "inactive").replaceAll(
+                    "_",
+                    " ",
+                  )}
+                </span>
+                {isOwner &&
+                  member.status === "invited" &&
+                  member.user_id !== user?.id &&
+                  member.role !== "owner" && (
+                    <button
+                      type="button"
+                      className="team-resend-button"
+                      disabled={busy || !member.email}
+                      onClick={() => void resendInvite(member)}
+                    >
+                      <Mail size={14} /> Resend invite
+                    </button>
+                  )}
+                {isOwner &&
+                  member.user_id !== user?.id &&
+                  member.role !== "owner" && (
+                    <button
+                      type="button"
+                      className="team-delete-button"
+                      disabled={busy}
+                      onClick={() => void deleteMember(member)}
+                    >
+                      Delete user
+                    </button>
+                  )}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+      {inviteOpen && (
+        <div
+          className="role-config-backdrop"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setInviteOpen(false);
+          }}
+        >
+          <section
+            className="invite-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invite-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="role-config-heading">
+              <div>
+                <small>TEAM ACCESS</small>
+                <h2 id="invite-title">Invite a teammate</h2>
+                <p>
+                  Send an email invitation with the member’s role. They’ll set a
+                  password from the link and can sign in directly.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close invitation"
+                onClick={() => setInviteOpen(false)}
+                disabled={busy}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="settings-form invite-form"
+              onSubmit={(event) => void createInvite(event)}
+            >
+              <label>
+                Full name
+                <input
+                  name="name"
+                  required
+                  minLength={2}
+                  maxLength={120}
+                  autoFocus
+                />
+              </label>
+              <label>
+                Teammate email
+                <input name="email" type="email" required maxLength={254} />
+              </label>
+              <label>
+                Role
+                <select name="role">
+                  <option value="owner">Owner</option>
+                  <option value="salesperson">Salesperson</option>
+                  <option value="receptionist">Receptionist</option>
+                </select>
+              </label>
+              <div className="role-config-footer">
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => setInviteOpen(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+                <button className="button button-primary" disabled={busy}>
+                  {busy ? "Sending…" : "Send invitation"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+      {roleConfigRole && (
+        <div
+          className="role-config-backdrop"
+          role="presentation"
+          onClick={() => {
+            if (!busy) setRoleConfigRole(null);
+          }}
+        >
+          <section
+            className="role-config-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="role-config-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="role-config-heading">
+              <div>
+                <small>ROLE-BASED ACCESS</small>
+                <h2 id="role-config-title">Configure {roleConfigLabel} role</h2>
+                <p>
+                  Only owners and salespersons can access Zoho Books documents.
+                  Receptionists do not have Zoho Books access.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close role configuration"
+                onClick={() => setRoleConfigRole(null)}
+                disabled={busy}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="role-config-role-tabs" aria-label="Roles">
+              {configRoles.map((role) => (
+                <button
+                  type="button"
+                  key={role}
+                  className={role === roleConfigRole ? "selected" : ""}
+                  onClick={() => openRoleConfig(role)}
+                >
+                  {role[0].toUpperCase() + role.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="role-config-bulk">
+              <div>
+                <span className="role-config-bulk-label">Bulk scope</span>
+                <div className="role-config-scope-actions">
+                  <button
+                    type="button"
+                    className={
+                      selectedPermissionTypes.length === DOCUMENT_TYPES.length
+                        ? "selected"
+                        : ""
+                    }
+                    onClick={() =>
+                      setSelectedPermissionTypes([...DOCUMENT_TYPES])
+                    }
+                  >
+                    All documents
+                  </button>
+                  {DOCUMENT_TYPES.map((type) => (
+                    <button
+                      type="button"
+                      key={type}
+                      className={
+                        selectedPermissionTypes.length === 1 &&
+                        selectedPermissionTypes[0] === type
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() => setSelectedPermissionTypes([type])}
+                    >
+                      {documentLabels[type].title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="role-config-bulk-actions">
+                <span>
+                  Apply to{" "}
+                  <strong>
+                    {selectedPermissionTypes.length === 1
+                      ? documentLabels[selectedPermissionTypes[0]].title
+                      : `${selectedPermissionTypes.length} document types`}
+                  </strong>
+                </span>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => applyBulkPermission(true)}
+                  >
+                    Enable selected
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyBulkPermission(false)}
+                  >
+                    Disable selected
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="role-config-tree">
+              <div className="role-config-tree-root">Zoho Books</div>
+              {DOCUMENT_TYPES.map((type) => (
+                <article className="role-config-card" key={type}>
+                  <div className="role-config-card-copy">
+                    <h3>{documentLabels[type].title}</h3>
+                    <p>{documentLabels[type].subtitle}</p>
+                  </div>
+                  <div className="role-config-actions">
+                    <span className="role-config-actions-label">
+                      Allowed actions
+                    </span>
+                    <div className="role-config-action-grid">
+                      {actionLabels[type].map(({ key, label }) => (
+                        <label key={key} className="role-config-toggle">
+                          <input
+                            type="checkbox"
+                            checked={roleConfigDraft[type][key]}
+                            onChange={(event) =>
+                              setRoleConfigDraft((current) => ({
+                                ...current,
+                                [type]: {
+                                  ...current[type],
+                                  [key]: event.target.checked,
+                                },
+                              }))
+                            }
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="role-config-footer">
+              <button
+                type="button"
+                className="button button-quiet"
+                onClick={() => setRoleConfigRole(null)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void saveRoleConfig()}
+                disabled={busy}
+              >
+                {busy ? "Saving…" : "Save configuration"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
 }

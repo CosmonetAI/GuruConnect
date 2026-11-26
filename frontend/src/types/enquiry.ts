@@ -12,17 +12,24 @@ export type Enquiry = {
   channel: 'Call' | 'Dealership' | 'Retail walk-in' | 'Project' | 'Chat' | string
   branch: string
   assignedExecutive: string
+  assignedTo?: string
+  assignedSalesperson?: string
+  assignedSalespersonEmail?: string
+  forwardedBy?: string
+  stage?: 'new' | 'in_process' | 'closed' | 'customer_did_not_show'
+  unread?: boolean
   product: string
   quantity: number
   unit: string
   notes?: string
   sourceEventId?: string
   sourceWalkinId?: string
-  customerType?: 'Retail' | 'Dealer' | 'Project'
+  customerType?: 'Retail customer' | 'Vendor' | 'Project' | 'Retail' | 'Dealer'
   company?: string
   projectName?: string
   preferredContactMethod?: string
   productRequirements?: ProductRequirement[]
+  tags?: string[]
   followUpDate?: string
   followUpOwner?: string
   priority?: 'Normal' | 'High' | 'Urgent'

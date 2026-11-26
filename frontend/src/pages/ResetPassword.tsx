@@ -19,6 +19,6 @@ export default function ResetPassword() {
       setDone(true)
     } catch (failure) { setError(message(failure)) } finally { setBusy(false) }
   }
-  return <main className="welcome-page"><section className="welcome-card"><h1>Reset password</h1>{error && <p role="alert" className="flow-error">{error}</p>}
+  return <main className="welcome-page"><section className="welcome-card"><h1>Set your password</h1>{error && <p role="alert" className="flow-error">{error}</p>}
     {done ? <p role="status">Password updated. <Link to="/">Open your workspace</Link></p> : session ? <form onSubmit={event => void save(event)}><label>New password<input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></label><button disabled={busy} className="button button-primary">Save new password</button></form> : <p>Open the password reset link from your email. <Link to="/">Return to sign-in</Link></p>}</section></main>
 }

@@ -151,7 +151,7 @@ describe('durable audio file upload', () => {
   it('preserves the full manifest and remaining chunks when an upload fails after an earlier chunk was confirmed', async () => {
     const upload = options(new Float32Array(160003));
     const progress: AudioUploadProgress[] = [];
-    upload.hooks.authorize.mockImplementation(async chunk => chunk.sequence === 0 ? { confirmed: true } : { upload_url: `${location.origin}/storage/v1/object/recorder-audio/tail.wav` });
+    upload.hooks.authorize.mockImplementation(async chunk => chunk.sequence === 0 ? { confirmed: true } : { upload_url: `${location.origin}/storage/v1/object/session-audio/tail.wav` });
     const fetchAudio = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
     vi.stubGlobal('fetch', fetchAudio);
     const uploading = uploadAudioFile({ ...upload, onProgress: state => progress.push(state) });
@@ -266,7 +266,7 @@ describe('durable audio file upload', () => {
   it('propagates cancellation to an in-flight storage fetch and retains its unconfirmed bytes', async () => {
     const controller = new AbortController();
     const upload = options();
-    upload.hooks.authorize.mockResolvedValue({ upload_url: `${location.origin}/storage/v1/object/recorder-audio/chunk.wav` });
+    upload.hooks.authorize.mockResolvedValue({ upload_url: `${location.origin}/storage/v1/object/session-audio/chunk.wav` });
     let storageSignal: AbortSignal | undefined;
     let reachedStorage!: () => void;
     const storageReached = new Promise<void>(resolve => { reachedStorage = resolve; });
@@ -318,7 +318,7 @@ describe('durable audio file upload', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     const upload = options(new Float32Array(160003));
     const progress: AudioUploadProgress[] = [];
-    upload.hooks.authorize.mockImplementation(async chunk => chunk.sequence === 0 ? { confirmed: true } : { upload_url: `${location.origin}/storage/v1/object/recorder-audio/tail.wav` });
+    upload.hooks.authorize.mockImplementation(async chunk => chunk.sequence === 0 ? { confirmed: true } : { upload_url: `${location.origin}/storage/v1/object/session-audio/tail.wav` });
     let reachedRetry!: () => void;
     const retryReached = new Promise<void>(resolve => { reachedRetry = resolve; });
     const fetchAudio = vi.fn().mockImplementationOnce(async () => {
@@ -384,13 +384,13 @@ describe('durable audio file upload', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(59999);
     expect(upload.hooks.event).toHaveBeenCalledTimes(1);
-    expect(upload.hooks.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(upload.hooks.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
     await vi.advanceTimersByTimeAsync(1);
     await uploading;
     expect(upload.hooks.event.mock.calls).toEqual([['started', 0], ['started', 0], ['stopped', 3]]);
     expect(upload.hooks.finalize).toHaveBeenCalledOnce();
     const heartbeatCount = upload.hooks.heartbeat.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(15000);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(upload.hooks.heartbeat).toHaveBeenCalledTimes(heartbeatCount);
   });
 });

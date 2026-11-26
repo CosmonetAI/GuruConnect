@@ -14,6 +14,15 @@ create table if not exists public.customers (
   normalized_email text, normalized_phone text, bigin_contact_id text, books_contact_id text,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
+-- The earlier core migration may have created public.customers with only the
+-- workspace fields. Add the legacy integration columns before indexing them.
+alter table public.customers add column if not exists email text;
+alter table public.customers add column if not exists phone text;
+alter table public.customers add column if not exists normalized_email text;
+alter table public.customers add column if not exists normalized_phone text;
+alter table public.customers add column if not exists bigin_contact_id text;
+alter table public.customers add column if not exists books_contact_id text;
+alter table public.customers add column if not exists updated_at timestamptz not null default now();
 create unique index if not exists customers_phone_unique on public.customers(normalized_phone) where normalized_phone is not null;
 create unique index if not exists customers_email_unique on public.customers(normalized_email) where normalized_email is not null;
 create table if not exists public.chat_sessions (

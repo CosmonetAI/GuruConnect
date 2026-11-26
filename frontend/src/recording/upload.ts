@@ -5,7 +5,7 @@ import { retryAudioOperation, transientAudioError, uploadPending, type Recording
 export const MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024;
 export const MAX_AUDIO_SECONDS = 7200;
 const SAMPLE_RATE = 16000;
-const CHUNK_SAMPLES = 10 * SAMPLE_RATE;
+const DEFAULT_CHUNK_SECONDS = 10;
 export interface PreparedAudioFile { samples: Float32Array; name: string }
 export interface AudioUploadProgress { phase: 'preparing' | 'saving' | 'uploading' | 'finalizing'; confirmedSamples: number; totalSamples: number }
 export type UploadProgress = AudioUploadProgress;
@@ -15,6 +15,7 @@ export class AudioUploadError extends Error {
 export interface AudioUploadOptions {
   scope: Scope; conversationId: string; partId: string; leaseToken: string;
   audio: PreparedAudioFile; hooks: RecordingHooks;
+  chunkSeconds?: number;
   signal?: AbortSignal;
   onProgress?(progress: AudioUploadProgress): void;
 }
@@ -47,6 +48,7 @@ const delay = (milliseconds: number) => new Promise<void>(resolve => setTimeout(
 /** Stage the whole file before upload so Recover audio always has a complete manifest. */
 export async function uploadAudioFile(options: AudioUploadOptions): Promise<void> {
   const { audio, scope, conversationId, partId, leaseToken, hooks } = options;
+  const chunkSamples = Math.max(1, Math.round((options.chunkSeconds ?? DEFAULT_CHUNK_SECONDS) * SAMPLE_RATE));
   try { options.signal?.throwIfAborted(); }
   catch { throw new AudioUploadError('The audio upload was cancelled before it was saved.', false); }
   if (!audio.samples.length || audio.samples.length > MAX_AUDIO_SECONDS * SAMPLE_RATE) throw new AudioUploadError('Choose an audio file between a moment and two hours long.', false);
@@ -58,21 +60,23 @@ export async function uploadAudioFile(options: AudioUploadOptions): Promise<void
     const progress = (phase: AudioUploadProgress['phase']) => options.onProgress?.({ phase, confirmedSamples, totalSamples });
     const checkLease = () => { options.signal?.throwIfAborted(); if (leaseFailure) throw leaseFailure; };
     let renewing = false;
+    // The server lease lasts 90 seconds. Renewing every 30 seconds is enough
+    // for long uploads and avoids competing with chunk authorization calls.
     const heartbeat = setInterval(() => {
       if (renewing || leaseFailure || options.signal?.aborted) return;
       renewing = true;
       void hooks.heartbeat().catch(error => { if (!transientAudioError(error)) leaseFailure = error; }).finally(() => { renewing = false; });
-    }, 15000);
+    }, 30000);
     const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', unload);
     try {
       await retryAudioOperation(() => hooks.heartbeat(), checkLease, options.signal); checkLease(); progress('preparing');
       const key = `${scopeKey(scope)}/${conversationId}`;
-      const recovery: Recovery = { key, scope: scopeKey(scope), conversationId, partId, leaseToken, totalSamples, chunkCount: Math.ceil(totalSamples / CHUNK_SAMPLES), stopped: true, updatedAt: new Date().toISOString() };
+      const recovery: Recovery = { key, scope: scopeKey(scope), conversationId, partId, leaseToken, totalSamples, chunkCount: Math.ceil(totalSamples / chunkSamples), stopped: true, updatedAt: new Date().toISOString() };
       const chunks: StoredChunk[] = [];
-      for (let start = 0, sequence = 0; start < totalSamples; start += CHUNK_SAMPLES, sequence++) {
+      for (let start = 0, sequence = 0; start < totalSamples; start += chunkSamples, sequence++) {
         checkLease();
-        const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
+        const end = Math.min(start + chunkSamples, totalSamples);
         const buffer = encodeWav(audio.samples.subarray(start, end));
         const digest = await crypto.subtle.digest('SHA-256', buffer);
         const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');

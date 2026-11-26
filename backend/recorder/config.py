@@ -4,16 +4,33 @@ from pathlib import Path
 import re
 from typing import Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cryptography.fernet import Fernet
 from psycopg.conninfo import conninfo_to_dict
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Keep the API-side limit large enough for one complete mono 16 kHz PCM WAV
+# chunk (44-byte header plus 15 seconds of 16-bit samples). This leaves room
+# for older clients while current customer sessions use 5-second chunks.
+MIN_RECORDING_CHUNK_BYTES = 44 + (15 * 16000 * 2)
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True)
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False, hide_input_in_errors=True, populate_by_name=True)
     environment: Literal["development", "local", "test", "staging", "production"] = "development"
+    error_alert_ai_enabled: bool = True
+    error_alert_ai_model: str = "gpt-4.1-mini"
+    error_alert_cooldown_seconds: int = Field(default=3600, ge=0, le=86400)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=2525, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr | None = None
+    smtp_from_email: str = ""
+    smtp_from_name: str = "GuruConnect"
+    error_alert_emails: list[str] = Field(default_factory=list)
     local_data_dir: Path = Path(__file__).resolve().parents[1] / ".local-data"
     database_url: SecretStr | None = None
     supabase_url: str = ""
@@ -27,28 +44,77 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5176", "http://127.0.0.1:5176", "http://localhost:5174", "http://127.0.0.1:5174"]
     trusted_hosts: list[str] = ["localhost", "127.0.0.1", "::1", "testserver"]
     request_body_timeout_seconds: float = Field(default=15, gt=0, le=120)
-    max_concurrent_requests: int = Field(default=20, ge=1, le=1000)
+    max_concurrent_requests: int = Field(default=64, ge=1, le=1000)
     preauth_rate_limit_per_minute: int = Field(default=300, ge=1, le=10000)
     preauth_rate_limit_max_peers: int = Field(default=4096, ge=1, le=100000)
-    storage_bucket: str = "recorder-audio"
+    storage_bucket: str = "session-audio"
     pool_min_size: int = Field(default=1, ge=1, le=10)
     pool_max_size: int = Field(default=10, ge=1, le=50)
-    upload_max_bytes: int = Field(default=400_000, ge=32044, le=2_000_000)
+    upload_max_bytes: int = Field(default=6_000_000, ge=MIN_RECORDING_CHUNK_BYTES, le=10_000_000)
     recording_max_seconds: int = Field(default=7200, ge=30, le=7200)
-    window_seconds: int = Field(default=30, ge=5, le=120)
+    # Durable browser chunks and provider windows are independent. Customer
+    # Sessions publish short progressive windows while recording continues.
+    window_seconds: int = Field(default=180, ge=5, le=180)
+    # Session audio arrives from the browser in 15-second chunks. Align the
+    # provider window with that boundary so one upload does not fan out into
+    # three transcription/translation jobs.
+    live_window_seconds: int = Field(default=15, ge=5, le=30)
     context_seconds: int = Field(default=2, ge=0, le=10)
     signed_url_seconds: int = Field(default=120, ge=30, le=600)
     worker_lease_seconds: int = Field(default=180, ge=30, le=900)
     rate_limit_per_minute: int = Field(default=120, ge=10, le=10000)
     elevenlabs_api_key: SecretStr | None = None
-    azure_translator_key: SecretStr | None = None
-    azure_translator_region: str = ""
-    azure_translator_endpoint: str = "https://api.cognitive.microsofttranslator.com"
+    openai_api_key: SecretStr | None = None
+    # One OpenAI model is used for translation and walk-in extraction. Keep the
+    # public configuration name intentionally narrow so another legacy env var
+    # cannot silently select a different model.
+    openai_translation_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
+    # Speech-to-text provider/model for short individual-field clips. Keep the
+    # provider model in deployment configuration so it can be changed without
+    # editing application code.
+    elevenlabs_transcription_model: str = Field(default="", validation_alias=AliasChoices("ELEVENLABS_TRANSCRIPTION_MODEL"))
+    embedded_processing_enabled: bool = True
+    processing_shutdown_seconds: float = Field(default=15, gt=0, le=25)
+    processing_concurrency: int = Field(default=4, ge=1, le=20)
+    managed_provider_concurrency: int = Field(default=4, ge=1, le=20)
+    app_timezone: str = "Asia/Kolkata"
+    # Used by the server-side Zoho Mail follow-up sender and the Supabase
+    # weekday cron callback. The token itself remains in zoho_connections.
+    zoho_accounts_url: str = "https://accounts.zoho.com"
+    zoho_mail_api_domain: str = "https://mail.zoho.com"
+    zoho_refresh_cron_secret: str = ""
+
+    @field_validator("openai_translation_model")
+    @classmethod
+    def validate_translation_model(cls, value):
+        from .openai_translator import validate_translation_model
+        return validate_translation_model(value)
+
+    @field_validator("app_timezone")
+    @classmethod
+    def validate_app_timezone(cls, value):
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, TypeError):
+            raise ValueError("APP_TIMEZONE must be a valid IANA timezone") from None
+        return value
 
     @field_validator("environment", mode="before")
     @classmethod
     def normalize_environment(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("error_alert_emails", mode="before")
+    @classmethod
+    def parse_error_alert_emails(cls, value):
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return []
+            if cleaned.startswith("["):
+                return value
+            return [item.strip() for item in cleaned.split(",") if item.strip()]
+        return value
 
     @field_validator("supabase_url")
     @classmethod

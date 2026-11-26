@@ -1,9 +1,13 @@
 import hashlib
 import json
+import logging
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from urllib.parse import quote
+
+import httpx
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from psycopg.types.json import Jsonb
@@ -12,33 +16,278 @@ from . import schemas as s
 from .db import many, one
 from .errors import fail
 from .security import User, Workspace, administrator, conversation, current_user, token_hash, workspace
+from .activity_log import emit
 
 router = APIRouter(prefix="/api/v1")
+log = logging.getLogger("recorder.api")
+
+DOCUMENT_TYPES = ("quote", "invoice", "sales-order", "purchase-order")
+DOCUMENT_ROLES = ("owner", "salesperson")
+
+
+def default_document_permissions(role: str) -> dict[str, dict[str, bool]]:
+    enabled = role in DOCUMENT_ROLES
+    return {document_type: {
+                "create": enabled, "edit": enabled, "delete": enabled,
+                "accept": enabled if document_type == "quote" else False,
+                "mark-paid": enabled if document_type == "invoice" else False,
+            }
+            for document_type in DOCUMENT_TYPES}
+
+
+def merge_document_permissions(rows: list[dict]) -> dict[str, dict[str, dict[str, bool]]]:
+    result = {role: default_document_permissions(role) for role in DOCUMENT_ROLES}
+    for row in rows:
+        role = row.get("role")
+        document_type = row.get("document_type")
+        if role in result and document_type in DOCUMENT_TYPES:
+            result[role][document_type] = {
+                "create": bool(row.get("can_create")),
+                "edit": bool(row.get("can_edit")),
+                "delete": bool(row.get("can_delete")),
+                "accept": bool(row.get("can_accept")) if document_type == "quote" else False,
+                "mark-paid": bool(row.get("can_mark_paid")) if document_type == "invoice" else False,
+            }
+    return result
 
 
 async def audit(connection, context: Workspace, action: str, metadata: dict | None = None, conversation_id=None):
-    await connection.execute("insert into audit_events(organisation_id,conversation_id,actor_id,action,metadata) values(%s,%s,%s,%s,%s)", (context.id, conversation_id, context.user.id, action, Jsonb(metadata or {})))
+    await connection.execute("insert into audit_events(organisation_id,conversation_id,member_id,actor_id,action,metadata) values(%s,%s,%s,%s,%s,%s)", (context.id, conversation_id, context.member_id, context.user.id, action, Jsonb(metadata or {})))
+    emit(action, organisation_id=context.id, member_id=context.member_id, actor_id=context.user.id,
+         conversation_id=conversation_id, metadata=metadata)
 
 
 @router.get("/profile")
 async def get_profile(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
+        await connection.execute("""
+            update profiles
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=profiles.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                leave_end_date=null,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=profiles.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null, updated_at=now()
+            where id=%s and coalesce(final_status, availability_status)='on_leave'
+              and coalesce(final_status_until, leave_end_date) < current_date
+        """, (user.id,))
+        await connection.execute("""
+            update profiles p
+            set availability_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status=case when exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds') then 'active' else 'inactive' end,
+                final_status_until=null,
+                updated_at=now()
+            where p.id=%s
+              and coalesce(p.final_status, p.availability_status)='active'
+              and (p.last_seen_at is null or p.last_seen_at < now()-interval '90 seconds')
+              and not exists (select 1 from profile_presence_sessions s where s.user_id=p.id and s.last_seen_at >= now()-interval '90 seconds')
+        """, (user.id,))
         row = await one(connection, "select * from profiles where id=%s", (user.id,))
     return row or {"id": user.id, "display_name": user.name, "preferences": {}}
 
 
 @router.patch("/profile")
-async def update_profile(body: s.ProfilePatch, request: Request, user: User = Depends(current_user)):
+async def update_profile(body: s.ProfilePatch, request: Request, user: User = Depends(current_user), context: Workspace = Depends(workspace)):
     if len(str(body.preferences)) > 5000 or any(key not in {"theme", "microphone_id", "locale"} for key in body.preferences):
         fail("invalid_preferences")
+    final_status = body.final_status or body.availability_status
+    final_status_until = body.final_status_until or body.leave_end_date
+    if context.role == "receptionist" and final_status not in {"active", "inactive"}:
+        fail("receptionist_status_invalid", 422, "Receptionists can only be Active or Inactive")
     async with request.app.state.db.connection() as connection:
-        return await one(connection, "insert into profiles(id,display_name,preferences) values(%s,%s,%s) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences)))
+        if body.phone is not None and body.phone and not re.fullmatch(r"\+?[0-9][0-9 ()-]{7,19}", body.phone):
+            fail("invalid_phone", 422)
+        if body.avatar_path is not None and body.avatar_path and not body.avatar_path.startswith(f"{user.id}/"):
+            fail("invalid_avatar", 422)
+        return await one(connection, "insert into profiles(id,display_name,preferences,phone,avatar_path,availability_status,leave_end_date,final_status,final_status_until,last_seen_at) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,now()) on conflict(id) do update set display_name=excluded.display_name,preferences=excluded.preferences,phone=excluded.phone,avatar_path=excluded.avatar_path,availability_status=excluded.availability_status,leave_end_date=excluded.leave_end_date,final_status=excluded.final_status,final_status_until=excluded.final_status_until,updated_at=now() returning *", (user.id, body.display_name, Jsonb(body.preferences), body.phone, body.avatar_path, final_status, final_status_until, final_status, final_status_until))
+
+@router.post("/presence")
+async def presence(request: Request, body: s.PresencePing = s.PresencePing(), user: User = Depends(current_user)):
+    async with request.app.state.db.connection() as connection:
+        if body.sessionId:
+            await connection.execute("""
+                update profiles
+                set availability_status='active', leave_end_date=null, final_status='active', final_status_until=null, updated_at=now()
+                where id=%s and coalesce(final_status, availability_status) in ('inactive','be_right_back')
+                  and not exists (
+                      select 1 from profile_presence_sessions s
+                      where s.user_id=%s and s.last_seen_at >= now()-interval '90 seconds'
+                  )
+            """, (user.id, user.id))
+            await connection.execute("""
+                insert into profile_presence_sessions(user_id,session_id,last_seen_at)
+                values(%s,%s,now())
+                on conflict(user_id,session_id) do update set last_seen_at=excluded.last_seen_at
+            """, (user.id, body.sessionId))
+        row = await one(connection, "update profiles set last_seen_at=now(), updated_at=now() where id=%s returning id,last_seen_at,availability_status,final_status,final_status_until", (user.id,))
+    return row or {"id": user.id, "availability_status": "active", "final_status": "active"}
+
+
+@router.get("/analytics")
+async def analytics(
+    request: Request,
+    context: Workspace = Depends(workspace),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    group_by: str = Query(default="day", alias="groupBy"),
+):
+    """Return one role-scoped analytics snapshot from supported records."""
+    if group_by not in {"day", "week", "month", "quarter", "year"}:
+        fail("invalid_analytics_group", 422, "Choose a valid analytics grouping")
+    scoped_all = context.admin and context.member_id == context.user.id
+    scope_user = context.member_id
+    window_end = end or datetime.now(timezone.utc)
+    window_start = start or window_end - timedelta(days=30)
+    if window_start.tzinfo is None:
+        window_start = window_start.replace(tzinfo=timezone.utc)
+    if window_end.tzinfo is None:
+        window_end = window_end.replace(tzinfo=timezone.utc)
+    if window_start >= window_end:
+        fail("invalid_analytics_range", 422, "The analytics start must be before the end")
+
+    enquiry_scope = "e.organisation_id=%s and (%s or e.owner_id=%s or e.assigned_to=%s)"
+    enquiry_scope_args = (context.id, scoped_all, scope_user, scope_user)
+    visit_scope = "v.organisation_id=%s and (%s or v.registered_by=%s or v.assigned_agent_id=%s)"
+    visit_scope_args = (context.id, scoped_all, scope_user, scope_user)
+    conversation_scope = "c.organisation_id=%s and (%s or c.owner_id=%s)"
+    conversation_scope_args = (context.id, scoped_all, scope_user)
+    async with request.app.state.db.connection() as connection:
+        total = await one(connection, f"""
+            select count(*) as total from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+        """, enquiry_scope_args + (window_start, window_end))
+        stages = await many(connection, f"""
+            select coalesce(e.stage, 'new') as stage, count(*) as count
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by e.stage
+            order by case e.stage when 'new' then 0 when 'in_process' then 1
+                when 'proposal' then 2 when 'negotiation' then 3
+                when 'closed' then 4 when 'lost' then 5 else 6 end
+        """, enquiry_scope_args + (window_start, window_end))
+        channels = await many(connection, f"""
+            select coalesce(nullif(e.channel, ''), 'Other') as channel, count(*) as count
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by e.channel order by count desc, channel
+        """, enquiry_scope_args + (window_start, window_end))
+        bucket = {"day": "day", "week": "week", "month": "month", "quarter": "quarter", "year": "year"}[group_by]
+        trend = await many(connection, f"""
+            select date_trunc('{bucket}', e.created_at) as period, count(*) as enquiries
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            group by period order by period
+        """, enquiry_scope_args + (window_start, window_end))
+        visitors = await one(connection, f"""
+            select count(*) as total,
+                   count(*) filter (where v.status in ('Completed','Converted to Enquiry')) as converted,
+                   count(*) filter (where v.status in ('Waiting for Assignment','Assigned','Waiting for Sales Agent','Follow-up Required')) as pending
+            from guruconnect_walkin_visits v
+            where {visit_scope} and v.created_at >= %s and v.created_at < %s
+        """, visit_scope_args + (window_start, window_end))
+        conversations = await one(connection, f"""
+            select count(*) as total, coalesce(sum(c.duration_seconds), 0) as duration
+            from conversations c
+            where {conversation_scope} and c.created_at >= %s and c.created_at < %s
+                and c.deleted_at is null
+        """, conversation_scope_args + (window_start, window_end))
+        followups = await one(connection, f"""
+            select count(*) filter (where e.follow_up_required) as pending,
+                   count(*) filter (where e.follow_up_required and e.created_at < now() - interval '7 days') as overdue
+            from guruconnect_enquiries e
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+        """, enquiry_scope_args + (window_start, window_end))
+        performance = await many(connection, """
+            select m.user_id as "userId",
+                   coalesce(p.display_name, 'Unassigned') as name,
+                   (select count(*) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as calls,
+                   (select count(*) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.final_state='complete' and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as conversations,
+                   (select count(*) from guruconnect_enquiries e where e.organisation_id=m.organisation_id
+                     and e.follow_up_required and (e.owner_id=m.user_id or e.assigned_to=m.user_id)
+                     and e.created_at >= %s and e.created_at < %s) as pending,
+                   (select coalesce(sum(c.duration_seconds), 0) from conversations c where c.organisation_id=m.organisation_id
+                     and c.owner_id=m.user_id and c.created_at >= %s and c.created_at < %s and c.deleted_at is null) as "activeTime",
+                   (select count(*) from guruconnect_enquiries e where e.organisation_id=m.organisation_id
+                     and e.stage='closed' and (e.owner_id=m.user_id or e.assigned_to=m.user_id)
+                     and e.created_at >= %s and e.created_at < %s) as won
+            from members m
+            left join profiles p on p.id=m.user_id
+            where m.organisation_id=%s and m.status='active'
+                and (%s or m.user_id=%s)
+                and m.role in ('owner', 'admin', 'salesperson')
+            order by name
+        """, (window_start, window_end, window_start, window_end, window_start, window_end,
+              window_start, window_end, window_start, window_end, context.id, scoped_all, scope_user))
+        call_activity = await many(connection, f"""
+            with periods as (
+                select date_trunc('{bucket}', c.created_at) as period,
+                       count(*) as calls,
+                       count(*) filter (where c.final_state='complete') as conversations,
+                       coalesce(sum(c.duration_seconds), 0) as duration
+                from conversations c
+                where {conversation_scope} and c.created_at >= %s and c.created_at < %s
+                    and c.deleted_at is null
+                group by period
+            )
+            select periods.*,
+                   (select count(*) from guruconnect_walkin_visits v
+                    where v.organisation_id=%s
+                      and (%s or v.registered_by=%s or v.assigned_agent_id=%s)
+                      and date_trunc('{bucket}', v.created_at)=periods.period) as visitors
+            from periods order by period
+        """, conversation_scope_args + (window_start, window_end) + visit_scope_args)
+        latest = await many(connection, f"""
+            select e.id, e.customer_name as "customerName", e.created_at as "createdAt",
+                   e.stage, e.channel, e.branch, e.assigned_to as "assignedTo",
+                   coalesce(p.display_name, e.payload->>'assignedExecutive', 'Awaiting assignment') as "assignedName"
+            from guruconnect_enquiries e
+            left join public.profiles p on p.id=e.assigned_to
+            where {enquiry_scope} and e.created_at >= %s and e.created_at < %s
+            order by e.created_at desc, e.id desc limit 20
+        """, enquiry_scope_args + (window_start, window_end))
+    return {
+        "total": total["total"],
+        "organizationWide": scoped_all,
+        "range": {"start": window_start.isoformat(), "end": window_end.isoformat(), "groupBy": group_by},
+        "channels": channels,
+        "stages": stages,
+        "trend": [{"period": item["period"].isoformat(), "enquiries": item["enquiries"]} for item in trend],
+        "visitors": visitors,
+        "conversations": conversations,
+        "followUps": followups,
+        "followUpCoverage": {
+            "due": followups["pending"],
+            "overdue": followups["overdue"],
+            "completed": None,
+            "coverage": None,
+        },
+        "salespersonPerformance": [
+            {**item, "userId": str(item["userId"])}
+            for item in performance
+        ],
+        "callActivity": [
+            {**item, "period": item["period"].isoformat()}
+            for item in call_activity
+        ],
+        "latestActivities": [
+            {**item, "id": str(item["id"]), "createdAt": item["createdAt"].isoformat()}
+            for item in latest
+        ],
+    }
 
 
 @router.get("/workspaces")
 async def list_workspaces(request: Request, user: User = Depends(current_user)):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select o.*,m.role from organisations o join members m on m.organisation_id=o.id where m.user_id=%s and m.status='active' order by o.created_at", (user.id,))
+        rows = await many(connection, """
+            select o.id, o.name, m.user_id as member_id, m.role, actor.role as actor_role, p.display_name
+            from organisations o
+            join members actor on actor.organisation_id=o.id and actor.user_id=%s and actor.status='active'
+            join members m on m.organisation_id=o.id and m.status='active'
+            left join profiles p on p.id=m.user_id
+            where m.user_id=%s or (actor.role='owner' and m.role in ('salesperson', 'receptionist'))
+            order by o.created_at, case when m.user_id=%s then 0 else 1 end, p.display_name
+        """, (user.id, user.id, user.id))
     return {"items": rows, "next_cursor": None}
 
 
@@ -50,6 +299,8 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
         if count["count"] >= 10:
             fail("workspace_limit_reached", 409)
         created = await one(connection, "select create_workspace(%s,%s) as id", (user.id, body.name))
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, created["id"], request.app.state.settings)
         row = await one(connection, "select * from organisations where id=%s", (created["id"],))
         return {**row, "role": "owner"}
 
@@ -57,20 +308,152 @@ async def create_workspace(body: s.WorkspaceCreate, request: Request, user: User
 @router.get("/team")
 async def team(request: Request, context: Workspace = Depends(administrator)):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select m.*,p.display_name from members m left join profiles p on p.id=m.user_id where m.organisation_id=%s order by m.created_at", (context.id,))
+        rows = await many(connection, """
+            select m.*,p.display_name,
+                   case
+                     when coalesce(p.final_status, p.availability_status)='on_leave' and coalesce(p.final_status_until, p.leave_end_date) >= current_date then 'on_leave'
+                     when coalesce(p.final_status, p.availability_status)='inactive' then 'inactive'
+                     when coalesce(p.final_status, p.availability_status)='be_right_back' and p.updated_at > now()-interval '15 minutes' then 'be_right_back'
+                   when exists (select 1 from profile_presence_sessions ps where ps.user_id=p.id and ps.last_seen_at >= now()-interval '90 seconds') then 'active'
+                     else 'inactive'
+                   end as availability_status,
+                   coalesce(p.final_status, p.availability_status, 'active') as final_status,
+                   coalesce(p.final_status_until, p.leave_end_date) as final_status_until,
+                   p.last_seen_at,u.email,
+                   case when m.status <> 'active' then m.status when u.confirmed_at is null then 'invited' else 'active' end as status
+            from members m left join profiles p on p.id=m.user_id
+            join auth.users u on u.id=m.user_id
+            where m.organisation_id=%s order by m.created_at
+        """, (context.id,))
         invitations = await many(connection, "select id,email,role,expires_at,accepted_at,revoked_at from invites where organisation_id=%s order by created_at desc limit 100", (context.id,))
     return {"items": rows, "invites": invitations, "next_cursor": None}
 
 
+@router.get("/role-document-permissions")
+async def role_document_permissions(request: Request, context: Workspace = Depends(administrator)):
+    async with request.app.state.db.connection() as connection:
+        rows = await many(connection, """
+            select role,document_type,can_create,can_edit,can_delete,can_accept,can_mark_paid
+            from role_document_permissions
+            where organisation_id=%s
+        """, (context.id,))
+    return {"roles": merge_document_permissions(rows)}
+
+
+@router.patch("/role-document-permissions/{role}")
+async def update_role_document_permissions(role: str, body: dict, request: Request, context: Workspace = Depends(administrator)):
+    if role not in DOCUMENT_ROLES:
+        fail("invalid_document_role", 422, "Choose a valid workspace role")
+    permissions = body.get("permissions") if isinstance(body, dict) else None
+    if not isinstance(permissions, dict):
+        fail("invalid_document_permissions", 422, "Document permissions are required")
+    clean = {}
+    for document_type in DOCUMENT_TYPES:
+        value = permissions.get(document_type, {})
+        if not isinstance(value, dict):
+            fail("invalid_document_permissions", 422, "Each document permission must be an object")
+        allowed_actions = ("create", "edit", "delete", "accept", "mark-paid")
+        clean[document_type] = {action: bool(value.get(action, False)) for action in allowed_actions}
+        clean[document_type]["accept"] = clean[document_type]["accept"] if document_type == "quote" else False
+        clean[document_type]["mark-paid"] = clean[document_type]["mark-paid"] if document_type == "invoice" else False
+    async with request.app.state.db.connection() as connection:
+        for document_type, value in clean.items():
+            await connection.execute("""
+                insert into role_document_permissions(organisation_id,role,document_type,can_create,can_edit,can_delete,can_accept,can_mark_paid,updated_at)
+                values(%s,%s,%s,%s,%s,%s,%s,%s,now())
+                on conflict (organisation_id,role,document_type) do update set
+                  can_create=excluded.can_create,can_edit=excluded.can_edit,can_delete=excluded.can_delete,
+                  can_accept=excluded.can_accept,can_mark_paid=excluded.can_mark_paid,updated_at=now()
+            """, (context.id, role, document_type, value["create"], value["edit"], value["delete"], value["accept"], value["mark-paid"]))
+        await audit(connection, context, "role.document_permissions.updated", {"role": role, "permissions": clean})
+    return {"role": role, "permissions": clean}
+
+
+async def send_supabase_invite(request: Request, email: str, name: str):
+    settings = request.app.state.settings
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        fail("auth_not_configured", 503, "Supabase admin authentication is not configured")
+
+    origin = request.headers.get("origin")
+    redirect_origin = origin if origin in settings.cors_origins else settings.cors_origins[0]
+    invite_payload = {"email": email.lower(), "data": {"display_name": name.strip()}}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/invite?redirect_to={quote(f'{redirect_origin}/reset', safe='')}",
+                headers={
+                    "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
+                    "apikey": settings.supabase_service_role_key.get_secret_value(),
+                    "Content-Type": "application/json",
+                },
+                json=invite_payload,
+            )
+        if response.status_code >= 400:
+            provider_error = {}
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    provider_error = {key: payload.get(key) for key in ("code", "error_code", "msg", "message") if payload.get(key)}
+            except ValueError:
+                pass
+            log.warning(
+                "supabase_invite_failed request_id=%s status=%s provider_error=%s",
+                getattr(request.state, "request_id", "unavailable"), response.status_code, provider_error or "unstructured_response",
+            )
+            if response.status_code in {400, 422}:
+                fail("member_invitation_failed", 409, "This email may already have an account or could not be invited")
+            fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
+        auth_user = response.json()
+        if not auth_user.get("id"):
+            fail("member_invitation_unavailable", 503, "Supabase did not return the invited member")
+        return auth_user
+    except httpx.HTTPError as exc:
+        log.warning(
+            "supabase_invite_transport_failed request_id=%s exception_type=%s",
+            getattr(request.state, "request_id", "unavailable"), type(exc).__name__,
+        )
+        fail("member_invitation_unavailable", 503, "The invitation email could not be sent")
+
+
 @router.post("/invites", status_code=201)
 async def invite(body: s.Invitation, request: Request, context: Workspace = Depends(administrator)):
-    if body.role == "admin" and context.role != "owner":
-        fail("owner_required", 403)
-    token = secrets.token_urlsafe(32)
+    # Supabase creates the account and sends the recipient a one-time invite
+    # link. The link lands on /reset, where the recipient sets their password.
+    # Membership is provisioned here, so no invitation token or second accept
+    # step is needed after the recipient follows the email.
+    auth_user = await send_supabase_invite(request, body.email, body.name)
+    invited_user_id = auth_user["id"]
+
+    token = secrets.token_urlsafe(32)  # retained only as a non-user-visible audit value
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "insert into invites(organisation_id,email,role,token_hash,invited_by,expires_at) values(%s,%s,%s,%s,%s,now()+interval '7 days') returning id,email,role,expires_at", (context.id, body.email.lower(), body.role, token_hash(token), context.user.id))
-        await audit(connection, context, "invitation.created", {"invite_id": str(row["id"]), "role": body.role})
-    return {**row, "token": token}
+        if await one(connection, "select 1 from members where organisation_id=%s and user_id=%s", (context.id, invited_user_id)):
+            fail("membership_exists", 409, "This person is already a member of the workspace")
+        row = await one(connection, "insert into invites(organisation_id,email,role,token_hash,invited_by,accepted_by,accepted_at,expires_at) values(%s,%s,%s,%s,%s,%s,now(),now()+interval '7 days') returning id,email,role,expires_at", (context.id, body.email.lower(), body.role, token_hash(token), context.user.id, invited_user_id))
+        await connection.execute("insert into members(organisation_id,user_id,role) values(%s,%s,%s)", (context.id, invited_user_id, body.role))
+        await audit(connection, context, "invitation.created", {"invite_id": str(row["id"]), "role": body.role, "user_id": str(invited_user_id)})
+    return {**row, "status": "sent"}
+
+
+@router.post("/team/{user_id}/resend-invite")
+async def resend_invite(user_id: UUID, request: Request, context: Workspace = Depends(administrator)):
+    async with request.app.state.db.connection() as connection:
+        member = await one(connection, """
+            select m.role,m.status,p.display_name,u.email,u.confirmed_at
+            from members m
+            left join profiles p on p.id=m.user_id
+            join auth.users u on u.id=m.user_id
+            where m.organisation_id=%s and m.user_id=%s
+            for update
+        """, (context.id, user_id))
+        if not member:
+            fail("member_not_found", 404)
+        if member["role"] == "owner" or member["status"] != "active" or member["confirmed_at"] is not None:
+            fail("invitation_not_pending", 409, "This member no longer has a pending invitation")
+
+    await send_supabase_invite(request, member["email"], member["display_name"] or member["email"])
+    async with request.app.state.db.connection() as connection:
+        await audit(connection, context, "invitation.resent", {"user_id": str(user_id), "email": member["email"]})
+    return {"status": "sent", "email": member["email"]}
 
 
 @router.post("/invites/accept")
@@ -95,11 +478,89 @@ async def revoke_member(user_id: UUID, request: Request, context: Workspace = De
     return {"revoked": True}
 
 
+@router.delete("/team/{user_id}/delete")
+async def delete_member(user_id: UUID, request: Request, context: Workspace = Depends(administrator)):
+    """Permanently remove a non-owner member and member-scoped data."""
+    if context.role != "owner":
+        fail("membership_change_denied", 403)
+    settings = request.app.state.settings
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        fail("auth_not_configured", 503, "Supabase admin authentication is not configured")
+    if user_id == context.user.id:
+        fail("membership_change_denied", 403, "The workspace owner cannot delete their own account here")
+
+    owner_id = context.user.id
+    async with request.app.state.db.connection() as connection:
+        member = await one(connection, "select role from members where organisation_id=%s and user_id=%s for update", (context.id, user_id))
+        if not member:
+            fail("member_not_found", 404)
+        if member["role"] == "owner":
+            fail("membership_change_denied", 403)
+        if await one(connection, "select 1 from members where user_id=%s and organisation_id<>%s limit 1", (user_id, context.id)):
+            fail("member_in_other_workspace", 409, "Remove this member from their other workspaces before deleting their Auth account")
+        if await one(connection, "select 1 from conversations where organisation_id=%s and owner_id=%s limit 1", (context.id, user_id)):
+            fail("member_has_workspace_data", 409, "Move or remove this member's conversations before deleting the account")
+
+        # Delete the member's Zoho credentials and all Zoho pipeline cache data.
+        await connection.execute("delete from zoho_pipeline_records where organisation_id=%s and member_id=%s", (context.id, user_id))
+        await connection.execute("delete from zoho_pipeline_sync where organisation_id=%s and member_id=%s", (context.id, user_id))
+        await connection.execute("delete from zoho_connections where organisation_id=%s and member_id=%s", (context.id, user_id))
+
+        # Preserve ordinary workspace history under the owner while removing all
+        # foreign-key references that would block Auth account deletion.
+        await connection.execute("delete from recording_leases where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await connection.execute("delete from guruconnect_walkin_agents where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await connection.execute("update guruconnect_walkin_visits set registered_by=%s where organisation_id=%s and registered_by=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_walkin_visits set assigned_agent_id=null, assigned_at=null, status='Waiting for Assignment' where organisation_id=%s and assigned_agent_id=%s", (context.id, user_id))
+        await connection.execute("update guruconnect_walkin_history set actor_id=%s where organisation_id=%s and actor_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_walkin_recordings set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update guruconnect_enquiries set owner_id=%s, assigned_to=case when assigned_to=%s then %s else assigned_to end where organisation_id=%s and owner_id=%s", (owner_id, user_id, owner_id, context.id, user_id))
+        await connection.execute("update customers set owner_id=%s, member_id=case when member_id=%s then %s else member_id end where organisation_id=%s and owner_id=%s", (owner_id, user_id, owner_id, context.id, user_id))
+        await connection.execute("update chat_sessions set member_id=%s where organisation_id=%s and member_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update conversations set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update recorder_private.conversation_requests set owner_id=%s where organisation_id=%s and owner_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update speaker_assignments set assigned_by=%s where assigned_by=%s", (owner_id, user_id))
+        await connection.execute("update transcript_revisions set actor_id=%s where actor_id=%s", (owner_id, user_id))
+        await connection.execute("update comparisons set requested_by=%s where requested_by=%s", (owner_id, user_id))
+        await connection.execute("update audit_events set actor_id=%s where organisation_id=%s and actor_id=%s", (owner_id, context.id, user_id))
+        await connection.execute("update invites set invited_by=%s where organisation_id=%s and invited_by=%s", (owner_id, context.id, user_id))
+        await connection.execute("update invites set accepted_by=null where organisation_id=%s and accepted_by=%s", (context.id, user_id))
+        await connection.execute("delete from members where organisation_id=%s and user_id=%s", (context.id, user_id))
+        await audit(connection, context, "membership.deleted", {"user_id": str(user_id)})
+
+    key = settings.supabase_service_role_key.get_secret_value()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.delete(f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{user_id}", headers={"Authorization": f"Bearer {key}", "apikey": key})
+        if response.status_code not in {200, 204, 404}:
+            log.error("supabase_user_delete_failed request_id=%s status=%s user_id=%s", getattr(request.state, "request_id", "unavailable"), response.status_code, user_id)
+            fail("member_deletion_incomplete", 503, "Workspace data was removed, but the Auth account could not be deleted")
+    except httpx.HTTPError:
+        log.error("supabase_user_delete_transport_failed request_id=%s user_id=%s", getattr(request.state, "request_id", "unavailable"), user_id)
+        fail("member_deletion_incomplete", 503, "Workspace data was removed, but the Auth account could not be deleted")
+    return {"deleted": True, "user_id": str(user_id)}
+
+
 @router.get("/customers")
 async def customers(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), limit: int = Query(default=50, ge=1, le=100), cursor: UUID | None = None):
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select * from customers where organisation_id=%s and deleted_at is null and (%s or owner_id=%s) and name ilike %s and (%s::uuid is null or id>%s) order by id limit %s", (context.id, context.admin, context.user.id, "%" + q.replace("%", "\\%").replace("_", "\\_") + "%", cursor, cursor, limit + 1))
+        rows = await many(connection, "select * from customers where organisation_id=%s and deleted_at is null and owner_id=%s and name ilike %s and (%s::uuid is null or id>%s) order by id limit %s", (context.id, context.member_id, "%" + q.replace("%", "\\%").replace("_", "\\_") + "%", cursor, cursor, limit + 1))
     return {"items": rows[:limit], "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}
+
+@router.get("/enquiries/unread-count")
+async def unread_enquiries(request: Request, context: Workspace = Depends(workspace)):
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, "select count(*) as count from guruconnect_enquiries where organisation_id=%s and unread and (%s or assigned_to=%s)", (context.id, context.admin, context.user.id))
+    return {"count": row["count"]}
+
+@router.patch("/enquiries/{enquiry_id}/state")
+async def update_enquiry_state(enquiry_id: UUID, body: dict, request: Request, context: Workspace = Depends(workspace)):
+    stage = body.get("stage")
+    if stage not in {"new", "in_process", "closed", "customer_did_not_show"}: fail("invalid_enquiry_stage", 422)
+    async with request.app.state.db.connection() as connection:
+        row = await one(connection, "update guruconnect_enquiries set stage=%s, unread=false where id=%s and organisation_id=%s and (%s or assigned_to=%s) returning *", (stage, enquiry_id, context.id, context.admin, context.user.id))
+        if not row: fail("enquiry_not_found", 404)
+    return row
 
 
 @router.post("/customers", status_code=201)
@@ -111,7 +572,7 @@ async def create_customer(body: s.CustomerCreate, request: Request, context: Wor
 @router.patch("/customers/{customer_id}")
 async def update_customer(customer_id: UUID, body: s.CustomerCreate, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        row = await one(connection, "update customers set name=%s,is_unnamed=%s,updated_at=now() where id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s) returning *", ("Name not provided" if body.is_unnamed else body.name, body.is_unnamed, customer_id, context.id, context.admin, context.user.id))
+        row = await one(connection, "update customers set name=%s,is_unnamed=%s,updated_at=now() where id=%s and organisation_id=%s and deleted_at is null and owner_id=%s returning *", ("Name not provided" if body.is_unnamed else body.name, body.is_unnamed, customer_id, context.id, context.member_id))
         if not row:
             fail("customer_not_found", 404)
         await audit(connection, context, "customer.updated", {"customer_id": str(customer_id)})
@@ -121,21 +582,33 @@ async def update_customer(customer_id: UUID, body: s.CustomerCreate, request: Re
 @router.get("/customers/{customer_id}/conversations")
 async def customer_history(customer_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
-        customer = await one(connection, "select id from customers where id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s)", (customer_id, context.id, context.admin, context.user.id))
+        customer = await one(connection, "select id from customers where id=%s and organisation_id=%s and deleted_at is null and owner_id=%s", (customer_id, context.id, context.member_id))
         if not customer:
             fail("customer_not_found", 404)
-        rows = await many(connection, "select * from conversations where customer_id=%s and organisation_id=%s and deleted_at is null and (%s or owner_id=%s) order by created_at desc limit 100", (customer_id, context.id, context.admin, context.user.id))
+        rows = await many(connection, "select * from conversations where customer_id=%s and organisation_id=%s and deleted_at is null and owner_id=%s order by created_at desc limit 100", (customer_id, context.id, context.member_id))
     return {"items": rows, "next_cursor": None}
 
 
 @router.get("/conversations")
-async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: datetime | None = None):
+async def conversations(request: Request, context: Workspace = Depends(workspace), q: str = Query(default="", max_length=120), state: str | None = Query(default=None, max_length=30), date_from: datetime | None = None, date_to: datetime | None = None, limit: int = Query(default=30, ge=1, le=100), cursor: str | None = Query(default=None, max_length=100)):
+    cursor_time, cursor_id = None, None
+    if cursor:
+        try:
+            timestamp, separator, identifier = cursor.partition("|")
+            cursor_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            cursor_id = UUID(identifier) if separator else None
+        except (ValueError, TypeError):
+            fail("invalid_cursor", 400)
     async with request.app.state.db.connection() as connection:
-        rows = await many(connection, "select * from conversations where organisation_id=%s and deleted_at is null and (%s or owner_id=%s) and (customer_name_snapshot ilike %s or title ilike %s) and (%s::text is null or capture_state=%s or final_state=%s) and (%s::timestamptz is null or created_at>=%s) and (%s::timestamptz is null or created_at<=%s) and (%s::timestamptz is null or created_at<%s) order by created_at desc,id desc limit %s", (context.id, context.admin, context.user.id, "%"+q+"%", "%"+q+"%", state, state, state, date_from, date_from, date_to, date_to, cursor, cursor, limit+1))
-    return {"items": rows[:limit], "next_cursor": rows[limit-1]["created_at"].isoformat() if len(rows)>limit else None}
+        audio_bucket = "walkin-audio" if context.role == "receptionist" else "session-audio"
+        rows = await many(connection, "select c.*, cust.phone as customer_phone, cust.email as customer_email from conversations c left join customers cust on cust.id=c.customer_id and cust.organisation_id=c.organisation_id where c.organisation_id=%s and c.deleted_at is null and c.audio_bucket=%s and c.owner_id=%s and (c.customer_name_snapshot ilike %s or c.title ilike %s or coalesce(cust.phone,'') ilike %s or coalesce(cust.email,'') ilike %s) and (%s::text is not null or (c.upload_state='saved' and c.total_samples>0)) and (%s::text is null or c.capture_state=%s or c.final_state=%s) and (%s::timestamptz is null or c.created_at>=%s) and (%s::timestamptz is null or c.created_at<=%s) and (%s::timestamptz is null or c.created_at<%s or (%s::uuid is not null and c.created_at=%s and c.id<%s)) order by c.created_at desc,c.id desc limit %s", (context.id, audio_bucket, context.member_id, "%"+q+"%", "%"+q+"%", "%"+q+"%", "%"+q+"%", state, state, state, state, date_from, date_from, date_to, date_to, cursor_time, cursor_time, cursor_id, cursor_time, cursor_id, limit+1))
+    return {"items": rows[:limit], "next_cursor": f"{rows[limit-1]['created_at'].isoformat()}|{rows[limit-1]['id']}" if len(rows)>limit else None}
 
 
-async def create_run(connection, context: Workspace, conv: dict, engine_id: str, kind: str, idempotency_key: str, *, allow_blocked: bool = False):
+async def create_run(connection, context: Workspace, conv: dict, engine_id: str, kind: str, idempotency_key: str, *, allow_blocked: bool = False, settings=None):
+    if settings is not None:
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, context.id, settings)
     previous = await one(connection, "select * from processing_runs where conversation_id=%s and idempotency_key=%s", (conv["id"], idempotency_key))
     if previous:
         if previous["engine_id"] != engine_id or previous["kind"] != kind:
@@ -149,17 +622,28 @@ async def create_run(connection, context: Workspace, conv: dict, engine_id: str,
     strategy = "native-english"
     snapshot = dict(conn["config"] if conn else {})
     if engine_id == "elevenlabs":
-        translator = await one(connection, "select c.* from workspace_engine_settings s join engine_connections c on c.id=s.translator_connection_id and c.organisation_id=s.organisation_id where s.organisation_id=%s and c.engine_id in ('azure-translator','openai-translator') for share of s,c", (context.id,))
-        strategy = "openai" if translator and translator["engine_id"] == "openai-translator" else "azure"
+        translator = await one(connection, "select c.* from workspace_engine_settings s join engine_connections c on c.id=s.translator_connection_id and c.organisation_id=s.organisation_id where s.organisation_id=%s and c.engine_id='openai-translator' for share of s,c", (context.id,))
+        strategy = "openai" if translator else "native-english"
         if translator:
             snapshot["translation"] = {"provider": translator["engine_id"], "config": translator["config"]}
-    return await one(connection, "insert into processing_runs(conversation_id,organisation_id,connection_id,connection_generation,engine_id,model_version,config_snapshot,translation_strategy,translator_connection_id,translator_generation,kind,state,idempotency_key,audio_manifest_hash) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning *", (conv["id"], context.id, conn["id"] if conn else None, conn["generation"] if conn else None, engine_id, "scribe_v2" if engine_id == "elevenlabs" else "large-v3", Jsonb(snapshot), strategy, translator["id"] if translator else None, translator["generation"] if translator else None, kind, "pending" if ready else "blocked", idempotency_key, conv.get("manifest_hash")))
+    configured_model = ((conn.get("config") or {}).get("model") if conn else None) or (getattr(settings, "elevenlabs_transcription_model", "") if engine_id == "elevenlabs" and settings else "")
+    return await one(connection, "insert into processing_runs(conversation_id,organisation_id,connection_id,connection_generation,engine_id,model_version,config_snapshot,translation_strategy,translator_connection_id,translator_generation,kind,state,idempotency_key,audio_manifest_hash) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning *", (conv["id"], context.id, conn["id"] if conn else None, conn["generation"] if conn else None, engine_id, configured_model if engine_id == "elevenlabs" else "large-v3", Jsonb(snapshot), strategy, translator["id"] if translator else None, translator["generation"] if translator else None, kind, "pending" if ready else "blocked", idempotency_key, conv.get("manifest_hash")))
 
 
 @router.post("/conversations", status_code=201)
 async def new_conversation(body: s.ConversationCreate, request: Request, response: Response,
                            context: Workspace = Depends(workspace),
                            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+    if context.member_id != context.user.id:
+        fail("personal_workspace_required", 403, "Switch to your own workspace before creating a recording")
+    if body.audio_bucket == "walkin-audio" and context.role not in {"receptionist", "salesperson", "owner"}:
+        fail("walkin_recording_role_required", 403, "Only owners, salespeople, or receptionists can create walk-in recordings")
+    if body.audio_bucket == "session-audio" and context.role == "receptionist":
+        fail("session_recording_role_required", 403, "Receptionists must use walk-in recording")
+    # Walk-in recordings must enter the durable processing pipeline. Older
+    # clients sent registration recordings as audio_only, which created no run
+    # and consequently could never publish active_version_id.
+    audio_only = body.audio_only and body.audio_bucket != "walkin-audio"
     if idempotency_key is not None and not re.fullmatch(r"[A-Za-z0-9_.:-]{8,128}", idempotency_key):
         fail("invalid_idempotency_key", 400, "Use a stable save key of 8–128 letters, digits, dots, underscores, colons or hyphens")
     request_hash = hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -180,9 +664,11 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
                 runs = await many(connection, "select * from processing_runs where conversation_id=%s order by created_at", (prior["id"],))
                 response.status_code = 200
                 return {**prior, "runs": runs}
+        from .provider_bootstrap import ensure_managed_providers
+        await ensure_managed_providers(connection, context.id, request.app.state.settings)
         settings = await one(connection, "select * from workspace_engine_settings where organisation_id=%s", (context.id,))
         engine_id = body.engine_id or settings["default_engine_id"]
-        if not engine_id and not body.audio_only:
+        if not engine_id and not audio_only:
             fail("no_active_engine", 409, "Select a connected engine or deliberately record audio for later processing")
         if body.engine_id and not context.admin and (not settings["salesperson_engine_selection"] or body.engine_id not in settings["allowed_engine_ids"]):
             fail("engine_selection_not_allowed", 403)
@@ -191,16 +677,24 @@ async def new_conversation(body: s.ConversationCreate, request: Request, respons
             if not customer:
                 fail("customer_not_found", 404)
         else:
-            customer = await one(connection, "insert into customers(organisation_id,owner_id,name,is_unnamed) values(%s,%s,%s,%s) returning *", (context.id, context.user.id, "Name not provided" if body.is_unnamed else body.customer_name, body.is_unnamed))
+            phone = (body.phone or '').strip() or None
+            email = (body.email or '').strip().lower() or None
+            normalized_phone = re.sub(r'\D', '', phone or '')[-15:] or None
+            # Explicitly type nullable parameters. PostgreSQL cannot infer the
+            # type of a bare NULL used in ``%s is not null`` and raises 42P18
+            # when both phone and email are omitted (the audio-only flow).
+            customer = await one(connection, "select * from customers where organisation_id=%s and owner_id=%s and deleted_at is null and ((%s::text is not null and right(regexp_replace(coalesce(normalized_phone,''),'\\D','','g'),10)=right(regexp_replace(%s::text,'\\D','','g'),10)) or (%s::text is not null and normalized_email=%s::text)) limit 1", (context.id, context.user.id, normalized_phone, normalized_phone, email, email))
+            if not customer:
+                customer = await one(connection, "insert into customers(organisation_id,owner_id,name,email,phone,normalized_email,normalized_phone,is_unnamed) values(%s,%s,%s,%s,%s,%s,%s,%s) returning *", (context.id, context.user.id, body.customer_name or "Name not provided", email, phone, email, normalized_phone, body.is_unnamed or not body.customer_name))
         profile = await one(connection, "select display_name from profiles where id=%s", (context.user.id,))
-        row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed) values(%s,%s,%s,%s,%s,%s,%s,%s,true) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint))
-        run = None if body.audio_only else await create_run(connection, context, row, engine_id, "production", "initial")
+        row = await one(connection, "insert into conversations(organisation_id,owner_id,customer_id,customer_name_snapshot,salesperson_name_snapshot,title,location,language_hint,consent_confirmed,audio_bucket) values(%s,%s,%s,%s,%s,%s,%s,%s,true,%s) returning *", (context.id, context.user.id, customer["id"], customer["name"], profile["display_name"] if profile and profile["display_name"] else context.user.name, body.title or "", body.location or "", body.language_hint, body.audio_bucket))
+        run = None if audio_only else await create_run(connection, context, row, engine_id, "production", "initial", settings=request.app.state.settings)
         if run is None:
             await connection.execute("update conversations set transcription_state='blocked' where id=%s", (row["id"],))
             row["transcription_state"] = "blocked"
         if idempotency_key is not None:
             await connection.execute("insert into recorder_private.conversation_requests(organisation_id,owner_id,idempotency_key,request_hash,conversation_id) values(%s,%s,%s,%s,%s)", (context.id, context.user.id, idempotency_key, request_hash, row["id"]))
-        await audit(connection, context, "conversation.created", {"engine_id": engine_id, "audio_only": body.audio_only}, row["id"])
+        await audit(connection, context, "conversation.created", {"engine_id": engine_id, "audio_only": audio_only}, row["id"])
         return {**row, "runs": [run] if run else []}
 
 

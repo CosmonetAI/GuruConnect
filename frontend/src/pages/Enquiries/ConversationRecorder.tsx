@@ -1,38 +1,70 @@
-import { useEffect, useRef, useState } from 'react'
-import { Check, FileAudio2, Mic2, Pause, Play, RotateCcw, ShieldCheck, Square, Upload } from 'lucide-react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { AlertTriangle, Check, FileAudio2, LoaderCircle, Mic2, Pause, Play, RotateCcw, Square, Trash2, Upload, Volume2 } from 'lucide-react'
 import { useOffice } from '../../contexts/OfficeContext'
-import { duration, json, localMode, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
+import { ApiError, duration, json, message, request, type Connection, type Conversation, type EngineSettings, type Page } from '../../services/officeApi'
 import { recordingHooks } from '../../recording/apiHooks'
-import { listRecoveries, RecorderSession, recoverRecording, type CaptureState } from '../../recording/session'
+import { discardRecovery, listRecoveries, RecorderSession, type CaptureState } from '../../recording/session'
 import type { Recovery } from '../../recording/outbox'
 import { AudioUploadError, MAX_AUDIO_FILE_BYTES, prepareAudioFile, uploadAudioFile, type UploadProgress } from '../../recording/upload'
+import ProgressivePlayback from '../../components/ProgressivePlayback'
 import '../../styles/recording.css'
 
 export interface ConversationRecorderProps {
   customerName: string
+  customerPhone?: string
+  customerEmail?: string
   title?: string
   initialConversationId?: string | null
-  onConversationChange: (id: string | null) => void
+  onConversationChange: (id: string | null) => void | Promise<void>
   onBusyChange?: (busy: boolean) => void
   onSaved?: (id: string) => void
+  onCaptureChange?: (state: CaptureState) => void
+  providerReadiness?: { speech_configured?: boolean; translation_configured?: boolean }
+  processingStatus?: { key: string; label: string; detail: string; available?: boolean }
+  chunkSeconds?: number
+  audioBucket?: 'session-audio' | 'walkin-audio'
+  compact?: boolean
+  grouped?: boolean
+  sessionOnly?: boolean
+  registrationOnly?: boolean
+}
+export interface ConversationRecorderHandle {
+  start: () => Promise<void>
+  stop: () => Promise<void>
 }
 const emptyCapture: CaptureState = { capture: 'idle', samples: 0, elapsedSeconds: 0, level: 0, pendingChunks: 0, pendingBytes: 0, confirmedSamples: 0, saving: false }
 type Phase = 'idle' | 'preparing' | 'recording' | 'uploading' | 'saving' | 'saved' | 'error'
 type Lease = { part_id: string; lease_token: string }
 
-export default function ConversationRecorder({ customerName, title, initialConversationId, onConversationChange, onBusyChange, onSaved }: ConversationRecorderProps) {
-  const { user, workspace, loading, error: authError } = useOffice()
-  const [consent, setConsent] = useState(false)
+function recordingTabId(userId?: string, workspaceId?: string, memberId?: string) {
+  if (!userId || !workspaceId) return crypto.randomUUID()
+  const key = `guruconnect:recording-tab:${userId}:${workspaceId}:${memberId ?? userId}`
+  try {
+    const existing = sessionStorage.getItem(key)
+    if (existing) return existing
+    const id = crypto.randomUUID(); sessionStorage.setItem(key, id); return id
+  } catch { return crypto.randomUUID() }
+}
+
+const ConversationRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ConversationRecorder(props, ref) {
+  const { user, workspace } = useOffice()
+  // Recording state must never cross account/workspace boundaries. The conversation ID
+  // is deliberately not a key: creating a conversation must not unmount its microphone.
+  return <ScopedRecorder ref={ref} key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} {...props} />
+})
+
+export default ConversationRecorder
+
+const ScopedRecorder = forwardRef<ConversationRecorderHandle, ConversationRecorderProps>(function ScopedRecorder({ customerName, customerPhone, customerEmail, title, initialConversationId, onConversationChange, onBusyChange, onSaved, onCaptureChange, providerReadiness, processingStatus, compact = false, grouped = false, sessionOnly = false, registrationOnly = false, chunkSeconds = 10, audioBucket = 'session-audio' }: ConversationRecorderProps, ref) {
+  const { user, workspace, loading, localMode, error: authError } = useOffice()
   const [phase, setPhase] = useState<Phase>('idle')
   const [capture, setCapture] = useState<CaptureState>(emptyCapture)
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState('')
-  const [source, setSource] = useState<'microphone' | 'upload'>('microphone')
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId || null)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [policy, setPolicy] = useState<{ engineId: string | null; ready: boolean } | null>(null)
-  const [policyLoading, setPolicyLoading] = useState(true)
+  const [processingReady, setProcessingReady] = useState<boolean | null>(null)
   const [recoveries, setRecoveries] = useState<Recovery[]>([])
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [retryFile, setRetryFile] = useState(false)
@@ -42,240 +74,296 @@ export default function ConversationRecorder({ customerName, title, initialConve
   const active = useRef<RecorderSession | null>(null)
   const abort = useRef<AbortController | null>(null)
   const operationRef = useRef(false)
+  const quietSince = useRef<number | null>(null)
+  const audibleSince = useRef<number | null>(null)
+  const [lowVolumeWarning, setLowVolumeWarning] = useState(false)
   const idRef = useRef<string | null>(initialConversationId || null)
   const notifiedSaved = useRef<string | null>(null)
   const creation = useRef<{ key: string; body: object } | null>(null)
-  const tabId = useRef(crypto.randomUUID())
-  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved })
-  callbacks.current = { onConversationChange, onBusyChange, onSaved }
-  const captureActive = capture.capture === 'recording' || capture.capture === 'paused'
-  const unfinished = !!conversationId && !saved
-  const busy = operation || captureActive || capture.saving || unfinished || (!!file && !saved)
-  const blocked = loading || !user || !workspace || policyLoading || !policy?.ready
+  const tabId = useRef(recordingTabId(user?.id, workspace?.id, workspace?.member_id))
+  const callbacks = useRef({ onConversationChange, onBusyChange, onSaved, onCaptureChange })
+  callbacks.current = { onConversationChange, onBusyChange, onSaved, onCaptureChange }
+  const captureActive = ['recording', 'paused'].includes(capture.capture)
+  const hasPendingRecovery = recoveries.some(row => !conversationId || row.conversationId === conversationId)
+  const unfinished = !!conversationId && !saved && (captureActive || capture.saving || capture.samples > 0 || capture.pendingChunks > 0 || !!file || hasPendingRecovery)
+  const anotherMemberView = !!user && !!workspace?.member_id && workspace.member_id !== user.id
+  const busy = operation || captureActive || capture.saving || (!anotherMemberView && (unfinished || (!!file && !saved)))
+  const blocked = loading || !user || !workspace || anotherMemberView
+  const meterLevel = Math.min(1, Math.max(0, capture.level * 8))
 
-  function disposeCapture() {
-    const session = active.current; active.current = null
-    void session?.dispose().catch(() => undefined)
-  }
+  useEffect(() => {
+    if (!captureActive || capture.capture === 'paused') {
+      quietSince.current = null
+      audibleSince.current = null
+      setLowVolumeWarning(false)
+      return
+    }
+    const now = Date.now()
+    // The visible recorder meter is normalized as RMS * 8. Warn only when
+    // sustained input is below 10% of that meter.
+    if (meterLevel < 0.1) {
+      audibleSince.current = null
+      if (quietSince.current === null) quietSince.current = now
+      if (now - quietSince.current >= 5000) setLowVolumeWarning(true)
+    } else {
+      quietSince.current = null
+      if (audibleSince.current === null) audibleSince.current = now
+      if (now - audibleSince.current >= 5000) setLowVolumeWarning(false)
+    }
+  }, [capture.capture, capture.level, captureActive])
 
-  function showSaved(id: string) {
-    if (!mounted.current) return
-    setConversationId(id); idRef.current = id; setSaved(true); setPhase('saved'); setError(''); setRetryFile(false)
-    callbacks.current.onConversationChange(id)
-    if (notifiedSaved.current !== id) { notifiedSaved.current = id; callbacks.current.onSaved?.(id) }
+  useImperativeHandle(ref, () => ({
+    start: () => startMicrophone(true),
+    stop: () => changeCapture('stop'),
+  }))
+
+  function isCurrent(epoch: number, controller: AbortController) { return mounted.current && epoch === generation.current && !controller.signal.aborted }
+  async function notify(id: string | null) { await callbacks.current.onConversationChange(id) }
+  async function showSaved(id: string, reportChange = true) {
+    if (!mounted.current || idRef.current !== id) return
+    setConversationId(id); setSaved(true); setPhase('saved'); setError(''); setRetryFile(false); setFile(null)
+    if (reportChange) await notify(id)
+    if (mounted.current && idRef.current === id && notifiedSaved.current !== id) { notifiedSaved.current = id; callbacks.current.onSaved?.(id) }
   }
   async function refreshRecoveries() {
     if (!user || !workspace) return
+    const epoch = generation.current
     const rows = await listRecoveries({ userId: user.id, workspaceId: workspace.id })
-    if (mounted.current) setRecoveries(rows)
+    if (mounted.current && epoch === generation.current) setRecoveries(rows)
   }
   useEffect(() => {
     mounted.current = true
     return () => {
-      mounted.current = false; generation.current++
-      abort.current?.abort(); disposeCapture()
+      mounted.current = false; generation.current++; abort.current?.abort()
+      const session = active.current; active.current = null
+      void session?.dispose().catch(() => undefined)
       callbacks.current.onBusyChange?.(false)
     }
   }, [])
   useEffect(() => { callbacks.current.onBusyChange?.(busy) }, [busy])
+  useEffect(() => { callbacks.current.onCaptureChange?.(capture) }, [capture])
   useEffect(() => {
     if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file); setPreview(url)
     return () => URL.revokeObjectURL(url)
   }, [file])
   useEffect(() => {
-    let current = true
-    if (!workspace || !user) { setPolicy(null); setPolicyLoading(false); return }
-    const controller = new AbortController(); setPolicyLoading(true); setError('')
+    if (!workspace || !user) return
+    const controller = new AbortController()
+    void refreshRecoveries().catch(reason => { if (!controller.signal.aborted) setError(message(reason)) })
     void Promise.all([
       request<EngineSettings>('/engine-settings', workspace.id, { signal: controller.signal }),
       request<Page<Connection>>('/connections', workspace.id, { signal: controller.signal }),
-      listRecoveries({ userId: user.id, workspaceId: workspace.id }),
-    ]).then(([settings, connections, rows]) => {
-      if (!current) return
-      const engineId = settings.default_engine_id
-      setPolicy({ engineId, ready: localMode || (!!engineId && connections.items.some(item => item.engine_id === engineId && item.enabled && item.state === 'connected')) })
-      setRecoveries(rows)
-    }).catch(err => { if (current) { setPolicy(null); setError(message(err)) } }).finally(() => { if (current) setPolicyLoading(false) })
-    return () => { current = false; controller.abort(); generation.current++; abort.current?.abort(); disposeCapture() }
+    ]).then(([settings, connections]) => {
+      if (!controller.signal.aborted) setProcessingReady(settings.default_engine_id === 'elevenlabs' && ['elevenlabs', 'openai-translator'].every(engine => connections.items.some(item => {
+        if (item.engine_id !== engine || ['disabled', 'disconnected'].includes(item.state)) return false
+        const runtimeConfigured = (item as Connection & { runtime_configured?: boolean }).runtime_configured
+        return typeof runtimeConfigured === 'boolean' ? runtimeConfigured : item.state === 'connected'
+      })))
+    }).catch(() => { if (!controller.signal.aborted) setProcessingReady(null) })
+    return () => controller.abort()
   }, [user?.id, workspace?.id])
   useEffect(() => {
-    if (!initialConversationId || !workspace || !user) return
+    if (!initialConversationId || !workspace || !user || active.current || operationRef.current) return
     const controller = new AbortController()
-    void request<Conversation>(`/conversations/${encodeURIComponent(initialConversationId)}`, workspace.id, { signal: controller.signal }).then(conversation => {
-      if (mounted.current && !controller.signal.aborted) {
-        idRef.current = conversation.id; setConversationId(conversation.id)
-        if (conversation.upload_state === 'saved') showSaved(conversation.id)
-      }
-    }).catch(err => { if (!controller.signal.aborted && mounted.current) setError(message(err)) })
+    idRef.current = initialConversationId; setConversationId(initialConversationId); setSaved(false)
+    void request<Conversation>(`/conversations/${encodeURIComponent(initialConversationId)}`, workspace.id, { signal: controller.signal }, workspace.member_id).then(async conversation => {
+      if (!mounted.current || controller.signal.aborted || idRef.current !== initialConversationId) return
+      if (conversation.upload_state === 'saved') await showSaved(conversation.id, false)
+    }).catch(reason => { if (!controller.signal.aborted && mounted.current) setError(message(reason)) })
     return () => controller.abort()
   }, [initialConversationId, user?.id, workspace?.id])
-  useEffect(() => {
-    if (!busy) return
-    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
-    const leave = (event: MouseEvent) => {
-      const target = event.target
-      const link = target instanceof Element ? target.closest('a') : null
-      if (link && link.getAttribute('href')?.startsWith('/')) { event.preventDefault(); event.stopPropagation(); setError('Finish saving or recover this audio before leaving the enquiry.') }
-    }
-    window.addEventListener('beforeunload', unload); document.addEventListener('click', leave, true)
-    return () => { window.removeEventListener('beforeunload', unload); document.removeEventListener('click', leave, true) }
-  }, [busy])
-  useEffect(() => {
-    if (capture.capture === 'stopped' && !capture.saving && !capture.error && capture.samples > 0 && idRef.current) showSaved(idRef.current)
-  }, [capture.capture, capture.saving, capture.error, capture.samples])
 
   function validateStart() {
-    if (!consent) throw new Error('Confirm participant consent before recording or uploading audio.')
+    if (anotherMemberView) throw new Error('Switch to your own account view to record.')
     if (!user || !workspace) throw new Error('Sign in and select a workspace before adding audio.')
+    if (registrationOnly) return
     if (!customerName.trim()) throw new Error('Enter the customer name before adding audio.')
-    if (!policy?.ready) throw new Error('Connect and test the default speech engine in Settings before adding audio.')
+    if (sessionOnly) {
+      if (!customerPhone?.trim()) throw new Error('Enter the customer name and phone number before starting.')
+    } else if (registrationOnly) {
+      if (!customerPhone?.trim() || !customerEmail?.trim()) throw new Error('Enter the customer name, phone number, and email address before starting.')
+    } else if (!customerPhone?.trim() && !customerEmail?.trim()) throw new Error('Enter a phone number or email before adding audio.')
   }
-  async function createConversation(signal: AbortSignal) {
-    if (idRef.current) return idRef.current
+  async function createConversation(signal: AbortSignal, reuseExisting = false) {
+    if (reuseExisting && idRef.current) return idRef.current
     if (!creation.current) creation.current = {
       key: crypto.randomUUID(),
-      body: { customer_name: customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: false },
+      body: { customer_name: customerName.trim() || null, phone: customerPhone?.trim() || null, email: customerEmail?.trim() || null, is_unnamed: registrationOnly && !customerName.trim(), title: title?.trim() || file?.name.slice(0, 200) || 'Sales enquiry conversation', language_hint: 'auto', consent_confirmed: true, audio_only: registrationOnly && audioBucket !== 'walkin-audio', audio_bucket: audioBucket },
     }
-    const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal })
+    const conversation = await request<Conversation>('/conversations', workspace!.id, { ...json('POST', creation.current.body, creation.current.key), signal }, workspace!.member_id)
     signal.throwIfAborted()
-    idRef.current = conversation.id; setConversationId(conversation.id); callbacks.current.onConversationChange(conversation.id)
+    idRef.current = conversation.id; setConversationId(conversation.id); await notify(conversation.id)
+    signal.throwIfAborted()
     return conversation.id
   }
+  async function acquireLease(id: string, signal: AbortSignal, purpose: 'capture' | 'recover' = 'capture', retryTakeover = false) {
+    const acquire = (takeover: boolean) => request<Lease>(`/conversations/${id}/lease`, workspace!.id,
+      { ...json('POST', { tab_id: tabId.current, takeover, purpose }), signal }, workspace!.member_id)
+    try {
+      return await acquire(retryTakeover)
+    } catch (reason) {
+      // A session can be left with an expired lease when the browser or API
+      // closes unexpectedly. The salesperson already clicked Start session,
+      // so recover that abandoned lease on the same conversation instead of
+      // creating another orphan conversation. Walk-in and file flows keep
+      // their existing explicit-recovery behaviour.
+      const canRecoverSessionLease = sessionOnly && !retryTakeover && reason instanceof ApiError && reason.status === 409 &&
+        ['conflicting_state', 'recording_lease_busy', 'explicit_takeover_required'].includes(reason.code)
+      if (!canRecoverSessionLease) throw reason
+      await new Promise(resolve => setTimeout(resolve, 150))
+      signal.throwIfAborted()
+      return acquire(true)
+    }
+  }
   function begin() {
-    generation.current++; abort.current?.abort(); disposeCapture()
+    generation.current++; abort.current?.abort()
     operationRef.current = true; setOperation(true); setError('')
     const controller = new AbortController(); abort.current = controller
     return { controller, epoch: generation.current }
   }
-  function isCurrent(epoch: number, controller: AbortController) { return mounted.current && epoch === generation.current && !controller.signal.aborted }
   function finish(epoch: number, controller: AbortController) {
-    operationRef.current = false
-    if (isCurrent(epoch, controller)) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
+    if (!isCurrent(epoch, controller)) return
+    operationRef.current = false; setOperation(false)
+    void refreshRecoveries().catch(reason => { if (mounted.current) setError(message(reason)) })
   }
-  async function startMicrophone() {
-    if (operationRef.current || captureActive || saved) return
-    try { validateStart() } catch (err) { setError(message(err)); return }
+  async function startMicrophone(startNew = false) {
+    if (operationRef.current || captureActive || (!startNew && (saved || unfinished))) return
+    try { validateStart() } catch (reason) { setError(message(reason)); return }
+    if (startNew && (saved || unfinished)) {
+      idRef.current = null; creation.current = null; notifiedSaved.current = null
+      setConversationId(null); setSaved(false); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setPhase('idle')
+      await notify(null)
+    }
     const { controller, epoch } = begin(); setPhase('preparing'); setCapture(emptyCapture)
     try {
-      const hadId = !!idRef.current
       const id = await createConversation(controller.signal)
-      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: hadId }), signal: controller.signal })
+      const lease = await acquireLease(id, controller.signal)
       controller.signal.throwIfAborted()
       const session = new RecorderSession({
-        scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token,
-        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal),
+        scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, chunkSeconds, signal: controller.signal,
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal, workspace!.member_id),
         onState: state => {
           if (!isCurrent(epoch, controller)) return
           setCapture(state)
-          if (state.capture === 'recording' || state.capture === 'paused') setPhase('recording')
+          if (['recording', 'paused'].includes(state.capture)) setPhase('recording')
           else if (state.saving) setPhase('saving')
-          else if (state.error) { setPhase('error'); setError(state.error); void refreshRecoveries().catch(() => undefined) }
+          else if (state.error) { setPhase('error'); setError(state.error.includes('Audio remains saved') ? 'Audio could not be saved yet. Choose Discard this audio or Start again.' : state.error); void refreshRecoveries().catch(() => undefined) }
+          else if (state.capture === 'stopped' && state.samples > 0) void showSaved(id).catch(reason => { if (mounted.current) setError(message(reason)) })
         },
       })
       active.current = session
       await session.start()
       if (!isCurrent(epoch, controller)) await session.dispose()
-    } catch (err) { if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error') } }
+    } catch (reason) { if (isCurrent(epoch, controller)) { setError(message(reason)); setPhase('error') } }
     finally { finish(epoch, controller) }
   }
   async function changeCapture(action: 'pause' | 'resume' | 'stop') {
     if (operationRef.current || !active.current) return
+    const epoch = generation.current; const session = active.current
     operationRef.current = true; setOperation(true); setError('')
     try {
-      await active.current[action]()
-      if (action === 'stop' && idRef.current && mounted.current) showSaved(idRef.current)
-    } catch (err) {
-      // Keep Stop available after a pause/resume error; the session still owns its stream.
-      if (mounted.current) { setError(message(err)); if (action === 'stop') setPhase('error') }
-    } finally {
-      operationRef.current = false
-      if (mounted.current) { setOperation(false); void refreshRecoveries().catch(err => setError(message(err))) }
-    }
+      await session[action]()
+      if (mounted.current && epoch === generation.current && action === 'stop' && idRef.current) { await showSaved(idRef.current); active.current = null }
+    } catch (reason) { if (mounted.current && epoch === generation.current) { setError(action === 'stop' ? 'Audio could not be saved yet. Choose Discard this audio or Start again.' : message(reason)); if (action === 'stop') setPhase('error') } }
+    finally { if (mounted.current && epoch === generation.current) { operationRef.current = false; setOperation(false); void refreshRecoveries().catch(() => undefined) } }
   }
   function chooseFile(next: File | null) {
-    if (operation || captureActive || capture.saving || saved || recoveries.some(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)) return
+    if (blocked || operationRef.current || captureActive || capture.saving || saved || unfinished) return
     setError('')
     if (next && (!next.size || next.size > MAX_AUDIO_FILE_BYTES)) { setFile(null); setError('Choose a nonempty audio file up to 100 MB.'); return }
-    setFile(next); setSource('upload'); setProgress(null); setRetryFile(!!conversationId)
+    setFile(next); setProgress(null); setRetryFile(false)
   }
   async function uploadFile(retry = false) {
     if (operationRef.current || !file || saved) return
-    try { validateStart() } catch (err) { setError(message(err)); return }
+    try { validateStart() } catch (reason) { setError(message(reason)); return }
     const { controller, epoch } = begin(); setPhase('preparing'); setRetryFile(false)
     try {
-      const audio = await prepareAudioFile(file)
-      controller.signal.throwIfAborted()
-      const id = await createConversation(controller.signal)
-      const lease = await request<Lease>(`/conversations/${id}/lease`, workspace!.id, { ...json('POST', { tab_id: tabId.current, takeover: retry }), signal: controller.signal })
+      const audio = await prepareAudioFile(file); controller.signal.throwIfAborted()
+      const id = await createConversation(controller.signal, retry)
+      const lease = await acquireLease(id, controller.signal, retry ? 'recover' : 'capture', retry)
       controller.signal.throwIfAborted(); setPhase('uploading')
-      await uploadAudioFile({
-        scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio,
-        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal), signal: controller.signal,
+      await uploadAudioFile({ scope: { userId: user!.id, workspaceId: workspace!.id }, conversationId: id, partId: lease.part_id, leaseToken: lease.lease_token, audio, chunkSeconds,
+        hooks: recordingHooks(id, workspace!.id, lease.part_id, lease.lease_token, tabId.current, controller.signal, workspace!.member_id), signal: controller.signal,
         onProgress: value => { if (isCurrent(epoch, controller)) { setProgress(value); setPhase(value.phase === 'finalizing' ? 'saving' : 'uploading') } },
       })
-      if (isCurrent(epoch, controller)) showSaved(id)
-    } catch (err) {
-      if (isCurrent(epoch, controller)) { setError(message(err)); setPhase('error'); setRetryFile(!(err instanceof AudioUploadError) || !err.preserved) }
-    } finally { finish(epoch, controller) }
-  }
-  async function recover(recovery: Recovery) {
-    if (operationRef.current || captureActive || !workspace || !user) return
-    const { controller, epoch } = begin(); setPhase('saving')
-    try {
-      const current = await request<Conversation>(`/conversations/${recovery.conversationId}`, workspace.id, { signal: controller.signal })
-      if (current.customer_name_snapshot && current.customer_name_snapshot !== customerName.trim() && !window.confirm(`This saved recording belongs to ${current.customer_name_snapshot}. Attach it to this enquiry?`)) {
-        setPhase('idle'); return
-      }
-      let token = recovery.leaseToken
-      if (current.upload_state !== 'saved') {
-        const lease = await request<Lease>(`/conversations/${recovery.conversationId}/lease`, workspace.id, { ...json('POST', { tab_id: tabId.current, takeover: true, purpose: 'recover' }), signal: controller.signal })
-        token = lease.lease_token
-      }
-      controller.signal.throwIfAborted()
-      await recoverRecording({ userId: user.id, workspaceId: workspace.id }, recovery.conversationId, recordingHooks(recovery.conversationId, workspace.id, recovery.partId, token, tabId.current, controller.signal), token, controller.signal)
-      if (isCurrent(epoch, controller)) showSaved(recovery.conversationId)
-    } catch (err) { if (isCurrent(epoch, controller)) { setPhase('error'); setError(message(err)) } }
+      if (isCurrent(epoch, controller)) await showSaved(id)
+    } catch (reason) { if (isCurrent(epoch, controller)) { setError(message(reason)); setPhase('error'); setRetryFile(!(reason instanceof AudioUploadError) || !reason.preserved) } }
     finally { finish(epoch, controller) }
   }
-  function removeAttachment() {
-    if (operation || captureActive || capture.saving) return
-    if (conversationId && !window.confirm('Detach this audio from the enquiry? Saved audio stays in the workspace, and pending audio stays on this device for recovery.')) return
-    generation.current++; abort.current?.abort(); disposeCapture()
-    setConversationId(null); idRef.current = null; creation.current = null; notifiedSaved.current = null
-    callbacks.current.onConversationChange(null); setSaved(false); setPhase('idle'); setCapture(emptyCapture); setFile(null); setSource('microphone'); setProgress(null); setError(''); setRetryFile(false)
+  async function resetRecording(discard = false, id = idRef.current, confirmDelete = true) {
+    if (anotherMemberView || operationRef.current || captureActive || capture.saving || !user || !workspace) return
+    if (discard && confirmDelete && !window.confirm('Delete this audio and its saved conversation?')) return
+    const { controller, epoch } = begin()
+    try {
+      const session = active.current; active.current = null; await session?.dispose()
+      if (discard && id) {
+        await request(`/conversations/${encodeURIComponent(id)}`, workspace.id, { method: 'DELETE', signal: controller.signal }, workspace.member_id)
+        await discardRecovery({ userId: user.id, workspaceId: workspace.id }, id)
+      }
+      if (!isCurrent(epoch, controller)) return
+      if (id === idRef.current || !idRef.current) {
+        idRef.current = null; creation.current = null; notifiedSaved.current = null
+        setConversationId(null); setSaved(false); setFile(null); setCapture(emptyCapture); setProgress(null); setRetryFile(false); setPhase('idle')
+        await notify(null)
+      }
+    } catch (reason) { if (isCurrent(epoch, controller)) setError(message(reason)) }
+    finally { finish(epoch, controller) }
   }
-  const applicableRecoveries = recoveries.filter(row => (!conversationId || row.conversationId === conversationId) && row.totalSamples > 0)
-  const status = saved ? 'AUDIO SAVED' : phase === 'preparing' ? 'PREPARING AUDIO' : capture.capture === 'paused' ? 'RECORDING PAUSED' : captureActive ? 'RECORDING IN PROGRESS' : operation ? 'SAVING AUDIO' : unfinished ? 'AUDIO NEEDS ATTENTION' : 'READY TO ADD AUDIO'
-
-  return <div className="recorder-content connected-recorder">
-    <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
-      <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button">{source === 'upload' ? <Upload size={27} /> : <Mic2 size={27} />}</div></div></div>
-      <div className="recorder-copy">
-        <span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span>
-        <h3>{saved ? 'Audio saved in your workspace' : 'Record or upload the conversation'}</h3>
-        <p>{saved ? 'Transcription and English translation run in the background. Open the saved enquiry to follow progress.' : 'Audio saves privately. ElevenLabs transcribes the original speech, then OpenAI translates it into English.'}</p>
-        {(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}
+  async function startAgain(id = idRef.current) {
+    if (operationRef.current || !id) return
+    await resetRecording(true, id, false)
+    if (mounted.current && !operationRef.current) await startMicrophone(true)
+  }
+  // Never offer a destructive action for another customer's orphaned local
+  // recovery. A session can act only on the conversation currently open.
+  const relevantRecoveries = recoveries.filter(row => !!conversationId && row.conversationId === conversationId)
+  const singleAction = sessionOnly || registrationOnly
+  const runtimeReady = providerReadiness?.speech_configured === false || providerReadiness?.translation_configured === false
+    ? false
+    : providerReadiness?.speech_configured === true && providerReadiness?.translation_configured === true ? true : processingReady
+  // A completed or currently progressing recording is stronger evidence than an
+  // older connection-settings response. Saving the audio alone is not evidence.
+  const processingObserved = processingStatus?.key === 'complete' || ['transcribing', 'translating'].includes(processingStatus?.key || '') || (processingStatus?.available && processingStatus.key !== 'failed')
+  const flowName = registrationOnly ? 'registration' : 'session'
+  const status = saved ? (singleAction ? `${flowName.toUpperCase()} ENDED` : 'AUDIO SAVED') : phase === 'preparing' ? `PREPARING ${flowName.toUpperCase()}` : capture.capture === 'paused' ? `${flowName.toUpperCase()} PAUSED` : captureActive ? `${flowName.toUpperCase()} RECORDING` : operation ? `ENDING ${flowName.toUpperCase()}` : singleAction ? 'READY TO START' : 'READY TO ADD AUDIO'
+  return <div className={`recorder-content connected-recorder${compact ? ' compact-recorder' : ''}${sessionOnly ? ' session-recorder' : ''}`}>
+    {lowVolumeWarning && <div className="low-volume-banner" role="status"><AlertTriangle size={17} /><span><strong>Please speak up.</strong> Microphone input is below 10%; move closer if needed.</span><Volume2 size={17} /></div>}
+    <div className={grouped ? 'session-recording-container' : undefined}>
+      <div className={`recorder-panel${captureActive ? ' is-recording' : ''}${saved ? ' has-clip' : ''}`}>
+        {!compact && <div className="recorder-visual"><div className={`microphone-orbit${captureActive ? ' orbit-active' : ''}`}><div className="microphone-button"><Mic2 size={27} /></div></div></div>}
+        <div className="recorder-copy"><span className={captureActive ? 'recording-live' : 'recording-ready-label'}>{saved && <Check size={13} />} {status}</span><h3>{saved ? (registrationOnly ? 'Audio saved' : sessionOnly ? 'Session ended' : 'Audio saved in your workspace') : registrationOnly ? 'Record visitor audio' : sessionOnly ? captureActive ? capture.capture === 'paused' ? 'Conversation paused' : 'Recording conversation…' : 'Start a customer session' : 'Record or upload the conversation'}</h3><p>{saved ? (registrationOnly ? 'The recording is stored in your workspace.' : 'Your conversation is saved. Processing continues in the background.') : registrationOnly ? 'Record the visitor conversation and save the audio.' : sessionOnly ? captureActive ? 'Live transcription and translation update as you speak.' : 'Start the session to record and process the customer conversation.' : 'Consented audio is transcribed and translated where needed.'}</p>{(captureActive || capture.elapsedSeconds > 0) && <div className="elapsed-timer">{duration(capture.elapsedSeconds)}</div>}</div>
+        <div className="recorder-controls">
+          {sessionOnly && !captureActive && !operation && !saved && !file && !unfinished && relevantRecoveries.length === 0 && <button type="button" className="button button-primary session-action-button" disabled={blocked} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start session</button>}
+          {registrationOnly && !captureActive && !operation && !saved && !file && <button type="button" className="button button-primary session-action-button" disabled={blocked} onClick={() => void startMicrophone(true)}><Mic2 size={16} />Start registration</button>}
+          {!singleAction && !captureActive && !operation && !saved && !unfinished && !file && <button type="button" className="button button-primary" disabled={blocked} onClick={() => void startMicrophone()}><Mic2 size={16} />Start recording</button>}
+          {!singleAction && !operation && !captureActive && !capture.saving && !saved && !unfinished && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" disabled={blocked} onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
+          {!singleAction && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked} onClick={() => void uploadFile(unfinished)}>{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
+          {!singleAction && file && !operation && !unfinished && <button type="button" className="button button-quiet" onClick={() => { setFile(null); setError(''); setProgress(null) }}>Remove selected file</button>}
+          {captureActive && <><div className="voice-level-wave" aria-label="Microphone input level" role="img">{Array.from({ length: 24 }, (_, index) => <i key={index} style={{ height: `${Math.max(3, Math.min(28, 4 + meterLevel * (9 + ((index * 7) % 13))))}px` }} />)}</div>{!registrationOnly && !sessionOnly && <button type="button" className="button button-secondary session-pause-button" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={14} /> : <Pause size={14} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button>}<button type="button" className={`button button-stop${singleAction ? ' session-action-button' : ''}`} disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />{registrationOnly ? 'End registration' : sessionOnly ? 'Stop' : 'Stop & save'}</button></>}
+          {registrationOnly && saved && conversationId && workspace && <section className="registration-saved-audio" aria-label="Saved visitor recording">
+            <span className="registration-saved-audio-title"><FileAudio2 size={15} /> Visitor recording</span>
+            <ProgressivePlayback conversationId={conversationId} workspaceId={workspace.id} memberId={workspace.member_id} compact />
+            <button type="button" className="button button-danger-quiet recorder-trash-button" disabled={operation} onClick={() => void resetRecording(true)}><Trash2 size={14} /> Delete</button>
+          </section>}
+          {sessionOnly && saved && !operation && !anotherMemberView && <><button type="button" className="button button-danger-quiet" onClick={() => void resetRecording(true)}><Trash2 size={14} />Delete audio</button><button type="button" className="button button-secondary" onClick={() => void resetRecording()}><RotateCcw size={14} />Start another session</button></>}
+          {registrationOnly && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary session-action-button" onClick={() => void resetRecording()}><RotateCcw size={14} />Record again</button>}
+          {!singleAction && saved && !operation && !anotherMemberView && <button type="button" className="button button-secondary" onClick={() => void resetRecording()}>Record another conversation</button>}
+          {!singleAction && conversationId && !anotherMemberView && !captureActive && !operation && !capture.saving && <button type="button" className="button button-quiet" onClick={() => void resetRecording()}>Detach audio</button>}
+          {!singleAction && unfinished && !anotherMemberView && !captureActive && !operation && <button type="button" className="button button-danger-quiet" onClick={() => void resetRecording(true)}>Discard recording</button>}
+          {operation && <span className="recorder-operation-status" role="status"><LoaderCircle size={14} />{phase === 'preparing' ? 'Preparing audio' : phase === 'saving' ? 'Saving audio' : 'Uploading audio'}</span>}
+        </div>
       </div>
-      <div className="recorder-controls">
-        {!captureActive && !operation && !saved && source === 'microphone' && <button type="button" className="button button-primary record-start-button" disabled={blocked || !consent || !!applicableRecoveries.length} onClick={() => void startMicrophone()}><Mic2 size={16} />{unfinished ? 'Retry microphone' : 'Start recording'}</button>}
-        {captureActive && <><button type="button" className="button button-secondary" disabled={operation} onClick={() => void changeCapture(capture.capture === 'paused' ? 'resume' : 'pause')}>{capture.capture === 'paused' ? <Play size={15} /> : <Pause size={15} />}{capture.capture === 'paused' ? 'Resume' : 'Pause'}</button><button type="button" className="button button-stop" disabled={operation} onClick={() => void changeCapture('stop')}><Square size={14} />Stop & save</button></>}
-        {operation && <span role="status">{phase === 'preparing' ? 'Preparing audio and permission…' : phase === 'saving' ? 'Finishing audio save…' : 'Uploading audio…'}</span>}
-        {!operation && !captureActive && !capture.saving && !saved && !applicableRecoveries.length && <label className="button button-upload"><Upload size={15} />Choose audio file<input type="file" aria-label="Choose audio file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.webm,.mp4" onChange={event => { chooseFile(event.target.files?.[0] || null); event.currentTarget.value = '' }} /></label>}
-        {source === 'upload' && file && !saved && !operation && (!unfinished || retryFile) && <button type="button" className="button button-primary" disabled={blocked || !consent} onClick={() => void uploadFile(unfinished)}><Upload size={15} />{retryFile ? 'Retry audio upload' : 'Upload & process'}</button>}
-        {(saved || ((unfinished || file) && !operation && !captureActive)) && <button type="button" className="button button-secondary" onClick={removeAttachment}>{conversationId ? 'Detach audio' : 'Remove selected file'}</button>}
-      </div>
+      {anotherMemberView && <p role="status">Switch to your own account view to record.</p>}
+      {loading && <p role="status">Loading workspace…</p>}
+      {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
+      {runtimeReady === false && !processingObserved && <p className="audio-storage-notice" role="status">Speech processing is unavailable. Audio capture and saving remain available; check the speech and translation service configuration.</p>}
+      {localMode && <p className="audio-storage-notice">Audio and enquiries save on this computer.</p>}
+      {error && <div className="recorder-error" role="alert">{error}</div>}
+      {!anotherMemberView && !captureActive && !capture.saving && relevantRecoveries.length > 0 && <section className="connected-audio-recovery" aria-label="Unfinished audio">{relevantRecoveries.map(row => <div className="pending-audio-row" key={row.key}><p><strong>Audio not saved</strong><span>{duration(row.totalSamples / 16000)} · {new Date(row.updatedAt).toLocaleString()}</span></p><div><button type="button" className="button button-danger-quiet" disabled={operation} onClick={() => void resetRecording(true, row.conversationId)}>Discard this audio</button><button type="button" className="button button-secondary" disabled={operation} onClick={() => void startAgain(row.conversationId)}><RotateCcw size={14} />Start again</button></div></div>)}</section>}
+      {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span></div>}
+      {!singleAction && file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours.</p></div>}
+      {!singleAction && progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span></div>}
     </div>
-    <div className="recording-consent"><label className="checkbox-field"><input type="checkbox" checked={consent} disabled={operation || captureActive || capture.saving || saved} onChange={event => setConsent(event.target.checked)} /><span>I have permission from all intended participants to record or upload and process this conversation.</span></label><span className="consent-detail"><ShieldCheck size={14} />Consent is recorded by the authenticated backend before audio is captured or uploaded.</span></div>
-    {loading && <p role="status">Loading workspace…</p>}
-    {!loading && (!user || !workspace) && <div className="recorder-error" role="alert">{authError || 'Sign in and select a workspace to record, upload, and process audio.'}</div>}
-    {!loading && user && workspace && policyLoading && <p role="status">Checking processing connections…</p>}
-    {!loading && user && workspace && !policyLoading && !policy?.ready && <div className="audio-storage-notice">Connect and test ElevenLabs and OpenAI in Settings. The default speech engine must be connected before recording or upload starts.</div>}
-    {localMode && <div className="audio-storage-notice"><ShieldCheck size={15} />Audio and enquiries save on this computer. Add ElevenLabs and OpenAI keys in Settings when you want transcription and English translation.</div>}
-    {error && <div className="recorder-error" role="alert">{error}</div>}
-    {captureActive && <div className="connected-recording-metrics"><span>Saved on server: <strong>{duration(capture.confirmedSamples / 16000)}</strong></span><span>Pending here: <strong>{capture.pendingChunks} chunks · {(capture.pendingBytes / 1024).toFixed(0)} KB</strong></span><meter aria-label="Microphone input level" min={0} max={1} value={Math.min(1, capture.level * 6)} /></div>}
-    {file && preview && <div className="audio-preview"><div className="audio-preview-heading"><span><FileAudio2 size={16} />{file.name}</span><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div><audio controls preload="metadata" src={preview} aria-label="Selected audio preview" /><p>Up to 100 MB and two hours. Upload uses the same transcription and translation pipeline as microphone recording.</p></div>}
-    {progress && !saved && <div className="connected-recording-progress" role="status"><progress aria-label="Audio upload progress" max={progress.totalSamples || 1} value={progress.confirmedSamples} /><span>{duration(progress.confirmedSamples / 16000)} of {duration(progress.totalSamples / 16000)} uploaded</span><p>Pending audio stays scoped to this account and workspace on this device.</p></div>}
-    {!operation && !captureActive && !saved && applicableRecoveries.map(row => <div className="audio-storage-notice connected-audio-recovery" key={row.key}><RotateCcw size={18} /><div><strong>Audio is waiting on this device</strong><p>Recording {row.conversationId.slice(0, 8)} · {duration(row.totalSamples / 16000)}. Recover it to attach its saved conversation to this enquiry.</p><button type="button" className="button button-secondary" onClick={() => void recover(row)}>Recover audio</button></div></div>)}
   </div>
-}
+})

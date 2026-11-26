@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import PageLoader from '../../components/PageLoader'
 import { ArrowLeft, CalendarDays, Check, Clock3, FileText, UserRound, UsersRound } from 'lucide-react'
 import {
   assignWalkin,
@@ -19,6 +20,7 @@ import {
 import type { WalkinAgent, WalkinHistoryEvent, WalkinRequirement, WalkinStatus, WalkinVisit } from '../../types/walkin'
 import WalkinRecordingPanel from './WalkinRecordingPanel'
 import './Walkins.css'
+import { formatCustomerName } from '../../utils/formatCustomerName'
 import { useOffice } from '../../contexts/OfficeContext'
 import { request, type Page, type Conversation } from '../../services/officeApi'
 
@@ -71,6 +73,7 @@ export default function WalkinDetail() {
   const allowedTransitions = useMemo(() => visit ? getAllowedWalkinTransitions(visit.status) : [], [visit])
   const closed = visit && ['Completed', 'Cancelled', 'Converted to Enquiry'].includes(visit.status)
   const canConvert = isWalkinDemoMode() || visit?.assignedAgentId === user?.id
+  const canRecordWalkinAudio = isWalkinDemoMode() || visit?.assignedAgentId === user?.id || (workspace?.role === 'owner' && visit?.registeredBy === user?.id)
   const updateRequirement = <K extends keyof WalkinRequirement>(field: K, value: WalkinRequirement[K]) => {
     setRequirements((previous) => ({ ...previous, [field]: value }))
     setMessage('')
@@ -157,6 +160,7 @@ export default function WalkinDetail() {
           phone: visit.mobileNumber,
           email: visit.email,
           company: visit.companyName,
+          customerType: visit.customerType === 'vendor' ? 'Vendor' : 'Retail customer',
           assignedExecutive: visit.assignedAgentName ?? '',
           purpose: visit.purpose,
           productOrService: requirements.productOrService || visit.productOrService,
@@ -171,7 +175,7 @@ export default function WalkinDetail() {
     })
   }
 
-  if (loading) return <div className="walkin-page"><div className="walkin-empty">Loading visitor details…</div></div>
+  if (loading) return <div className="walkin-page"><div className="walkin-empty"><PageLoader kind="walkins" label="Loading visitor details" detail="Preparing the customer visit record." /></div></div>
   if (!visit) return <div className="walkin-page"><div className="walkin-alert error">{error || 'Walk-in visit not found.'}</div><Link className="walkin-button secondary" to="/walkins"><ArrowLeft size={16} /> Back to queue</Link></div>
 
   return (
@@ -180,7 +184,7 @@ export default function WalkinDetail() {
       <header className="walkin-header">
         <div>
           <div className="walkin-kicker"><UsersRound size={15} /> VISIT {visit.visitNumber}</div>
-          <h1>{visit.customerName}</h1>
+          <h1>{formatCustomerName(visit.customerName)}</h1>
           <p>{visit.mobileNumber}{visit.companyName ? ` · ${visit.companyName}` : ''}</p>
         </div>
         <span className={`walkin-status large status-${visit.status.toLowerCase().replaceAll(' ', '-')}`}>{visit.status}</span>
@@ -230,8 +234,10 @@ export default function WalkinDetail() {
             key={visit.id}
             visitId={visit.id}
             customerName={visit.customerName}
+            customerPhone={visit.mobileNumber}
+            customerEmail={visit.email}
             disabled={!!closed}
-            canRecord={canConvert}
+            canRecord={canRecordWalkinAudio}
           />
 
           <section className="walkin-card">

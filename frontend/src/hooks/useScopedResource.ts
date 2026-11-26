@@ -4,7 +4,7 @@ import { ApiError, request, message } from '../services/officeApi'
 
 export function useScopedResource<T>(path: string | null) {
   const { user, workspace } = useOffice()
-  const scope = user && workspace && path ? `${user.id}/${workspace.id}/${path}` : ''
+  const scope = user && workspace && path ? `${user.id}/${workspace.id}/${workspace.member_id ?? user.id}/${path}` : ''
   const [state, setState] = useState<{ scope: string; data?: T; error: string; loading: boolean }>({ scope: '', error: '', loading: false })
   const current = useRef<{ scope: string; abort: AbortController; loading: boolean } | null>(null)
   const reload = useCallback(async () => {
@@ -13,7 +13,7 @@ export function useScopedResource<T>(path: string | null) {
     operation.loading = true
     setState(old => ({ scope, data: old.scope === scope ? old.data : undefined, error: '', loading: true }))
     try {
-      const data = await request<T>(path, workspace.id, { signal: operation.abort.signal })
+      const data = await request<T>(path, workspace.id, { signal: operation.abort.signal }, workspace.member_id ?? workspace.id)
       if (current.current === operation && !operation.abort.signal.aborted) setState({ scope, data, error: '', loading: false })
     } catch (failure) {
       const lostAccess = failure instanceof ApiError && [401, 403, 404].includes(failure.status)

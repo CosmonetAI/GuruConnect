@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 
 import httpx
+from urllib.parse import urlsplit
+from .activity_log import external_completed, external_failed, external_started
 
 MAX_PROVIDER_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_TRANSCRIPT_CHARS = 240_000
@@ -24,6 +26,10 @@ async def bounded_request(client, method: str, url: str, *, max_bytes: int = MAX
     HTTPX's read timeout covers inactivity, so a trickling response also needs
     a total deadline. Count decoded bytes to cover compressed response bombs.
     """
+    parsed = urlsplit(url)
+    provider = parsed.hostname or "external"
+    operation = f"{method.upper()} {parsed.path or '/'}"
+    started_at = external_started(provider, operation)
     try:
         async with asyncio.timeout(timeout):
             kwargs["headers"] = {**kwargs.get("headers", {}), "Accept-Encoding": "identity"}
@@ -35,13 +41,25 @@ async def bounded_request(client, method: str, url: str, *, max_bytes: int = MAX
                     if len(body) + len(chunk) > max_bytes:
                         raise ProviderError("provider_response_too_large", uncertain=paid)
                     body.extend(chunk)
-                return httpx.Response(response.status_code, headers=response.headers,
-                                      content=bytes(body), request=response.request)
+                result = httpx.Response(response.status_code, headers=response.headers,
+                                        content=bytes(body), request=response.request)
+                external_completed(provider, operation, started_at, status=result.status_code,
+                                   external_request_id=result.headers.get("x-request-id"),
+                                   metadata={"response_bytes": len(body)})
+                if result.status_code >= 400:
+                    external_failed(provider, operation, started_at, RuntimeError(f"provider_http_{result.status_code}"), status=result.status_code)
+                return result
     except TimeoutError:
-        raise ProviderError("external_execution_uncertain" if paid else "provider_connection_failed",
-                            uncertain=paid, retryable=not paid) from None
+        error = ProviderError("external_execution_uncertain" if paid else "provider_connection_failed", uncertain=paid, retryable=not paid)
+        external_failed(provider, operation, started_at, error)
+        raise error from None
+    except httpx.RequestError as exc:
+        external_failed(provider, operation, started_at, exc)
+        raise
     except httpx.DecodingError:
-        raise ProviderError("provider_invalid_response", uncertain=paid) from None
+        error = ProviderError("provider_invalid_response", uncertain=paid)
+        external_failed(provider, operation, started_at, error)
+        raise error from None
 
 
 def _credential(value: str, missing: str) -> str:
@@ -74,8 +92,7 @@ class Capabilities:
 REGISTRY = {
     "elevenlabs": Capabilities("elevenlabs", "scribe_v2", False, True, "source_word"),
     "faster-whisper": Capabilities("faster-whisper", "large-v3/community-1", True, True, "segment"),
-    "azure-translator": Capabilities("azure-translator", "standard-v3", True, False, "source_turn"),
-    "openai-translator": Capabilities("openai-translator", "gpt-5.6-luna", True, False, "source_turn"),
+    "openai-translator": Capabilities("openai-translator", "gpt-5.4-mini-2026-03-17", True, False, "source_turn"),
 }
 
 
@@ -153,8 +170,9 @@ def checked_response(response: httpx.Response, *, metadata: bool = False) -> dic
 class ElevenLabsAdapter:
     capabilities = REGISTRY["elevenlabs"]
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, model_id: str | None = None):
         self.key = _credential(key, "engine_unconfigured")
+        self.model_id = _credential(model_id or REGISTRY["elevenlabs"].model, "model_unconfigured")
 
     async def test(self, functional: bool = False) -> dict:
         if functional:
@@ -174,7 +192,7 @@ class ElevenLabsAdapter:
         return {"connected": True, "functional": False, "accuracy_tested": False}
 
     async def process(self, audio, language_hint: str | None = None, scope: str = "") -> dict:
-        fields = {"model_id": "scribe_v2", "diarize": "true", "timestamps_granularity": "word", "use_multi_channel": "false", "tag_audio_events": "false", "use_speaker_library": "false", "detect_speaker_roles": "false", "no_verbatim": "false"}
+        fields = {"model_id": self.model_id, "diarize": "true", "timestamps_granularity": "word", "use_multi_channel": "false", "tag_audio_events": "false", "use_speaker_library": "false", "detect_speaker_roles": "false", "no_verbatim": "false"}
         if hint := language_code(language_hint):
             fields["language_code"] = hint
         try:
@@ -231,7 +249,34 @@ class ElevenLabsAdapter:
                 segments.append({"start": float(start), "end": float(end), "text": word["text"], "speaker": speaker, "words": [normalized]})
         if not segments and result["text"].strip():
             segments = [{"start": 0.0, "end": duration, "text": result["text"], "speaker": None, "words": None}]
-        return {"language": language_code(result.get("language_code")), "language_probability": result.get("language_probability"), "source_segments": segments, "english_segments": None, "diarization_status": "completed", "provenance": {"engine": "elevenlabs", "model": "scribe_v2", "request_id": response.headers.get("request-id") or response.headers.get("x-request-id"), "speaker_scope": scope}, "raw": result}
+        return {"language": language_code(result.get("language_code")), "language_probability": result.get("language_probability"), "source_segments": segments, "english_segments": None, "diarization_status": "completed", "provenance": {"engine": "elevenlabs", "model": self.model_id, "request_id": response.headers.get("request-id") or response.headers.get("x-request-id"), "speaker_scope": scope}, "raw": result}
+
+    async def transcribe_text(self, audio: bytes, *, filename: str = "recording.webm", content_type: str = "audio/webm", language_hint: str | None = None) -> str:
+        """Transcribe a short browser clip without requiring WAV timestamps."""
+        if not isinstance(audio, bytes) or not audio:
+            raise ProviderError("provider_invalid_audio")
+        fields = {"model_id": self.model_id, "diarize": "false", "tag_audio_events": "false", "no_verbatim": "false"}
+        if hint := language_code(language_hint):
+            fields["language_code"] = hint
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15), follow_redirects=False, trust_env=False) as client:
+                response = await bounded_request(
+                    client,
+                    "POST",
+                    "https://api.elevenlabs.io/v1/speech-to-text",
+                    paid=True,
+                    headers={"xi-api-key": self.key},
+                    data=fields,
+                    files={"file": (filename, audio, content_type or "application/octet-stream")},
+                )
+                result = checked_response(response)
+        except (httpx.TimeoutException, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as exc:
+            raise ProviderError("external_execution_uncertain", uncertain=True) from exc
+        except httpx.RequestError as exc:
+            raise ProviderError("provider_connection_failed", retryable=True) from exc
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str) or len(result["text"]) > MAX_TRANSCRIPT_CHARS:
+            raise ProviderError("provider_invalid_response", uncertain=True)
+        return result["text"].strip()
 
 
 _TERMS = re.compile(r"(?<!\w)(?:(?=[A-Za-z0-9._/-]*\d)[A-Za-z][A-Za-z0-9._/-]*|\d+(?:[.,]\d+)*(?:[A-Za-z_/-][A-Za-z0-9._/-]*)?(?:\s?(?:kg|cm|mm|km|m|L|ml|%|₹|Rs))?)(?!\w)")
@@ -254,8 +299,8 @@ class PlainText(HTMLParser):
         self.fragments.append(data)
 
 
-class AzureTranslator:
-    capabilities = REGISTRY["azure-translator"]
+class LegacyTranslatorDisabled:
+    capabilities = Capabilities("legacy-translator", "legacy", True, False, "source_turn")
     def __init__(self, key: str, region: str):
         self.key = _credential(key, "translator_unconfigured")
         if not isinstance(region, str) or len(region) > 64 or (region and not re.fullmatch(r"[a-z0-9-]+", region)):
@@ -263,6 +308,7 @@ class AzureTranslator:
         self.region = region
 
     async def test(self, functional: bool = False) -> dict:
+        raise ProviderError("provider_removed")
         # Public languages endpoint proves reachability only, not credentials.
         if not functional:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
@@ -272,6 +318,7 @@ class AzureTranslator:
         return {"connected": bool(text), "functional": True, "accuracy_tested": False, "note": "Charged standard text translation smoke test."}
 
     async def translate(self, text: str, source_language: str | None = None) -> str:
+        raise ProviderError("provider_removed")
         if not isinstance(text, str) or len(text) > MAX_TRANSCRIPT_CHARS:
             raise ProviderError("translator_input_too_large")
         try:

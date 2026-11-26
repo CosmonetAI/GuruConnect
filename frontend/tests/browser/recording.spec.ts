@@ -1,5 +1,6 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 const microphoneFile = fileURLToPath(new URL('../fixtures/microphone.wav', import.meta.url))
 const api = process.env.PLAYWRIGHT_API_URL || 'http://127.0.0.1:8011'
@@ -26,7 +27,7 @@ async function save(page: Page, name: string) {
 }
 async function playable(page: Page) {
   await expect(page.getByText('Speech transcription needs attention', { exact: true })).toBeVisible({ timeout: 20000 })
-  await page.getByRole('button', { name: 'Load playback', exact: true }).click()
+  await page.getByRole('button', { name: 'Play recording', exact: true }).click()
   const audio = page.getByLabel('Conversation source audio')
   await expect(audio).toBeVisible()
   await expect.poll(() => audio.evaluate(node => (node as HTMLAudioElement).readyState), { timeout: 10000 }).toBeGreaterThanOrEqual(1)
@@ -34,7 +35,7 @@ async function playable(page: Page) {
   await audio.evaluate(async node => { await (node as HTMLAudioElement).play() })
   await expect.poll(() => audio.evaluate(node => (node as HTMLAudioElement).currentTime)).toBeGreaterThan(0)
   await audio.evaluate(node => (node as HTMLAudioElement).pause())
-  await expect(page.getByText(/The transcript appears when the background worker completes/)).toBeVisible()
+  await expect(page.getByText(/The transcript will appear when processing is complete/)).toBeVisible()
 }
 
 test.beforeEach(async ({ page }) => {
@@ -80,6 +81,16 @@ test('WAV upload uses the durable recording pipeline and enquiry ID remains vali
   await page.reload()
   await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
   await playable(page)
+  await page.goto('/recordings')
+  await page.getByPlaceholder('Search by name, phone, or email').fill(label)
+  await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Download', exact: true })).toHaveCount(1)
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download', exact: true }).click()
+  const savedDownload = await download
+  expect(savedDownload.suggestedFilename()).toMatch(/\.mp3$/)
+  expect(await savedDownload.failure()).toBeNull()
+  await page.goto(detail)
   await page.getByRole('link', { name: 'Back to enquiries', exact: true }).click()
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: label, exact: true }) })
   await expect(card).toBeVisible()
@@ -119,7 +130,7 @@ test('navigation and Cancel stay guarded until the microphone recording is final
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Enquiries', exact: true }).click()
   await expect(page).toHaveURL(/\/enquiries\/new$/)
   await expect(page.getByRole('button', { name: 'Stop & save', exact: true })).toBeVisible()
-  await expect(page.getByRole('alert').filter({ hasText: 'Finish saving or recover this audio before leaving' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Finish saving or detach the audio before leaving' })).toBeVisible()
   await expect.poll(() => page.locator('.elapsed-timer').innerText()).not.toBe('00:00')
   await page.getByRole('button', { name: 'Stop & save', exact: true }).click()
   await expect(page.getByText('Audio saved in your workspace', { exact: true })).toBeVisible({ timeout: 20000 })
@@ -133,7 +144,7 @@ test('390 px navigation opens every core route without horizontal overflow', asy
     customerName: 'Synthetic mobile customer with a long customer name', phone: '+91 90000 00000', channel: 'Incoming Call', branch: 'A lengthy showroom branch for mobile wrapping', assignedExecutive: 'Mobile test executive', customerType: 'Retail', productRequirements: [], priority: 'Normal',
   } })
   expect(response.ok()).toBeTruthy()
-  for (const [route, heading] of [['/dashboard', 'Your conversations, connected'], ['/enquiries', 'Enquiries'], ['/enquiries/new', 'Capture a new enquiry'], ['/integrations', 'Connections & processing'], ['/settings', 'Team & account']]) {
+  for (const [route, heading] of [['/dashboard', 'Sales intelligence at a glance'], ['/enquiries', 'Enquiries'], ['/enquiries/new', 'Capture a new enquiry'], ['/settings#connections', 'Team & account'], ['/settings', 'Team & account']]) {
     await page.goto(route)
     await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
@@ -146,27 +157,56 @@ test('390 px navigation opens every core route without horizontal overflow', asy
   }
 })
 
+async function fixtureRecording(request: APIRequestContext, name: string, title: string) {
+  // Generated synthetic WAV through real reservations, signed upload and finalization.
+  const wav = Buffer.alloc(44 + 32000)
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34)
+  wav.write('data', 36); wav.writeUInt32LE(32000, 40)
+  for (let i = 0; i < 16000; i++) wav.writeInt16LE(Math.round(Math.sin(i * Math.PI * 2 * 440 / 16000) * 1000), 44 + i * 2)
+  const created = await request.post(`${api}/api/v1/conversations`, { headers: { ...sourceHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { customer_name: name, phone: '+91 90000 00000', title, consent_confirmed: true, audio_only: false, audio_bucket: 'walkin-audio' } })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const conversationId = (await created.json()).id
+  const leased = await request.post(`${api}/api/v1/conversations/${conversationId}/lease`, { headers: sourceHeaders, data: { tab_id: crypto.randomUUID(), takeover: false } })
+  expect(leased.ok(), await leased.text()).toBeTruthy()
+  const lease = await leased.json()
+  const chunk = { conversation_id: conversationId, part_id: lease.part_id, lease_token: lease.lease_token, sequence: 0, start_sample: 0, sample_count: 16000, sample_rate: 16000, bytes: wav.length, sha256: createHash('sha256').update(wav).digest('hex'), mime: 'audio/wav' }
+  const authorized = await request.post(`${api}/api/v1/conversations/${conversationId}/chunks/authorize`, { headers: sourceHeaders, data: chunk })
+  expect(authorized.ok(), await authorized.text()).toBeTruthy()
+  const permit = await authorized.json()
+  const uploaded = await request.put(permit.upload_url, { headers: { ...sourceHeaders, ...permit.headers }, data: wav })
+  expect(uploaded.ok(), await uploaded.text()).toBeTruthy()
+  const confirmed = await request.post(`${api}/api/v1/conversations/${conversationId}/chunks/confirm`, { headers: sourceHeaders, data: chunk })
+  expect(confirmed.ok(), await confirmed.text()).toBeTruthy()
+  const finalized = await request.post(`${api}/api/v1/conversations/${conversationId}/finalize`, { headers: sourceHeaders, data: { part_id: lease.part_id, lease_token: lease.lease_token, expected_chunks: 1, total_samples: 16000 } })
+  expect(finalized.ok(), await finalized.text()).toBeTruthy()
+  return conversationId as string
+}
+
 test('upstream walk-in conversion keeps the same saved audio and durable enquiry pipeline', async ({ page, request }) => {
-  const visitId = crypto.randomUUID()
   const name = `Synthetic walk-in ${Date.now()}`
   await page.goto('/walkins')
-  await page.evaluate(({ visitId, name }) => {
-    const now = new Date().toISOString()
-    const existing = JSON.parse(localStorage.getItem('guru-group:walkin-visits') || '[]')
-    existing.push({ id: visitId, visitNumber: 'WI-SYNTHETIC', customerName: name, mobileNumber: '+91 90000 00000', email: '', companyName: '', purpose: 'Product enquiry', purposeDescription: '', productOrService: 'Test model', department: 'Sales', requestedEmployee: '', appointmentStatus: 'Walk-in', appointmentReference: '', registeredBy: 'Reception', assignedAgentId: 'demo-agent-sneha', assignedAgentName: 'Sneha Rao', assignmentNote: '', status: 'Requirements Captured', checkInAt: now, assignedAt: now, internalNotes: '', convertedEnquiryReference: null, createdAt: now, updatedAt: now })
-    localStorage.setItem('guru-group:walkin-visits', JSON.stringify(existing))
-    const requirements = JSON.parse(localStorage.getItem('guru-group:walkin-requirements') || '{}')
-    requirements[visitId] = { detailedRequirement: 'Synthetic fixture requirements', productOrService: 'Test model', quantity: '2', budgetRange: '', expectedPurchaseTimeline: '', preferredSolution: '', competitorOrAlternative: '', specialRequests: '', followUpAt: '', agentNotes: '', nextAction: '', updatedAt: now }
-    localStorage.setItem('guru-group:walkin-requirements', JSON.stringify(requirements))
-  }, { visitId, name })
+  const visitId = await page.evaluate(async ({ workspace, name }) => {
+    const service = await import('/src/services/walkinService.ts')
+    const visit = await service.registerWalkin(workspace, { customerName: name, mobileNumber: '+91 90000 00000', email: '', companyName: '', purpose: 'Product enquiry', purposeDescription: '', productOrService: 'Test model', department: 'Sales', requestedEmployee: '', appointmentStatus: 'Walk-in', appointmentReference: '', internalNotes: '' }, crypto.randomUUID())
+    await service.updateWalkinStatus(workspace, visit.id, 'In Discussion', visit.updatedAt)
+    const current = await service.getWalkinVisit(workspace, visit.id)
+    const empty = await service.getWalkinRequirements(workspace, visit.id)
+    await service.saveWalkinRequirements(workspace, visit.id, { ...empty, detailedRequirement: 'Synthetic fixture requirements', productOrService: 'Test model', quantity: '2' }, current!.updatedAt)
+    return visit.id
+  }, { workspace, name })
+  const conversationId = await fixtureRecording(request, name, `Walk-in visit ${visitId}`)
+  await page.evaluate(async ({ workspace, visitId, conversationId }) => {
+    const service = await import('/src/services/walkinService.ts')
+    await service.attachWalkinRecording(workspace, visitId, conversationId)
+    sessionStorage.setItem(`guruconnect:walkin-audio:00000000-0000-0000-0000-000000000001:${workspace}:${visitId}`, conversationId)
+  }, { workspace, visitId, conversationId })
   await page.goto(`/walkins/${visitId}`)
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
-  await page.getByLabel('Choose audio file').setInputFiles(microphoneFile)
-  await consent(page)
-  await page.getByRole('button', { name: 'Upload & process', exact: true }).click()
-  await expect(page.getByText('Audio saved in your workspace', { exact: true })).toBeVisible({ timeout: 20000 })
-  const saved = await request.get(`${api}/api/v1/conversations?q=${visitId}`, { headers: sourceHeaders })
-  const conversationId = (await saved.json()).items[0].id
+  // Local owner may review recordings; capture stays receptionist-only.
+  await expect(page.getByLabel('Choose audio file')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Review recording/ })).toBeVisible()
   await page.getByRole('button', { name: /create sales enquiry/i }).click()
   await expect(page).toHaveURL(/\/enquiries\/new$/)
   await expect(page.locator('#customerName')).toHaveValue(name)
@@ -177,4 +217,38 @@ test('upstream walk-in conversion keeps the same saved audio and durable enquiry
   expect(await enquiry.json()).toMatchObject({ sourceEventId: `walkin:${visitId}`, conversationId })
   await page.reload()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+})
+
+test('a failed transfer survives reload and recovers the same audio before the enquiry saves', async ({ page }) => {
+  const name = `Recovered enquiry ${Date.now()}`
+  await customer(page, name); await consent(page)
+  await page.route('**/api/v1/local-audio/**', route => route.abort('internetdisconnected'))
+  await page.getByLabel('Choose audio file').setInputFiles(microphoneFile)
+  await page.getByRole('button', { name: 'Upload & process', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Recover audio', exact: true })).toBeVisible({ timeout: 25000 })
+  await expect(page.getByRole('button', { name: 'Save enquiry', exact: true })).toBeDisabled()
+  await page.unroute('**/api/v1/local-audio/**')
+  await page.reload()
+  await expect(page.locator('#customerName')).toHaveValue(name)
+  await page.getByRole('button', { name: 'Recover audio', exact: true }).click()
+  await expect(page.getByText('Audio saved in your workspace', { exact: true })).toBeVisible({ timeout: 20000 })
+  await save(page, name)
+  await playable(page)
+})
+
+
+test('another account’s pending audio is not offered in the current account', async ({ page }) => {
+  await customer(page, `Scoped recovery ${Date.now()}`)
+  const otherId = crypto.randomUUID()
+  await page.evaluate(async ({ workspace, otherId }) => {
+    const outbox = await import('/src/recording/outbox.ts')
+    const scope = outbox.scopeKey({ userId: 'another-account', workspaceId: workspace })
+    await outbox.saveRecovery({ key: `${scope}/${otherId}`, scope, conversationId: otherId, partId: crypto.randomUUID(), leaseToken: crypto.randomUUID(), totalSamples: 16000, chunkCount: 1, stopped: true, updatedAt: new Date().toISOString() })
+  }, { workspace, otherId })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Recover audio', exact: true })).toHaveCount(0)
+  expect(await page.evaluate(async workspace => {
+    const outbox = await import('/src/recording/outbox.ts')
+    return (await outbox.listRecoveries({ userId: 'another-account', workspaceId: workspace })).length
+  }, workspace)).toBe(1)
 })

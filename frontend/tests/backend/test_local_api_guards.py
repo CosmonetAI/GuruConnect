@@ -78,7 +78,7 @@ def test_json_and_streamed_request_bodies_are_bounded_before_validation(tmp_path
             yield b"x" * 60000
             yield b"x" * 40001
         assert http.post("/api/v1/enquiries", content=chunks(), headers={"Transfer-Encoding": "chunked"}).status_code == 413
-        assert http.put(f"/api/v1/local-audio/{uuid4()}/{uuid4()}/0", content=b"x" * 400001).status_code == 413
+        assert http.put(f"/api/v1/local-audio/{uuid4()}/{uuid4()}/0", content=b"x" * 6000001).status_code == 413
 
 
 def test_validation_errors_do_not_echo_provider_credentials_or_submitted_values(tmp_path):
@@ -102,7 +102,7 @@ def wav(samples=1600):
 def test_signed_chunk_upload_is_reserved_scoped_and_immutable(tmp_path):
     app = local_app(tmp_path)
     with client(app) as http:
-        created = http.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "consent_confirmed": True, "audio_only": True})
+        created = http.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "phone": "9876543210", "consent_confirmed": True, "audio_only": True})
         assert created.status_code == 201, created.text
         conversation_id = created.json()["id"]
         prefix = f"/api/v1/conversations/{conversation_id}"
@@ -157,7 +157,7 @@ def test_local_signed_tokens_are_expiring_purpose_and_object_bound(tmp_path):
 def test_local_recording_lease_cannot_take_over_another_active_tab(tmp_path):
     app = local_app(tmp_path)
     with client(app) as http:
-        created = http.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "consent_confirmed": True, "audio_only": True}).json()
+        created = http.post("/api/v1/conversations", headers={"Idempotency-Key": str(uuid4())}, json={"customer_name": "Synthetic customer", "phone": "9876543210", "consent_confirmed": True, "audio_only": True}).json()
         path = f"/api/v1/conversations/{created['id']}/lease"
         first = http.post(path, json={"tab_id": "first-recording-tab-unique"})
         assert first.status_code == 200, first.text

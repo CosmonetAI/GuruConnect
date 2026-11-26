@@ -1,15 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
-import { configured, localMode, request, supabase, message, type Workspace } from '../services/officeApi'
+import { configured, localMode, request, supabase, message, json, type Workspace } from '../services/officeApi'
+
+const presenceSessionId = (() => {
+  try {
+    const key = 'guruconnect-presence-session'
+    const existing = sessionStorage.getItem(key)
+    if (existing) return existing
+    const created = crypto.randomUUID()
+    sessionStorage.setItem(key, created)
+    return created
+  } catch {
+    return crypto.randomUUID()
+  }
+})()
 
 const localUser = { id: '00000000-0000-0000-0000-000000000001', email: 'local@localhost', app_metadata: {}, user_metadata: { display_name: 'Local user' }, aud: 'authenticated', created_at: '2026-10-13T00:00:00Z' } as User
-const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner' }
+const localWorkspace: Workspace = { id: '00000000-0000-0000-0000-000000000002', name: 'Local workspace', role: 'owner', actor_role: 'owner', member_id: localUser.id }
 
 interface OfficeState {
   configured: boolean; localMode: boolean; session: Session | null; user: User | null; loading: boolean
-  workspacesLoading: boolean; workspaces: Workspace[]; workspace: Workspace | null; error: string
+  workspacesLoading: boolean; workspaces: Workspace[]; workspace: Workspace | null; readOnly: boolean; error: string
   setWorkspace(id: string): void; reloadWorkspaces(): Promise<void>
-  captureBusy: boolean; setCaptureBusy(busy: boolean): void
+  captureBusy: boolean; setCaptureBusy(busy: boolean): void; setPresencePaused(paused: boolean): void
 }
 const OfficeContext = createContext<OfficeState | null>(null)
 
@@ -21,6 +34,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('')
   const [workspacesLoading, setWorkspacesLoading] = useState(false)
   const [captureBusy, setCaptureBusy] = useState(false)
+  const [presencePaused, setPresencePaused] = useState(false)
   const identity = useRef<string | null>(null)
   const sequence = useRef(0)
   const reloadWorkspaces = useCallback(async () => {
@@ -31,8 +45,11 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     try {
       const result = await request<{ items: Workspace[] }>('/workspaces')
       if (identity.current !== userId || sequence.current !== ticket) return
-      setWorkspaces(result.items)
-      setActive(old => result.items.some(item => item.id === old) ? old : result.items[0]?.id ?? null)
+      // The API enforces this too; keep the client from displaying another
+      // owner's workspace if an older server or cached response returns one.
+      const visible = result.items.filter(item => item.role !== 'owner' || (item.member_id ?? item.id) === userId)
+      setWorkspaces(visible)
+      setActive(old => visible.some(item => (item.member_id ?? item.id) === old) ? old : visible[0] ? (visible[0].member_id ?? visible[0].id) : null)
       setError('')
     } catch (failure) {
       if (identity.current !== userId || sequence.current !== ticket) return
@@ -49,7 +66,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
       if (!alive) return
       const userId = next?.user.id ?? null
       if (userId !== identity.current) {
-        ++sequence.current; setWorkspaces([]); setActive(null); setError(''); setCaptureBusy(false)
+        ++sequence.current; setWorkspaces([]); setActive(null); setError(''); setCaptureBusy(false); setPresencePaused(false)
         setWorkspacesLoading(!!next)
       }
       identity.current = userId; setSession(next); setLoading(false)
@@ -63,9 +80,31 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
     return () => { alive = false; ++sequence.current; subscription.unsubscribe() }
   }, [])
   useEffect(() => { if (session?.user.id) void reloadWorkspaces() }, [session?.user.id, reloadWorkspaces])
+  useEffect(() => {
+    if (!active) {
+      localStorage.removeItem('guruconnect-active-workspace')
+      localStorage.removeItem('guruconnect-active-organisation')
+      return
+    }
+    localStorage.setItem('guruconnect-active-workspace', active)
+    const selected = (localMode ? [localWorkspace] : workspaces).find(item => (item.member_id ?? item.id) === active)
+    if (selected) localStorage.setItem('guruconnect-active-organisation', selected.id)
+  }, [active, workspaces, localMode])
+  useEffect(() => {
+    if (!session || localMode || presencePaused) return
+    const ping = () => {
+      void request('/presence', null, json('POST', { sessionId: presenceSessionId }))
+        .catch(error => console.warn('Presence API heartbeat failed', error))
+    }
+    ping(); const timer = window.setInterval(ping, 30_000)
+    return () => window.clearInterval(timer)
+  }, [session, localMode, presencePaused])
+  const user = localMode ? localUser : session?.user ?? null
+  const workspace = localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null
+  const readOnly = !localMode && !!user && !!workspace?.member_id && workspace.member_id !== user.id
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
-    workspaces: localMode ? [localWorkspace] : workspaces, workspace: localMode ? localWorkspace : workspaces.find(item => item.id === active) ?? null, error, captureBusy, setCaptureBusy,
-    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => item.id === id)) setActive(id) } }}>{children}</OfficeContext.Provider>
+    workspaces: localMode ? [localWorkspace] : workspaces, workspace, readOnly, error, captureBusy, setCaptureBusy,
+    reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) }, setPresencePaused }}>{children}</OfficeContext.Provider>
 }
 export function useOffice() {
   const state = useContext(OfficeContext)

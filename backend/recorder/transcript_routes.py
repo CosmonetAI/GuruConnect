@@ -1,15 +1,21 @@
 import json
+import hashlib
+import logging
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 from . import schemas as s
 from .db import one, many
 from .errors import fail
 from .processing import plan_windows, schedule
+from .audio import MAX_SESSION_SAMPLES, validate_wav
 from .routes import audit, create_run
 from .security import Workspace, workspace, conversation
+from .media import mp3_chunks, wav_header
 
 router = APIRouter(prefix="/api/v1/conversations")
+log = logging.getLogger("recorder.api")
 
 
 async def transcript_data(connection, context, conversation_id, version_id=None):
@@ -99,9 +105,114 @@ async def revise(conversation_id: UUID, body: s.Revision, request: Request, cont
 async def playback(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
     async with request.app.state.db.connection() as connection:
         conv = await conversation(connection, context, conversation_id)
+        assembly = await one(connection, "select id,state,error_code,attempt,updated_at from processing_jobs where conversation_id=%s and kind='assemble' and payload->>'inference_job_id' is null order by created_at desc limit 1", (conversation_id,))
     if not conv["playback_object_path"]:
-        fail("playback_assembly_pending", 409)
+        log.warning("playback_pending conversation_id=%s job_id=%s job_state=%s error_code=%s",
+                    conversation_id, assembly["id"] if assembly else None,
+                    assembly["state"] if assembly else "missing",
+                    assembly["error_code"] if assembly else None)
+        fail("playback_assembly_pending", 409, job_state=assembly["state"] if assembly else "missing",
+             job_id=str(assembly["id"]) if assembly else None,
+             job_error_code=assembly["error_code"] if assembly else None)
     return {"url": await request.app.state.storage.signed_read(conv["playback_object_path"]), "expires_in": request.app.state.settings.signed_url_seconds}
+
+
+def _wav_header(samples: int) -> bytes:
+    """Return a PCM WAV header whose data section can be streamed progressively."""
+    return wav_header(samples)
+
+
+@router.get("/{conversation_id}/playback/stream")
+async def playback_stream(conversation_id: UUID, request: Request, start_sample: int = Query(default=0, ge=0), context: Workspace = Depends(workspace)):
+    """Stream one continuous WAV directly from the validated bucket chunks.
+
+    This is the playback fallback for deployments without the background assembly
+    worker. The first validated chunk is sent as soon as it is read; subsequent
+    chunks are yielded as contiguous PCM so the browser can keep playing.
+    """
+    async with request.app.state.db.connection() as connection:
+        conv = await conversation(connection, context, conversation_id)
+        chunks = await many(connection, "select object_path,sample_start,sample_count,bytes,sha256,state from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
+    total_samples = int(conv.get("total_samples") or 0)
+    if not chunks or total_samples <= 0 or total_samples > MAX_SESSION_SAMPLES:
+        fail("playback_unavailable", 409, "Saved audio is not ready for playback")
+    expected = 0
+    for chunk in chunks:
+        if chunk["state"] != "validated" or int(chunk["sample_start"]) != expected:
+            fail("playback_chunks_incomplete", 409, "Some saved audio is still being verified")
+        expected += int(chunk["sample_count"])
+    if expected != total_samples or start_sample >= total_samples:
+        fail("playback_chunks_incomplete", 409, "Saved audio is incomplete")
+    selected = [chunk for chunk in chunks if int(chunk["sample_start"]) + int(chunk["sample_count"]) > start_sample]
+    samples_to_stream = total_samples - start_sample
+
+    async def verified_pcm(chunk):
+        data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+        try:
+            info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+        except ValueError as exc:
+            log.error("playback_chunk_invalid conversation_id=%s sample_start=%s exception_type=%s", conversation_id, chunk["sample_start"], type(exc).__name__)
+            fail("playback_chunk_invalid", 409)
+        if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+            log.error("playback_chunk_checksum_mismatch conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
+            fail("playback_chunk_checksum_mismatch", 409)
+        left = max(0, start_sample - int(chunk["sample_start"]))
+        return info.pcm[left * 2:]
+
+    # Verify the first chunk before committing audio headers. Storage failures
+    # can then return actionable JSON instead of a broken HTTP 200 audio file.
+    first_pcm = await verified_pcm(selected[0])
+
+    async def body():
+        yield _wav_header(samples_to_stream)
+        yield first_pcm
+        for chunk in selected[1:]:
+            try:
+                yield await verified_pcm(chunk)
+            except HTTPException:
+                # HTTP status cannot change after headers. Abort the stream so
+                # the browser detects incomplete audio and can request it again.
+                log.warning("playback_stream_interrupted conversation_id=%s sample_start=%s", conversation_id, chunk["sample_start"])
+                raise RuntimeError("playback_stream_interrupted") from None
+
+    log.info("playback_stream_started conversation_id=%s start_sample=%s samples=%s chunks=%s", conversation_id, start_sample, samples_to_stream, len(selected))
+    return StreamingResponse(body(), media_type="audio/wav", headers={
+        "Content-Length": str(44 + samples_to_stream * 2),
+        "X-Playback-Mode": "progressive-bucket",
+        "X-Playback-Start-Sample": str(start_sample),
+        "X-Playback-Sample-Rate": "16000",
+    })
+
+
+@router.get("/{conversation_id}/playback/download")
+async def playback_download(conversation_id: UUID, request: Request, context: Workspace = Depends(workspace)):
+    """Encode the validated chunk sequence as one downloadable MP3."""
+    async with request.app.state.db.connection() as connection:
+        conv = await conversation(connection, context, conversation_id)
+        chunks = await many(connection, "select object_path,sample_start,sample_count,bytes,sha256,state from audio_chunks where conversation_id=%s order by sample_start", (conversation_id,))
+    total_samples = int(conv.get("total_samples") or 0)
+    if not chunks or total_samples <= 0 or total_samples > MAX_SESSION_SAMPLES:
+        fail("playback_unavailable", 409, "Saved audio is not ready for download")
+    expected = 0
+    for chunk in chunks:
+        if chunk["state"] != "validated" or int(chunk["sample_start"]) != expected:
+            fail("playback_chunks_incomplete", 409, "Some saved audio is still being verified")
+        expected += int(chunk["sample_count"])
+    if expected != total_samples:
+        fail("playback_chunks_incomplete", 409, "Saved audio is incomplete")
+
+    async def pcm():
+        for chunk in chunks:
+            data = await request.app.state.storage.read(chunk["object_path"], int(chunk["bytes"]))
+            info = validate_wav(data, expected_samples=int(chunk["sample_count"]), max_samples=3 * 60 * 16000)
+            if hashlib.sha256(data).hexdigest() != chunk["sha256"]:
+                raise RuntimeError("playback_chunk_checksum_mismatch")
+            yield info.pcm
+
+    return StreamingResponse(mp3_chunks(pcm(), total_samples), media_type="audio/mpeg", headers={
+        "Content-Disposition": f'attachment; filename="recording-{conversation_id}.mp3"',
+        "X-Playback-Mode": "mp3-encoded-chunks",
+    })
 
 
 def srt_time(seconds: float) -> str:
@@ -176,7 +287,7 @@ async def replay(conversation_id: UUID, body: s.RunCreate, request: Request, con
             fail("processing_action_not_allowed", 403)
         if conv["upload_state"] != "saved" or not conv["manifest_hash"]:
             fail("recording_must_be_saved", 409)
-        run = await create_run(connection, context, conv, body.engine_id, body.kind, body.idempotency_key)
+        run = await create_run(connection, context, conv, body.engine_id, body.kind, body.idempotency_key, settings=request.app.state.settings)
         await plan_windows(connection, conversation_id, request.app.state.settings, final=True, run_id=run["id"])
         if body.kind == "comparison":
             production = await one(connection, "select id from processing_runs where conversation_id=%s and kind='production' order by created_at limit 1", (conversation_id,))
@@ -255,6 +366,10 @@ async def delete(conversation_id: UUID, request: Request, context: Workspace = D
         await connection.execute("delete from recording_leases where conversation_id=%s", (conversation_id,))
         await connection.execute("update processing_jobs set state='cancelled',cancelled_at=now(),finish_in_flight=false where conversation_id=%s and state<>'succeeded'", (conversation_id,))
         await connection.execute("update processing_runs set state='cancelled',cancelled_at=now() where conversation_id=%s", (conversation_id,))
+        # Live walk-in extraction is separate from transcript versions; delete
+        # it with the recording so removed audio leaves no visitor data behind.
+        await connection.execute("delete from conversation_extractions where conversation_id=%s", (conversation_id,))
+        await connection.execute("delete from voice_ai_contexts where conversation_id=%s", (conversation_id,))
         for table in ("transcript_revisions", "speaker_assignments", "diarization_intervals", "translations"):
             await connection.execute(f"delete from {table} where conversation_id=%s", (conversation_id,))
         await connection.execute("delete from transcript_words where version_id in (select id from transcript_versions where conversation_id=%s)", (conversation_id,))

@@ -69,7 +69,7 @@ def test_missing_configuration_keeps_health_and_fails_closed():
         assert client.get("/ready").status_code == 503
         assert client.get("/api/v1/workspaces").status_code == 401
         assert client.get("/api/v1/workspaces", headers={"Authorization": "Bearer untrusted"}).status_code == 503
-        assert client.get("/internal/v1/claim").status_code == 405
+        assert client.get("/internal/v1/claim").status_code == 401
         response = client.post("/api/v1/conversations", content=b"x"*1_000_001)
         assert response.status_code == 413
         def chunks():
@@ -80,12 +80,15 @@ def test_missing_configuration_keeps_health_and_fails_closed():
 
 
 def test_strict_schemas_no_client_owner_and_real_uuid_json():
-    payload = {"customer_name": "Sam", "consent_confirmed": True}
+    payload = {"customer_name": "Sam", "phone": "9876543210", "consent_confirmed": True}
     assert ConversationCreate.model_validate(payload).customer_name == "Sam"
     with pytest.raises(ValidationError):
         ConversationCreate.model_validate({**payload, "owner_id": str(uuid4())})
     with pytest.raises(ValidationError):
         ConversationCreate.model_validate({"customer_name": "Sam", "consent_confirmed": False})
+    assert ConversationCreate.model_validate({"customer_name": "Sam", "email": "sam@example.com", "consent_confirmed": True}).email == "sam@example.com"
+    with pytest.raises(ValidationError):
+        ConversationCreate.model_validate({"customer_name": "Sam", "consent_confirmed": True})
     data = {"part_id": str(uuid4()), "sequence": 0, "sample_count": 80000, "start_sample": 0, "bytes": 160044, "sha256": "a"*64, "lease_token": str(uuid4())}
     assert Chunk.model_validate(data).sample_count == 80000
     for bad in ({"sample_count": "80000"}, {"sequence": -1}, {"sha256": "../secret"}, {"sample_rate": 44100}, {"bytes": 10}):
@@ -118,7 +121,7 @@ async def test_immutable_storage_conflict_checks_hash(settings, respx_mock):
         await storage.put(path, b"new")
     assert error.value.status_code == 409
     assert storage.bucket(path) == "recorder-artifacts"
-    assert storage.bucket(path.split("/results/")[0]+"/playback/file.wav") == "recorder-playback"
+    assert storage.bucket(path.split("/results/")[0]+"/session-audio/playback/file.wav") == "session-audio"
 
 
 def test_openapi_contains_all_authenticated_workflows():

@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), office: { user: { id: 'alice' } as { id: string } | null, workspace: { id: 'workspace-a' } as { id: string } | null } }))
+const mocks = vi.hoisted(() => ({ request: vi.fn(), office: { user: { id: 'alice' } as { id: string } | null, workspace: { id: 'workspace-a' } as { id: string; member_id?: string } | null } }))
 vi.mock('../contexts/OfficeContext', () => ({ useOffice: () => mocks.office }))
 vi.mock('../services/officeApi', () => ({ request: mocks.request, message: (error: unknown) => error instanceof Error ? error.message : 'Request failed', ApiError: class extends Error { constructor(public status: number, public code: string, message: string) { super(message) } } }))
 import { ApiError } from '../services/officeApi'
@@ -61,5 +61,22 @@ describe('private scoped data reads', () => {
     hook.rerender({ path: '/another-private-resource' })
     const latest = mocks.request.mock.calls.at(-1)?.[2].signal as AbortSignal
     hook.unmount(); expect(latest.aborted).toBe(true)
+  })
+})
+
+
+describe('member view boundaries within one workspace', () => {
+  it('clears and cancels an owner view when the selected member changes', async () => {
+    mocks.office.workspace = { id: 'workspace-a', member_id: 'first-member' }
+    let finish!: (value: object) => void
+    mocks.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockResolvedValueOnce({ customer: 'Second member customer' })
+    const hook = renderHook(() => useScopedResource<{ customer: string }>('/conversations'))
+    const signal = mocks.request.mock.calls[0][2].signal as AbortSignal
+    mocks.office.workspace = { id: 'workspace-a', member_id: 'second-member' }; hook.rerender()
+    expect(signal.aborted).toBe(true); expect(hook.result.current.data).toBeUndefined()
+    await waitFor(() => expect(hook.result.current.data?.customer).toBe('Second member customer'))
+    await act(async () => finish({ customer: 'First member private customer' }))
+    expect(hook.result.current.data?.customer).toBe('Second member customer')
+    expect(mocks.request.mock.calls.at(-1)?.[3]).toBe('second-member')
   })
 })
