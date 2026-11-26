@@ -184,6 +184,7 @@ Expected TeleCRM response:
   "message_id": "MSG003",
   "conversation_id": "CONV123",
   "direction": "outgoing",
+  "sent_to": "+919876543210",
   "message_type": "text",
   "message": "Sure, how can I help you?",
   "timestamp": "2026-11-25T12:35:00Z",
