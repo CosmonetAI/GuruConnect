@@ -83,8 +83,8 @@ Expected response:
 
 Event: `whatsapp_message_received`
 
-Required fields: `customer_phone`, `message_text`, `received_at`. All other
-fields are optional.
+Required fields: `customer_phone`, `message_text`, `message_id`, `received_at`.
+All other fields are optional.
 
 ```json
 {
@@ -118,8 +118,8 @@ Expected response:
 
 Event: `whatsapp_message_status`
 
-Required fields: `customer_phone`, `status`. Message identifiers and timestamps
-are stored when supplied.
+Required fields: `customer_phone`, `message_id`, `status`. Timestamps and
+failure details are stored when supplied.
 
 ```json
 {
@@ -155,7 +155,7 @@ TeleCRM webhook URL is preferred; the payload `event` value selects the type.
 Sending WhatsApp messages will be implemented later as a synchronous API
 integration. The send API endpoint and credentials are not enabled yet.
 
-### Send an outgoing WhatsApp message — planned, not enabled
+### Get a sent WhatsApp message — planned, not enabled
 
 The future request will use the TeleCRM contract, for example:
 
@@ -173,6 +173,21 @@ The future request will use the TeleCRM contract, for example:
   "agent_id": "{{assignee_id}}",
   "agent_email": "{{assignee_email}}",
   "lead_id": "{{lead_id}}"
+}
+```
+
+Expected TeleCRM response:
+
+```json
+{
+  "success": true,
+  "message_id": "MSG003",
+  "conversation_id": "CONV123",
+  "direction": "outgoing",
+  "message_type": "text",
+  "message": "Sure, how can I help you?",
+  "timestamp": "2026-11-25T12:35:00Z",
+  "status": "sent"
 }
 ```
 
@@ -207,7 +222,8 @@ Expected TeleCRM response:
       "direction": "outgoing",
       "message_type": "text",
       "message": "Sure, how can I help you?",
-      "timestamp": "2026-11-25T12:35:00Z"
+      "timestamp": "2026-11-25T12:35:00Z",
+      "status": "sent"
     }
   ]
 }

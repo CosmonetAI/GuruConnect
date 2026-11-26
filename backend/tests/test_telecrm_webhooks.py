@@ -66,13 +66,16 @@ def test_call_recording_requires_recording_url_and_phone():
 
 def test_whatsapp_message_requires_phone_and_message_but_keeps_optional_fields_optional():
     with client() as http:
-        payload = {"event": "whatsapp_message_received", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z"}
+        payload = {"event": "whatsapp_message_received", "message_id": "incoming-test-1", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z"}
         response = http.post("/api/webhooks/telecrm/whatsapp-incoming", json=payload, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 200
         assert response.json()["event"] == "whatsapp_message_received"
 
-        missing = {"event": "whatsapp_message_received", "customer_phone": "+919876543210", "message_text": "I am interested"}
+        missing = {"event": "whatsapp_message_received", "message_id": "incoming-test-2", "customer_phone": "+919876543210", "message_text": "I am interested"}
         assert http.post("/api/webhooks/telecrm", json=missing, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
+
+        missing_message_id = {"event": "whatsapp_message_received", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z"}
+        assert http.post("/api/webhooks/telecrm", json=missing_message_id, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
 
         sent = {"event": "whatsapp_message_sent", "customer_phone": "+919876543210", "message_text": "Later API work"}
         assert http.post("/api/webhooks/telecrm", json=sent, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
@@ -87,10 +90,14 @@ def test_wrong_telecrm_key_is_rejected_before_database_write():
 
 def test_status_requires_phone_and_status():
     with client() as http:
-        missing_status = {"event": "whatsapp_message_status", "customer_phone": "+919876543210"}
+        missing_status = {"event": "whatsapp_message_status", "message_id": "status-test-1", "customer_phone": "+919876543210"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_status, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 422
 
         valid = {**missing_status, "status": "delivered"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=valid, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 200
+
+        missing_message_id = {"event": "whatsapp_message_status", "customer_phone": "+919876543210", "status": "read"}
+        response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_message_id, headers={"X-TeleCRM-Key": "test-telecrm-key"})
+        assert response.status_code == 422

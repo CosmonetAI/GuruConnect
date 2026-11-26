@@ -97,9 +97,11 @@ def _validate(event: str, payload: dict[str, Any]) -> None:
     elif event == "whatsapp_message_received":
         _required(payload, "customer_phone")
         _required(payload, "message_text")
+        _required(payload, "message_id")
         _required(payload, "received_at")
     else:
         _required(payload, "customer_phone")
+        _required(payload, "message_id")
         _required(payload, "status")
 
 
