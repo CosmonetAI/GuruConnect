@@ -32,6 +32,15 @@ describe('local and authenticated request boundaries', () => {
     expect(new Headers(init?.headers).get('X-Workspace-ID')).toBe('workspace-a')
     expect(init?.credentials).toBe('omit')
   })
+  it('routes Dealer API requests to the root API path', async () => {
+    const api = await load()
+    await api.request('/dealer/products', 'workspace-a')
+    await api.requestStream('/dealer/invoices/invoice-a/pdf', 'workspace-a')
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://127.0.0.1:8010/api/dealer/products',
+      'http://127.0.0.1:8010/api/dealer/invoices/invoice-a/pdf',
+    ])
+  })
   it('fails closed on a public deployment with missing configuration', async () => {
     vi.stubGlobal('location', { hostname: 'public.example.test' })
     const api = await load()

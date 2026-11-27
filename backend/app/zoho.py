@@ -677,6 +677,7 @@ class ZohoClient:
         return await self.request('POST','/books/v3/invoices',params=params,json=data)
     async def update_invoice(self,org,invoice_id,data): return await self.request('PUT',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org},json=data)
     async def delete_invoice(self,org,invoice_id): return await self.request('DELETE',f'/books/v3/invoices/{invoice_id}',params={'organization_id':org})
+    async def void_invoice(self,org,invoice_id): return await self.request('POST',f'/books/v3/invoices/{invoice_id}/status/void',params={'organization_id':org})
     async def email_invoice(self,org,invoice_id,data=None): return await self.request('POST',f'/books/v3/invoices/{invoice_id}/email',params={'organization_id':org},json=data or {})
     async def list_invoices(self,org): return await self.request('GET','/books/v3/invoices',params={'organization_id':org,'per_page':200,'page':1})
 

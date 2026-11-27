@@ -174,6 +174,35 @@ def _action_hash(cart):
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _dealer_identity(dealer):
+    with require_db() as db:
+        identity = db.execute(text("""select coalesce(nullif(p.display_name, ''), u.email) as name, u.email
+            from auth.users u left join profiles p on p.id=u.id
+            where u.id=cast(:dealer as uuid)"""), {"dealer": dealer}).mappings().first()
+    if not identity or not identity["email"]:
+        raise HTTPException(409, "The Dealer needs an email address before a Zoho Books customer can be linked.")
+    return dict(identity)
+
+
+async def _ensure_dealer_contact(org, dealer, mapping, books_org, identity):
+    if mapping.get("books_contact_id"):
+        return str(mapping["books_contact_id"])
+    contact = await zoho.ensure_books_contact(books_org, name=identity["name"], email=identity["email"])
+    contact_id = str(contact.get("contact_id") or "")
+    if not contact_id:
+        raise HTTPException(502, "Zoho Books did not return a customer ID for the Dealer.")
+    with require_db() as db:
+        updated = db.execute(text("""update dealer_account_mappings
+            set books_contact_id=:contact, updated_at=now()
+            where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
+              and account_member_id=cast(:account as uuid) and books_contact_id=''"""),
+            {"contact": contact_id, "org": org, "dealer": dealer, "account": str(mapping["account_member_id"])})
+        if updated.rowcount != 1:
+            raise HTTPException(409, "Dealer account mapping changed while linking the Zoho Books customer. Refresh and try again.")
+        db.commit()
+    return contact_id
+
+
 def _existing_action(org, dealer, cart, previous_invoice_id=None):
     with require_db() as db:
         row = db.execute(text("""select * from dealer_invoice_references
@@ -239,9 +268,19 @@ async def _create_and_record(org, dealer, mapping, cart, previous_invoice_id=Non
     try:
         connection = _account_status(mapping["account_member_id"])
         payload, preview = await _invoice_payload(connection["organization_id"], mapping, cart)
+        identity = _dealer_identity(dealer) if not mapping.get("books_contact_id") else None
         action, fresh = _claim_action(org, dealer, mapping["account_member_id"], cart, previous_invoice_id)
         if not fresh:
             return {"invoice_id": action["zoho_invoice_id"], "duplicate_request": True}
+        try:
+            payload["customer_id"] = await _ensure_dealer_contact(org, dealer, mapping, connection["organization_id"], identity)
+        except Exception as error:
+            with require_db() as db:
+                db.execute(text("""update dealer_invoice_references set state='uncertain',updated_at=now()
+                    where id=cast(:id as uuid) and state in ('creating','replacing')"""), {"id": str(action["id"])})
+                db.commit()
+            log.error("dealer_customer_link_uncertain action_id=%s exception_type=%s", action["id"], type(error).__name__)
+            raise HTTPException(502, "The Zoho Books customer could not be linked. No invoice was submitted; reconcile the customer and order action before retrying.") from error
         try:
             response = await zoho.create_invoice(connection["organization_id"], payload)
         except Exception as error:
@@ -339,12 +378,14 @@ async def dealer_invoices():
         rows = [row_dict(row) for row in db.execute(text("""select zoho_invoice_id,account_member_id,
               previous_zoho_invoice_id,state,created_at from dealer_invoice_references
             where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
-              and zoho_invoice_id is not null order by created_at desc"""),
+              order by created_at desc"""),
             {"org": org, "dealer": dealer}).all()]
     blocked_updates = {row["previous_zoho_invoice_id"] for row in rows
                        if row["previous_zoho_invoice_id"] and row["state"] in {"creating", "replacing", "void_pending", "uncertain", "cleanup_pending"}}
     invoices = []
     for row in rows:
+        if not row["zoho_invoice_id"]:
+            continue
         previous = _set_account(row["account_member_id"])
         try:
             connection = _account_status(row["account_member_id"])
@@ -364,7 +405,8 @@ async def dealer_invoices():
                              "status": "Unavailable", "can_update": False})
         finally:
             set_member_id(previous)
-    return {"items": invoices}
+    unresolved = sum(1 for row in rows if row["state"] in {"creating", "replacing", "void_pending", "uncertain", "cleanup_pending"})
+    return {"items": invoices, "unresolved_count": unresolved}
 
 
 @router.get("/api/dealer/invoices/{invoice_id}")
@@ -468,44 +510,32 @@ def dealer_accounts():
     return {"items": accounts}
 
 
-@router.get("/api/dealer/accounts/{account_member_id}/contacts")
-async def dealer_account_contacts(account_member_id: UUID, search: str = ""):
-    context, org, dealer_id = _scope()
-    if context.actor_role not in {"owner", "salesperson"}:
-        raise HTTPException(403, "Dealer setup is available to the Owner or assigned Sales Rep")
-    if context.actor_role == "salesperson":
-        if str(account_member_id) != str(context.user.id):
-            raise HTTPException(403, "A Sales Rep can only use their own connected account")
-        with require_db() as db:
-            assigned = db.execute(text("""select 1 from dealer_account_mappings
-                where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
-                  and account_member_id=cast(:account as uuid)"""),
-                {"org": org, "dealer": str(dealer_id), "account": str(account_member_id)}).first()
-        if context.role != "dealer" and not assigned:
-            raise HTTPException(403, "Only the assigned Sales Rep can configure this Dealer")
+@router.get("/api/dealer/{dealer_id}/accounts/{account_member_id}/contacts")
+async def dealer_account_contacts(dealer_id: UUID, account_member_id: UUID, search: str = ""):
+    context, org = _account_access(dealer_id)
+    if context.actor_role == "salesperson" and str(account_member_id) != str(context.user.id):
+        raise HTTPException(403, "A Sales Rep can only access their own connected account")
     status = _account_status(account_member_id)
-    result = await zoho.search_books_customers(status["organization_id"], search.strip()[:100], page=1)
-    return {"items": result.get("contacts", [])}
+    previous = _set_account(account_member_id)
+    try:
+        result = await zoho.search_books_customers(status["organization_id"], search.strip()[:100], page=1)
+        return {"items": result.get("contacts", [])}
+    finally:
+        set_member_id(previous)
 
 
-@router.get("/api/dealer/accounts/{account_member_id}/gst-groups")
-async def dealer_account_gst_groups(account_member_id: UUID):
-    context, org, dealer_id = _scope()
-    if context.actor_role not in {"owner", "salesperson"}:
-        raise HTTPException(403, "Dealer setup is available to the Owner or assigned Sales Rep")
-    if context.actor_role == "salesperson":
-        if str(account_member_id) != str(context.user.id):
-            raise HTTPException(403, "A Sales Rep can only use their own connected account")
-        with require_db() as db:
-            assigned = db.execute(text("""select 1 from dealer_account_mappings
-                where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
-                  and account_member_id=cast(:account as uuid)"""),
-                {"org": org, "dealer": str(context.member_id), "account": str(account_member_id)}).first()
-        if context.role != "dealer" or not assigned:
-            raise HTTPException(403, "Only the assigned Sales Rep can configure this Dealer")
+@router.get("/api/dealer/{dealer_id}/accounts/{account_member_id}/gst-groups")
+async def dealer_account_gst_groups(dealer_id: UUID, account_member_id: UUID):
+    context, _ = _account_access(dealer_id)
+    if context.actor_role == "salesperson" and str(account_member_id) != str(context.user.id):
+        raise HTTPException(403, "A Sales Rep can only access their own connected account")
     status = _account_status(account_member_id)
-    result = await zoho.taxes_for_documents(status["organization_id"])
-    return {"items": result.get("taxes", [])}
+    previous = _set_account(account_member_id)
+    try:
+        result = await zoho.taxes_for_documents(status["organization_id"])
+        return {"items": result.get("taxes", [])}
+    finally:
+        set_member_id(previous)
 
 
 @router.put("/api/dealer/{dealer_id}/mapping")
@@ -528,6 +558,8 @@ async def save_dealer_mapping(dealer_id: UUID, body: DealerMapping):
             values(cast(:org as uuid),cast(:dealer as uuid),cast(:account as uuid),'',
                    :discount,:gst,now())
             on conflict (organisation_id,dealer_id) do update set
+              books_contact_id=case when dealer_account_mappings.account_member_id=excluded.account_member_id
+                                    then dealer_account_mappings.books_contact_id else '' end,
               account_member_id=excluded.account_member_id,
               discount_percent=excluded.discount_percent,gst_group_id=excluded.gst_group_id,updated_at=now()"""),
             {"org": org, "dealer": str(dealer_id), "account": str(body.account_member_id),

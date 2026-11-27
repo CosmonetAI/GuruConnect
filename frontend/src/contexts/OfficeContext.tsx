@@ -101,7 +101,7 @@ export function OfficeProvider({ children }: { children: ReactNode }) {
   }, [session, localMode, presencePaused])
   const user = localMode ? localUser : session?.user ?? null
   const workspace = localMode ? localWorkspace : workspaces.find(item => (item.member_id ?? item.id) === active) ?? null
-  const readOnly = !localMode && !!user && !!workspace?.member_id && workspace.member_id !== user.id
+  const readOnly = !localMode && !!user && !!workspace?.member_id && workspace.member_id !== user.id && workspace.role !== 'dealer'
   return <OfficeContext.Provider value={{ configured: configured || localMode, localMode, session, user: localMode ? localUser : session?.user ?? null, loading, workspacesLoading,
     workspaces: localMode ? [localWorkspace] : workspaces, workspace, readOnly, error, captureBusy, setCaptureBusy,
     reloadWorkspaces, setWorkspace: id => { if (!captureBusy && workspaces.some(item => (item.member_id ?? item.id) === id)) setActive(id) }, setPresencePaused }}>{children}</OfficeContext.Provider>

@@ -25,6 +25,11 @@ const SalesOrders = lazy(() => import('../pages/GGPages').then(module => ({ defa
 const PurchaseOrders = lazy(() => import('../pages/GGPages').then(module => ({ default: module.PurchaseOrders })))
 const Invoices = lazy(() => import('../pages/GGPages').then(module => ({ default: module.Invoices })))
 const Pipelines = lazy(() => import('../pages/Pipelines'))
+const DealerDashboard = lazy(() => import('../pages/DealerDashboard'))
+const DealerOrder = lazy(() => import('../pages/DealerOrder'))
+const DealerInvoices = lazy(() => import('../pages/DealerInvoices'))
+const DealerSettings = lazy(() => import('../pages/DealerSettings'))
+const DealerManagement = lazy(() => import('../pages/DealerManagement'))
 import { useOffice } from '../contexts/OfficeContext'
 
 const ProtectedRoute: FC<{ children: ReactNode }> = ({ children }) => {
@@ -52,7 +57,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="dashboard" element={<WorkspaceDashboard />} />
         <Route path="enquiries" element={<EnquiriesList />} />
         <Route path="walkins" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinsOverview /></RoleRoute>} />
         <Route path="walkins/new" element={<RoleRoute roles={['receptionist']} ownerOverride={false}><WalkinRegistration /></RoleRoute>} />
@@ -68,7 +73,10 @@ export default function App() {
         <Route path="zoho" element={<Zoho />} />
         <Route path="recordings" element={<Recordings />} />
         <Route path="recordings/:id" element={<Recordings />} />
-        <Route path="settings" element={<Settings />} />
+        <Route path="settings" element={<WorkspaceSettings />} />
+        <Route path="dealer/add-to-cart" element={<RoleRoute roles={['dealer']} ownerOverride={false}><DealerOrder /></RoleRoute>} />
+        <Route path="dealer/invoices" element={<RoleRoute roles={['dealer']} ownerOverride={false}><DealerInvoices /></RoleRoute>} />
+        <Route path="dealers" element={<RoleRoute roles={['owner']} ownerOverride={false}><DealerManagement /></RoleRoute>} />
         <Route path="ai-chats" element={<AIChats />} />
         <Route path="products" element={<Products />} />
         <Route path="contacts" element={<Contacts />} />
@@ -83,11 +91,24 @@ export default function App() {
   )
 }
 
+function WorkspaceDashboard() {
+  const { workspace } = useOffice()
+  return workspace?.role === 'dealer' ? <DealerDashboard /> : <Dashboard />
+}
+
+function WorkspaceSettings() {
+  const { workspace, user } = useOffice()
+  const dealerOperator = workspace?.role === 'dealer' && workspace.member_id !== user?.id &&
+    (workspace.actor_role === 'owner' || workspace.actor_role === 'salesperson')
+  return dealerOperator || workspace?.role === 'dealer' ? <DealerSettings /> : <Settings />
+}
+
 function ScopedLayout() {
   const { user, workspace } = useOffice()
   const location = useLocation()
   // Tear down pending page state when the security context changes. Async hooks
   // still check their identity tickets before accepting late responses.
   if (workspace?.role === 'receptionist' && location.pathname !== '/settings' && !location.pathname.startsWith('/walkins')) return <Navigate to="/walkins" replace />
+  if (workspace?.role === 'dealer' && !['/dashboard', '/dealer/add-to-cart', '/dealer/invoices', '/settings'].includes(location.pathname)) return <Navigate to="/dashboard" replace />
   return <AppLayout key={`${user?.id}:${workspace?.id}:${workspace?.member_id ?? user?.id}`} />
 }

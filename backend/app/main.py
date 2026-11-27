@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from .db import require_db, row_dict, now, sales_workspace, scope_parameters, require_document_permission, document_permission
 from .zoho import zoho, refresh_loop, refresh_all, set_organisation_id, set_member_id, get_organisation_id, get_member_id
+from .dealer_routes import router as dealer_router
 from .chat import get_or_create_customer, get_or_create_customer_sync, run_graph
 from .voice_ai import VoiceConversationOrchestrator
 from .voice_ai.live import analysis_turns, batch_fingerprint, catalogue_queries, intent_keywords, pending_turns, search_catalogue, turn_fingerprint
@@ -85,6 +86,7 @@ async def zoho_workspace_scope(request: Request, call_next):
     if parent is None:
         return JSONResponse(status_code=503, content={'detail': {'code': 'authentication_not_configured'}})
     token = None
+    dealer_account_member_id = None
     try:
         from recorder.security import current_user, workspace
         authorization = request.headers.get('authorization', '').split(' ', 1)
@@ -98,13 +100,23 @@ async def zoho_workspace_scope(request: Request, call_next):
         except ValueError:
             raise HTTPException(400, 'Invalid workspace identity') from None
         context = await workspace(parent_request, user, org, member)
+        if context.role == 'dealer':
+            if not request.url.path.startswith('/api/dealer/'):
+                raise HTTPException(403, 'Dealer access is limited to the Dealer workspace')
+            with require_db() as db:
+                mapping = db.execute(text("""select account_member_id from dealer_account_mappings
+                  where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)"""),
+                  {'org': str(context.id), 'dealer': str(context.member_id)}).first()
+            if not mapping:
+                raise HTTPException(409, 'Dealer account mapping is not configured')
+            dealer_account_member_id = str(mapping.account_member_id)
         # Voice history/notes do not call Zoho. Every other sales route may
         # invoke the sales agent or integration and requires a sales role.
         if context.role == 'receptionist' and not request.url.path.startswith('/api/voice-sessions'):
             raise HTTPException(403, 'Sales access required')
         token = sales_workspace.set(context)
         set_organisation_id(str(context.id))
-        set_member_id(str(context.member_id))
+        set_member_id(dealer_account_member_id or str(context.member_id))
         return await call_next(request)
     except HTTPException as error:
         return JSONResponse(status_code=error.status_code, content={'detail': error.detail}, headers=error.headers)
@@ -2494,3 +2506,5 @@ def _sales_document_service(session_id):
 
 from .sales_documents import install_sales_document_routes
 install_sales_document_routes(app, _sales_document_service)
+
+app.include_router(dealer_router)

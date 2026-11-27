@@ -44,7 +44,7 @@ type ProfileDraft = {
   availability_status: "active" | "inactive" | "on_leave" | "be_right_back";
   leave_end_date: string;
 };
-type ConfigurableRole = Exclude<Member["role"], "receptionist">;
+type ConfigurableRole = "owner" | "salesperson";
 type ZohoTax = {
   tax_id?: string;
   tax_name?: string;
@@ -93,7 +93,8 @@ export default function Settings() {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [inviteOpen, setInviteOpen] = useState(false);
+    [inviteOpen, setInviteOpen] = useState(false),
+    [inviteRole, setInviteRole] = useState("owner");
   const [draft, setDraft] = useState<ProfileDraft>({
     name: "",
     phone: "",
@@ -252,6 +253,7 @@ export default function Settings() {
       );
       await team.reload();
       event.currentTarget.reset();
+      setInviteRole("owner");
       setInviteOpen(false);
     } catch (failure) {
       setError(message(failure));
@@ -752,7 +754,10 @@ export default function Settings() {
                 type="button"
                 className="team-invite-button"
                 disabled={busy}
-                onClick={() => setInviteOpen(true)}
+                onClick={() => {
+                  setInviteRole("owner");
+                  setInviteOpen(true);
+                }}
               >
                 <UserPlus size={14} /> Invite teammate
               </button>
@@ -883,12 +888,24 @@ export default function Settings() {
               </label>
               <label>
                 Role
-                <select name="role">
+               <select
+                 name="role"
+                 value={inviteRole}
+                 onChange={(event) => setInviteRole(event.target.value)}
+               >
                   <option value="owner">Owner</option>
                   <option value="salesperson">Salesperson</option>
                   <option value="receptionist">Receptionist</option>
+                  <option value="dealer">Dealer</option>
                 </select>
               </label>
+              {inviteRole === "dealer" && (
+               <p className="flow-note" role="note">
+                 After sending this invitation, configure which connected
+                 Zoho Books account should be assigned to this Dealer in
+                 Dealer setup.
+               </p>
+              )}
               <div className="role-config-footer">
                 <button
                   type="button"

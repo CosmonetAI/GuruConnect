@@ -89,7 +89,7 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       if (abort.signal.aborted) throw abort.signal.reason;
       if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
       const selectedMemberId = selectedWorkspaceMember(workspace, memberId);
-      assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
+      if (!path.startsWith('/dealer/')) assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
       const headers = new Headers(init.headers);
       if (session) {
         headers.set('Authorization', `Bearer ${session.access_token}`);
@@ -98,7 +98,8 @@ export async function request<T>(path: string, workspace?: string | null, init: 
       if (workspace) headers.set('X-Workspace-ID', workspace);
       if (selectedMemberId) headers.set('X-Workspace-Member-ID', selectedMemberId);
       if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
-      const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
+      const apiPrefix = path.startsWith('/dealer/') ? '/api' : '/api/v1';
+      const response = await fetch(`${apiBase}${apiPrefix}${path}`, { ...init, headers, signal: abort.signal, credentials: 'omit' });
       if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { detail?: string | { message?: string; code?: string }; error?: { message?: string; code?: string } };
@@ -131,7 +132,7 @@ export async function requestStream(path: string, workspace?: string | null, ini
     signal?.throwIfAborted();
     if (!session && !localMode) throw new ApiError(401, 'session_expired', 'Your session has expired. Sign in to continue.');
     const selectedMemberId = selectedWorkspaceMember(workspace, memberId);
-    assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
+    if (!path.startsWith('/dealer/')) assertWorkspaceWritable(init.method ?? 'GET', session?.user?.id, selectedMemberId);
     const headers = new Headers(init.headers);
     if (session) {
       headers.set('Authorization', `Bearer ${session.access_token}`);
@@ -139,7 +140,8 @@ export async function requestStream(path: string, workspace?: string | null, ini
     }
     if (workspace) headers.set('X-Workspace-ID', workspace);
     if (selectedMemberId) headers.set('X-Workspace-Member-ID', selectedMemberId);
-    const response = await fetch(`${apiBase}/api/v1${path}`, { ...init, headers, signal, credentials: 'omit' });
+    const apiPrefix = path.startsWith('/dealer/') ? '/api' : '/api/v1';
+    const response = await fetch(`${apiBase}${apiPrefix}${path}`, { ...init, headers, signal, credentials: 'omit' });
     if (configured && response.headers.get('X-GuruConnect-Mode') === 'local') throw new ApiError(503, 'configuration_mismatch', 'Frontend and backend modes differ.');
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { detail?: string | Record<string, unknown>; error?: Record<string, unknown> };
@@ -179,7 +181,7 @@ export function normalizeResponse(path: string, input: unknown): unknown {
   return input;
 }
 export const json = (method: string, value?: unknown, key?: string): RequestInit => ({ method, body: value === undefined ? undefined : JSON.stringify(value), headers: key ? { 'Idempotency-Key': key } : undefined });
-export type Role = 'owner' | 'salesperson' | 'receptionist';
+export type Role = 'owner' | 'salesperson' | 'receptionist' | 'dealer';
 export interface Workspace { id: string; name: string; role: Role; actor_role?: Role; member_id?: string; display_name?: string; }
 export interface Customer { id: string; name: string; created_at: string; notes?: string; }
 export interface Conversation {

@@ -22,7 +22,7 @@ export async function call(path, opts = {}, workspaceId = null) {
       headers.set('X-User-ID', session.user.id);
     }
   } catch {}
-  if (userId && member && member !== userId && !['GET', 'HEAD'].includes((requestOptions.method || 'GET').toUpperCase())) {
+  if (userId && member && member !== userId && !['GET', 'HEAD'].includes((requestOptions.method || 'GET').toUpperCase()) && !path.startsWith('/dealer/')) {
     throw Object.assign(new Error('This member workspace is read-only while you are viewing it as an owner.'), { status: 403, code: 'workspace_read_only' });
   }
   const timeout = AbortSignal.timeout(Number.isFinite(timeoutMs) ? Math.max(1000, Math.min(120000, timeoutMs)) : 30000);

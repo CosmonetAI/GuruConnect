@@ -30,7 +30,7 @@ export default function AppLayout() {
       {mobileSidebarOpen && <button type="button" className="mobile-sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileSidebarOpen(false)} />}
       <Sidebar mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
       <div className="app-main">
-        <div className="platform-bar">{readOnly && <span className="read-only-pill"><span className="availability-pill-dot" />Read-only</span>}<button type="button" className={`inventory-import-trigger${inventoryData.sheets.length ? ' has-inventory' : ''}`} onClick={() => setInventoryOpen(true)}><Eye size={16} />Quick look</button><AvailabilityPill />{workspace?.role !== 'receptionist' && <OrganisationPill />}</div>
+        <div className="platform-bar">{readOnly && <span className="read-only-pill"><span className="availability-pill-dot" />Read-only</span>}{workspace?.role !== 'dealer' && <><button type="button" className={`inventory-import-trigger${inventoryData.sheets.length ? ' has-inventory' : ''}`} onClick={() => setInventoryOpen(true)}><Eye size={16} />Quick look</button><AvailabilityPill />{workspace?.role !== 'receptionist' && <OrganisationPill />}</>}</div>
         <main
           className="app-content"
           id="main-content"
@@ -68,7 +68,7 @@ export default function AppLayout() {
           <Outlet key={`${user?.id}/${workspace?.id}/${workspace?.member_id ?? user?.id}`} />
         </main>
       </div>
-      {inventoryOpen && <InventoryImportOverlay data={inventoryData} onDataChange={setInventoryData} onClose={() => setInventoryOpen(false)} />}
+      {inventoryOpen && workspace?.role !== 'dealer' && <InventoryImportOverlay data={inventoryData} onDataChange={setInventoryData} onClose={() => setInventoryOpen(false)} />}
     </div>
   )
 }

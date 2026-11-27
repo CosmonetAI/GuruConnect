@@ -194,17 +194,33 @@ async def workspace(request: Request, user: User = Depends(current_user),
         actor = await one(connection, "select role from members where organisation_id=%s and user_id=%s and status='active'", (x_workspace_id, user.id))
         selected_id = x_workspace_member_id or user.id
         selected = await one(connection, "select role,status from members where organisation_id=%s and user_id=%s", (x_workspace_id, selected_id))
-    # Owners may work in a salesperson's or receptionist's workspace, but an
-    # owner must not impersonate another owner. Keep the actor's own member
-    # selection valid so they can always return to their own workspace.
-    if not actor or not selected or (selected_id != user.id and (
-        actor["role"] != "owner" or selected["role"] == "owner"
-    )):
+        dealer_assignment = None
+        if selected and selected["role"] == "dealer":
+            dealer_assignment = await one(connection, """
+                select account_member_id from dealer_account_mappings
+                where organisation_id=%s and dealer_id=%s
+            """, (x_workspace_id, selected_id))
+    # Owners may read staff workspaces and operate any Dealer; Sales Reps may
+    # operate only Dealers mapped to their own Zoho Books account.
+    owner_access = actor and actor["role"] == "owner" and selected and selected["role"] != "owner"
+    assigned_sales_access = (
+        actor and actor["role"] == "salesperson" and selected
+        and selected["role"] == "dealer" and dealer_assignment
+        and str(dealer_assignment["account_member_id"]) == str(user.id)
+    )
+    if not actor or not selected or (selected_id != user.id and not owner_access and not assigned_sales_access):
         fail("workspace_access_denied", 403)
-    if actor["role"] == "owner" and selected_id != user.id and request.method not in {"GET", "HEAD"}:
+    if actor["role"] == "owner" and selected_id != user.id and selected["role"] != "dealer" and request.method not in {"GET", "HEAD"}:
         fail("workspace_read_only", 403, "Owner views of salesperson and receptionist workspaces are read-only")
+    if actor["role"] == "salesperson" and selected_id != user.id and request.method not in {"GET", "HEAD"} and selected["role"] != "dealer":
+        fail("workspace_read_only", 403, "Only an assigned Dealer workspace can be operated")
     if selected.get("status", "active") != "active" and (actor["role"] != "owner" or request.method not in {"GET", "HEAD"}):
         fail("workspace_access_denied", 403)
+    if selected["role"] == "dealer" and not (
+        request.url.path in {"/api/v1/profile", "/api/v1/workspaces"}
+        or request.url.path.startswith("/api/dealer/")
+    ):
+        fail("dealer_route_not_available", 403, "This feature is not available in the Dealer workspace")
     update_context(organisation_id=str(x_workspace_id), member_id=str(selected_id))
     return Workspace(x_workspace_id, user, selected["role"], selected_id, actor["role"])
 

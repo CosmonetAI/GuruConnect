@@ -38,11 +38,12 @@ When the conversation does not produce a clear product or document intent, the c
 Salespeople can search existing Zoho Books documents and create quotes, sales orders, or invoices from the customer cart. Creating an updated document updates the existing Zoho document where supported. Invoice cards provide payment actions, including full or partial payment, and quote cards provide acceptance actions.
 
 ### 5. Product catalogue
-
 The Products page reads live Zoho Books items. Salespeople can add one item or upload multiple items using the downloadable CSV template. Bulk uploads are validated row by row and report successful and failed items.
 
-### 6. CRM lead management
+### 6. Dealer ordering
+Owners invite Dealers and map each Dealer to an Owner or Sales Rep’s connected Zoho Books account. On the first invoice, the app finds or creates a Zoho Books customer using the Dealer’s email and links it to that account; changing accounts clears the customer link. The account mapping also supplies the Dealer-wide discount and GST Group. Dealers can browse products, preview an order, create invoices, download PDFs, and view live invoice status; only Zoho invoice IDs and workflow references are stored locally. Unconfirmed invoice actions must be reconciled against Zoho Books before retrying. Owners can switch to any Dealer workspace, and Sales Reps can operate Dealers assigned to their connected account.
 
+### 7. CRM lead management
 A new enquiry starts in the ConnectCosmos **New enquiry** column. When it is moved into a Bigin pipeline stage, the backend links the existing Bigin contact or creates one, then creates the corresponding Bigin lead with the original customer details.
 
 ## Who uses it
@@ -51,6 +52,7 @@ A new enquiry starts in the ConnectCosmos **New enquiry** column. When it is mov
 - **Salesperson:** records conversations, reviews transcripts, manages carts, creates documents, and follows up.
 - **Sales manager:** monitors enquiries, pipeline movement, missed visitors, and customer activity.
 - **Administrator/owner:** manages workspaces, team access, Zoho connections, and deployment settings.
+- **Dealer:** places product orders and manages invoices in a focused, four-screen workspace.
 
 ## Local demo
 
