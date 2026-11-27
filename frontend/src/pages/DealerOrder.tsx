@@ -22,8 +22,13 @@ export default function DealerOrder() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const invoiceId = params.get('invoice')
+  const [invoiceReady, setInvoiceReady] = useState(false)
+  const [invoiceStatus, setInvoiceStatus] = useState('')
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoiceError, setInvoiceError] = useState('')
+  const [invoiceRetry, setInvoiceRetry] = useState(0)
   const [actionKey, setActionKey] = useState(() => crypto.randomUUID())
   const lines = useMemo(() => Object.values(cart).map(row => ({ item_id: row.product.item_id, quantity: row.quantity })), [cart])
 
@@ -41,25 +46,35 @@ export default function DealerOrder() {
   }, [workspace?.id, workspace?.member_id, query])
 
   useEffect(() => {
-    if (!invoiceId || !workspace) return
+    setInvoiceReady(false); setInvoiceStatus(''); setInvoiceError(''); setCart({}); setPreview(null)
+    if (!invoiceId || !workspace) { setInvoiceLoading(false); return }
     let active = true
-    setBusy(true); setError('')
-    void call<{invoice: {line_items?: Array<{item_id: string; item_name?: string; name?: string; sku?: string; rate?: number; quantity: number}>}}>(workspace, `/dealer/invoices/${encodeURIComponent(invoiceId)}`)
+    setInvoiceLoading(true); setError(''); setNotice('')
+    void call<{invoice: {status?: string; line_items?: Array<{item_id: string; item_name?: string; name?: string; sku?: string; rate?: number; quantity: number}>}}>(workspace, `/dealer/invoices/${encodeURIComponent(invoiceId)}`)
       .then(result => {
         if (!active) return
         const next: Record<string, CartRow> = {}
-        for (const line of result.invoice?.line_items || []) {
+        for (const [index, line] of (result.invoice?.line_items || []).entries()) {
+          if (!line.item_id || !Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0) {
+            throw new Error('This invoice contains items that cannot be edited in the cart. Contact your administrator.')
+          }
           const item = { item_id: line.item_id, name: line.item_name || line.name, sku: line.sku, rate: line.rate }
-          next[item.item_id] = { product: item, quantity: Number(line.quantity) || 1 }
+          next[`invoice-${index}`] = { product: item, quantity: Number(line.quantity) }
         }
+        if (!Object.keys(next).length) throw new Error('This invoice has no editable items. Contact your administrator.')
         setCart(next)
-      }).catch(failure => { if (active) setError(message(failure)) })
-      .finally(() => { if (active) setBusy(false) })
+        setInvoiceStatus(String(result.invoice.status || '').toLowerCase())
+        setInvoiceReady(true)
+      }).catch(failure => { if (active) setInvoiceError(message(failure)) })
+      .finally(() => { if (active) setInvoiceLoading(false) })
     return () => { active = false }
-  }, [invoiceId, workspace?.id, workspace?.member_id])
+  }, [invoiceId, workspace?.id, workspace?.member_id, invoiceRetry])
 
   function add(product: Product) {
-    setCart(current => ({ ...current, [product.item_id]: { product, quantity: (current[product.item_id]?.quantity || 0) + 1 } }))
+    setCart(current => {
+      const key = Object.keys(current).find(id => current[id].product.item_id === product.item_id) || `product-${product.item_id}`
+      return { ...current, [key]: { product, quantity: (current[key]?.quantity || 0) + 1 } }
+    })
   }
   function quantity(id: string, delta: number) {
     setCart(current => {
@@ -71,7 +86,7 @@ export default function DealerOrder() {
     })
   }
   async function submitPreview() {
-    if (!workspace || !lines.length) return
+    if (!workspace || !lines.length || (invoiceId && !invoiceReady)) return
     setBusy(true); setError(''); setNotice('')
     try { setPreview(await call<Preview>(workspace, '/dealer/preview', 'POST', { action_key: actionKey, lines })) }
     catch (failure) { setError(message(failure)) }
@@ -89,10 +104,11 @@ export default function DealerOrder() {
         const url = URL.createObjectURL(await response.blob())
         const anchor = document.createElement('a'); anchor.href = url; anchor.download = `invoice-${result.invoice_id}.pdf`; anchor.click()
         URL.revokeObjectURL(url)
-        setNotice('Invoice created. The PDF has been downloaded.')
+        setNotice(`Invoice ${invoiceId ? 'updated' : 'created'}. The PDF has been downloaded.`)
       } catch (failure) {
-        setNotice(`Invoice created, but the PDF could not be downloaded: ${message(failure)}. Download it from the Invoices screen.`)
+        setNotice(`Invoice ${invoiceId ? 'updated' : 'created'}, but the PDF could not be downloaded: ${message(failure)}. Download it from the Invoices screen.`)
       }
+      if (invoiceId) setParams({}, { replace: true })
     } catch (failure) { setError(message(failure)) }
     finally { setBusy(false) }
   }
@@ -104,21 +120,23 @@ export default function DealerOrder() {
       <section className="dealer-panel dealer-product-panel"><div className="dealer-search"><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search products" aria-label="Search products"/></div>
         <div className="dealer-product-list">{loadingProducts ? <p className="dealer-empty">Loading products…</p> : products.map(product => <article className="dealer-product" key={product.item_id}>
           <div><strong>{product.name || product.item_name || 'Product'}</strong><span>{product.sku || product.description || 'Zoho Books item'}</span></div>
-          <b>{money(Number(product.rate) || 0)}</b><button aria-label={`Add ${product.name || product.item_name}`} onClick={() => add(product)}><Plus size={17}/></button>
+          <b>{money(Number(product.rate) || 0)}</b><button disabled={busy || (!!invoiceId && !invoiceReady)} aria-label={`Add ${product.name || product.item_name}`} onClick={() => add(product)}><Plus size={17}/></button>
         </article>)}</div></section>
       <section className="dealer-panel dealer-cart-panel"><div className="dealer-panel-heading"><div><h2><ShoppingCart size={18}/> Your cart</h2><p>{lines.length} product{lines.length === 1 ? '' : 's'}</p></div></div>
-        <div className="dealer-cart-list">{Object.values(cart).map(row => <article className="dealer-cart-row" key={row.product.item_id}>
+        {invoiceLoading && <p role="status">Loading invoice items…</p>}
+        {invoiceError && <div role="alert" className="dealer-error">{invoiceError} <button type="button" onClick={() => setInvoiceRetry(value => value + 1)}>Retry</button></div>}
+        <div className="dealer-cart-list">{Object.entries(cart).map(([key, row]) => <article className="dealer-cart-row" key={key}>
           <div className="dealer-cart-copy"><strong>{row.product.name || row.product.item_name || 'Product'}</strong><span>{money(Number(row.product.rate) || 0)} each</span></div>
-          <div className="dealer-quantity"><button aria-label="Decrease quantity" onClick={() => quantity(row.product.item_id, -1)}><Minus size={14}/></button><span>{row.quantity}</span><button aria-label="Increase quantity" onClick={() => quantity(row.product.item_id, 1)}><Plus size={14}/></button></div>
-          <button className="dealer-remove" aria-label="Remove item" onClick={() => quantity(row.product.item_id, -row.quantity)}><Trash2 size={16}/></button>
+          <div className="dealer-quantity"><button disabled={busy} aria-label="Decrease quantity" onClick={() => quantity(key, -1)}><Minus size={14}/></button><span>{row.quantity}</span><button disabled={busy} aria-label="Increase quantity" onClick={() => quantity(key, 1)}><Plus size={14}/></button></div>
+          <button disabled={busy} className="dealer-remove" aria-label="Remove item" onClick={() => quantity(key, -row.quantity)}><Trash2 size={16}/></button>
         </article>)}</div>
-        <button className="dealer-primary dealer-submit" disabled={!lines.length || busy} onClick={() => void submitPreview()}>{busy ? 'Please wait…' : 'Submit order'}</button>
+        <button className="dealer-primary dealer-submit" disabled={!lines.length || busy || (!!invoiceId && !invoiceReady)} onClick={() => void submitPreview()}>{busy ? 'Please wait…' : 'Submit order'}</button>
       </section>
     </div>
     {preview && <div className="dealer-preview-backdrop"><section className="dealer-preview" role="dialog" aria-modal="true" aria-labelledby="dealer-preview-title">
-      <div className="dealer-panel-heading"><div><span className="dealer-kicker">FINAL REVIEW</span><h2 id="dealer-preview-title">Order preview</h2><p>Discount and GST are applied from this Dealer’s settings.</p></div><button className="dealer-close" onClick={() => setPreview(null)} aria-label="Close preview">×</button></div>
+      <div className="dealer-panel-heading"><div><span className="dealer-kicker">FINAL REVIEW</span><h2 id="dealer-preview-title">Order preview</h2><p>Discount and GST are applied from this Dealer’s settings.</p>{invoiceId && invoiceStatus === 'due' && <p>Updating creates a replacement invoice and voids the original.</p>}</div><button disabled={busy} className="dealer-close" onClick={() => setPreview(null)} aria-label="Close preview">×</button></div>
       {error && <p role="alert" className="dealer-error">{error}</p>}
-      <div className="dealer-preview-lines">{preview.lines.map(line => <div key={line.item_id}><span><strong>{line.name}</strong><small>{line.quantity} × {money(line.rate)} · Discount {money(line.discount)} · GST {money(line.gst)}</small></span><b>{money(line.total)}</b></div>)}</div>
+      <div className="dealer-preview-lines">{preview.lines.map((line, index) => <div key={`${line.item_id}-${index}`}><span><strong>{line.name}</strong><small>{line.quantity} × {money(line.rate)} · Discount {money(line.discount)} · GST {money(line.gst)}</small></span><b>{money(line.total)}</b></div>)}</div>
       <dl className="dealer-totals"><div><dt>Subtotal</dt><dd>{money(preview.subtotal)}</dd></div><div><dt>Discount</dt><dd>− {money(preview.discount)}</dd></div><div><dt>GST{preview.gst_group ? ` · ${preview.gst_group.tax_display_name || preview.gst_group.tax_name}` : ''}</dt><dd>{money(preview.gst)}</dd></div><div className="dealer-total"><dt>Payable amount</dt><dd>{money(preview.total)}</dd></div></dl>
       <button className="dealer-primary dealer-confirm" disabled={busy} onClick={() => void confirmOrder()}>{busy ? 'Generating…' : invoiceId ? 'Update Invoice' : 'Generate Invoice'}</button>
     </section></div>}

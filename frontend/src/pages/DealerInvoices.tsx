@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useScopedResource } from '../hooks/useScopedResource'
 import { requestStream } from '../services/officeApi'
 import { useOffice } from '../contexts/OfficeContext'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Download, Pencil, ReceiptText } from 'lucide-react'
 import '../styles/dealer.css'
 
@@ -35,7 +35,9 @@ export default function DealerInvoices() {
       {resource.loading ? <p className="dealer-empty">Loading invoices…</p> : (resource.data?.items || []).length ?
         <div className="dealer-table-wrap"><table className="dealer-table"><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th>Total</th><th>Outstanding</th><th>Actions</th></tr></thead>
           <tbody>{resource.data!.items.map(invoice => <tr key={invoice.invoice_id}>
-            <td><span className="dealer-invoice-number">{invoice.invoice_number || invoice.invoice_id}</span></td>
+            <td>{invoice.can_update
+              ? <Link className="dealer-invoice-number dealer-invoice-link" to={`/dealer/add-to-cart?invoice=${encodeURIComponent(invoice.invoice_id)}`}>{invoice.invoice_number || invoice.invoice_id}</Link>
+              : <span className="dealer-invoice-number">{invoice.invoice_number || invoice.invoice_id}</span>}</td>
             <td>{invoice.date || '—'}</td><td><span className={`dealer-status dealer-status-${String(invoice.status || 'unknown').toLowerCase().replace(/[^a-z]+/g, '-')}`}>{invoice.status || invoice.state || 'Unavailable'}</span></td>
             <td>{money(Number(invoice.total) || 0)}</td><td>{money(Number(invoice.balance) || 0)}</td>
             <td className="dealer-actions"><button title="Download invoice PDF" aria-label={`Download ${invoice.invoice_number || invoice.invoice_id}`} onClick={() => void download(invoice.invoice_id)}><Download size={16} /></button>

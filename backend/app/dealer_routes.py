@@ -242,6 +242,12 @@ def _claim_action(org, dealer, account, cart, previous_invoice_id=None):
             if unresolved:
                 raise HTTPException(409, "A previous invoice action is unresolved. Reconcile it before creating another invoice.")
         else:
+            eligible = db.execute(text("""select 1 from dealer_invoice_references
+                where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
+                  and zoho_invoice_id=:previous and account_member_id=cast(:account as uuid) and state='active'"""),
+                {"org": org, "dealer": dealer, "previous": previous_invoice_id, "account": str(account)}).first()
+            if not eligible:
+                raise HTTPException(409, "This invoice is no longer available for updating. Refresh and try again.")
             replacement = db.execute(text("""select 1 from dealer_invoice_references
                 where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
                   and previous_zoho_invoice_id=:previous
@@ -263,7 +269,7 @@ def _claim_action(org, dealer, account, cart, previous_invoice_id=None):
 async def _create_and_record(org, dealer, mapping, cart, previous_invoice_id=None):
     existing = _existing_action(org, dealer, cart, previous_invoice_id)
     if existing:
-        return {"invoice_id": existing["zoho_invoice_id"], "duplicate_request": True}
+        return {"invoice_id": existing["zoho_invoice_id"] or existing["previous_zoho_invoice_id"], "duplicate_request": True}
     previous_account = _set_account(mapping["account_member_id"])
     try:
         connection = _account_status(mapping["account_member_id"])
@@ -271,7 +277,7 @@ async def _create_and_record(org, dealer, mapping, cart, previous_invoice_id=Non
         identity = _dealer_identity(dealer) if not mapping.get("books_contact_id") else None
         action, fresh = _claim_action(org, dealer, mapping["account_member_id"], cart, previous_invoice_id)
         if not fresh:
-            return {"invoice_id": action["zoho_invoice_id"], "duplicate_request": True}
+            return {"invoice_id": action["zoho_invoice_id"] or action["previous_zoho_invoice_id"], "duplicate_request": True}
         try:
             payload["customer_id"] = await _ensure_dealer_contact(org, dealer, mapping, connection["organization_id"], identity)
         except Exception as error:
@@ -373,7 +379,7 @@ async def dealer_gst_groups():
 
 @router.get("/api/dealer/invoices")
 async def dealer_invoices():
-    context, org, dealer, _ = _dealer_access()
+    context, org, dealer, mapping = _dealer_access()
     with require_db() as db:
         rows = [row_dict(row) for row in db.execute(text("""select zoho_invoice_id,account_member_id,
               previous_zoho_invoice_id,state,created_at from dealer_invoice_references
@@ -395,8 +401,9 @@ async def dealer_invoices():
                              "status": invoice.get("status"), "date": invoice.get("date"),
                              "total": invoice.get("total"), "balance": invoice.get("balance"),
                              "state": row["state"], "previous_invoice_id": row["previous_zoho_invoice_id"],
-                             "can_update": str(invoice.get("status") or "").lower() == "due"
+                             "can_update": str(invoice.get("status") or "").lower() in {"draft", "due"}
                              and invoice.get("is_editable", True) is not False and row["state"] == "active"
+                             and str(row["account_member_id"]) == str(mapping["account_member_id"])
                              and row["zoho_invoice_id"] not in blocked_updates})
         except Exception as error:
             log.warning("dealer_invoice_refresh_failed invoice_id=%s exception_type=%s",
@@ -447,7 +454,7 @@ async def replace_dealer_invoice(invoice_id: str, cart: DealerCart):
     _, org, dealer, mapping = _dealer_access()
     existing = _existing_action(org, dealer, cart, invoice_id)
     if existing:
-        return {"invoice_id": existing["zoho_invoice_id"], "duplicate_request": True}
+        return {"invoice_id": existing["zoho_invoice_id"] or existing["previous_zoho_invoice_id"], "duplicate_request": True}
     with require_db() as db:
         previous = db.execute(text("""select account_member_id,state from dealer_invoice_references
             where organisation_id=cast(:org as uuid) and dealer_id=cast(:dealer as uuid)
@@ -462,8 +469,55 @@ async def replace_dealer_invoice(invoice_id: str, cart: DealerCart):
         status = _account_status(mapping["account_member_id"])
         detail = await zoho.books_invoice(status["organization_id"], invoice_id)
         invoice = detail.get("invoice") or {}
-        if str(invoice.get("status") or "").lower() != "due":
-            raise HTTPException(409, "Only a Due invoice can be updated")
+        invoice_status = str(invoice.get("status") or "").lower()
+        if invoice_status not in {"draft", "due"} or invoice.get("is_editable", True) is False:
+            raise HTTPException(409, "Only editable Draft or Due invoices can be updated")
+        if invoice_status == "draft":
+            payload, preview = await _invoice_payload(status["organization_id"], mapping, cart)
+            customer_id = str(invoice.get("customer_id") or "")
+            if not customer_id:
+                raise HTTPException(409, "The invoice has no Zoho Books customer; contact your administrator")
+            payload["customer_id"] = customer_id
+            action, fresh = _claim_action(org, dealer, mapping["account_member_id"], cart, invoice_id)
+            if not fresh:
+                return {"invoice_id": action["zoho_invoice_id"] or action["previous_zoho_invoice_id"], "duplicate_request": True}
+            try:
+                latest = (await zoho.books_invoice(status["organization_id"], invoice_id)).get("invoice") or {}
+            except Exception as error:
+                with require_db() as db:
+                    db.execute(text("update dealer_invoice_references set state='failed',updated_at=now() where id=cast(:id as uuid)"),
+                               {"id": str(action["id"])})
+                    db.commit()
+                log.warning("dealer_invoice_update_check_failed action_id=%s exception_type=%s", action["id"], type(error).__name__)
+                raise HTTPException(502, "Could not verify the invoice before updating. Refresh and try again.") from error
+            if str(latest.get("status") or "").lower() != "draft" or latest.get("is_editable", True) is False:
+                with require_db() as db:
+                    db.execute(text("update dealer_invoice_references set state='failed',updated_at=now() where id=cast(:id as uuid)"),
+                               {"id": str(action["id"])})
+                    db.commit()
+                raise HTTPException(409, "The invoice is no longer an editable Draft. Refresh and try again.")
+            if str(latest.get("customer_id") or "") != customer_id:
+                with require_db() as db:
+                    db.execute(text("update dealer_invoice_references set state='failed',updated_at=now() where id=cast(:id as uuid)"),
+                               {"id": str(action["id"])})
+                    db.commit()
+                raise HTTPException(409, "The invoice customer changed. Refresh and try again.")
+            try:
+                result = await zoho.update_invoice(status["organization_id"], invoice_id, payload)
+                if str((result.get("invoice") or {}).get("invoice_id") or "") != invoice_id:
+                    raise ValueError("Zoho did not confirm the updated invoice")
+            except Exception as error:
+                with require_db() as db:
+                    db.execute(text("update dealer_invoice_references set state='uncertain',updated_at=now() where id=cast(:id as uuid)"),
+                               {"id": str(action["id"])})
+                    db.commit()
+                log.error("dealer_invoice_update_uncertain action_id=%s exception_type=%s", action["id"], type(error).__name__)
+                raise HTTPException(502, "The invoice update could not be confirmed. Reconcile it in Zoho Books before retrying.") from error
+            with require_db() as db:
+                db.execute(text("update dealer_invoice_references set state='active',updated_at=now() where id=cast(:id as uuid)"),
+                           {"id": str(action["id"])})
+                db.commit()
+            return {"invoice_id": invoice_id, "preview": preview}
         return await _create_and_record(org, dealer, mapping, cart, invoice_id)
     finally:
         set_member_id(account_previous)

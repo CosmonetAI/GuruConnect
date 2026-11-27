@@ -210,3 +210,134 @@ async def test_invoice_list_reports_unresolved_actions_without_invoice_ids(monke
     monkeypatch.setattr(dealer_routes, "require_db", DB)
     monkeypatch.setattr(dealer_routes, "_dealer_access", lambda: (None, "org", "dealer", {}))
     assert await dealer_routes.dealer_invoices() == {"items": [], "unresolved_count": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,editable,mapped,expected", [
+    ("draft", True, True, True),
+    ("due", True, True, True),
+    ("paid", True, True, False),
+    ("draft", False, True, False),
+    ("draft", True, False, False),
+])
+async def test_invoice_list_only_offers_eligible_updates(monkeypatch, status, editable, mapped, expected):
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def execute(self, *_args): return self
+        def all(self):
+            return [SimpleNamespace(_mapping={
+                "zoho_invoice_id": "123", "account_member_id": "account",
+                "previous_zoho_invoice_id": None, "state": "active", "created_at": None,
+            })]
+
+    async def invoice(*_args):
+        return {"invoice": {"status": status, "is_editable": editable}}
+
+    monkeypatch.setattr(dealer_routes, "require_db", DB)
+    monkeypatch.setattr(dealer_routes, "_dealer_access", lambda: (None, "org", "dealer", {"account_member_id": "account" if mapped else "other"}))
+    monkeypatch.setattr(dealer_routes, "_account_status", lambda _account: {"organization_id": "books-org"})
+    monkeypatch.setattr(dealer_routes.zoho, "books_invoice", invoice)
+    assert (await dealer_routes.dealer_invoices())["items"][0]["can_update"] is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_draft_invoice_updates_in_place_and_locks_uncertain_results(monkeypatch, failure):
+    account = str(uuid4())
+    action_id = uuid4()
+    writes = []
+    calls = []
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def execute(self, query, params):
+            sql = str(query)
+            if "select account_member_id,state" in sql:
+                return self
+            writes.append((sql, params))
+            return self
+        def mappings(self): return self
+        def first(self): return {"account_member_id": account, "state": "active"}
+        def commit(self): pass
+
+    async def invoice(*_args):
+        return {"invoice": {"status": "draft", "customer_id": "customer", "is_editable": True}}
+
+    async def payload(*_args):
+        return {"line_items": [{"item_id": "123", "quantity": 2}]}, {"total": 200}
+
+    async def update(org, invoice_id, data):
+        calls.append((org, invoice_id, data))
+        if failure:
+            raise RuntimeError("timeout")
+        return {"invoice": {"invoice_id": invoice_id}}
+
+    monkeypatch.setattr(dealer_routes, "require_db", DB)
+    monkeypatch.setattr(dealer_routes, "_dealer_access", lambda: (None, "org", "dealer", {"account_member_id": account}))
+    monkeypatch.setattr(dealer_routes, "_existing_action", lambda *_args: None)
+    monkeypatch.setattr(dealer_routes, "_claim_action", lambda *_args: ({"id": action_id}, True))
+    monkeypatch.setattr(dealer_routes, "_account_status", lambda _account: {"organization_id": "books-org"})
+    monkeypatch.setattr(dealer_routes, "_invoice_payload", payload)
+    monkeypatch.setattr(dealer_routes.zoho, "books_invoice", invoice)
+    monkeypatch.setattr(dealer_routes.zoho, "update_invoice", update)
+    cart = dealer_routes.DealerCart(action_key=uuid4(), lines=[{"item_id": "123", "quantity": 2}])
+    if failure:
+        with pytest.raises(dealer_routes.HTTPException, match="could not be confirmed"):
+            await dealer_routes.replace_dealer_invoice("invoice-123", cart)
+        assert any("state='uncertain'" in sql for sql, _ in writes)
+    else:
+        result = await dealer_routes.replace_dealer_invoice("invoice-123", cart)
+        assert result["invoice_id"] == "invoice-123"
+        assert any("state='active'" in sql for sql, _ in writes)
+    assert calls == [("books-org", "invoice-123", {
+        "line_items": [{"item_id": "123", "quantity": 2}], "customer_id": "customer",
+    })]
+
+
+@pytest.mark.asyncio
+async def test_completed_draft_update_retry_returns_original_invoice(monkeypatch):
+    monkeypatch.setattr(dealer_routes, "_dealer_access", lambda: (None, "org", "dealer", {}))
+    monkeypatch.setattr(dealer_routes, "_existing_action", lambda *_args: {
+        "zoho_invoice_id": None, "previous_zoho_invoice_id": "invoice-123",
+    })
+    cart = dealer_routes.DealerCart(action_key=uuid4(), lines=[{"item_id": "123", "quantity": 2}])
+    assert await dealer_routes.replace_dealer_invoice("invoice-123", cart) == {
+        "invoice_id": "invoice-123", "duplicate_request": True,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,editable,allowed", [
+    ("due", True, True),
+    ("paid", True, False),
+    ("draft", False, False),
+])
+async def test_invoice_update_keeps_due_replacement_and_rejects_ineligible(monkeypatch, status, editable, allowed):
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def execute(self, *_args): return self
+        def mappings(self): return self
+        def first(self): return {"account_member_id": "account", "state": "active"}
+
+    async def invoice(*_args):
+        return {"invoice": {"status": status, "is_editable": editable}}
+
+    async def replace(_org, _dealer, _mapping, _cart, previous):
+        assert previous == "invoice-123"
+        return {"invoice_id": "replacement"}
+
+    monkeypatch.setattr(dealer_routes, "require_db", DB)
+    monkeypatch.setattr(dealer_routes, "_dealer_access", lambda: (None, "org", "dealer", {"account_member_id": "account"}))
+    monkeypatch.setattr(dealer_routes, "_existing_action", lambda *_args: None)
+    monkeypatch.setattr(dealer_routes, "_account_status", lambda _account: {"organization_id": "books-org"})
+    monkeypatch.setattr(dealer_routes.zoho, "books_invoice", invoice)
+    monkeypatch.setattr(dealer_routes, "_create_and_record", replace)
+    cart = dealer_routes.DealerCart(action_key=uuid4(), lines=[{"item_id": "123", "quantity": 1}])
+    if allowed:
+        assert await dealer_routes.replace_dealer_invoice("invoice-123", cart) == {"invoice_id": "replacement"}
+    else:
+        with pytest.raises(dealer_routes.HTTPException, match="Only editable Draft or Due"):
+            await dealer_routes.replace_dealer_invoice("invoice-123", cart)

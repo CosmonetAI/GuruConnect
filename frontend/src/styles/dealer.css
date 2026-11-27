@@ -45,6 +45,7 @@
 .dealer-table th, .dealer-table td { padding: 13px 10px; border-bottom: 1px solid #edf1f5; white-space: nowrap; }
 .dealer-table th { color: #75849a; font-size: 12px; font-weight: 700; }
 .dealer-invoice-number { font-weight: 750; color: #17314f; }
+.dealer-invoice-link { color: #1762a5; text-decoration: underline; }
 .dealer-status { display: inline-flex; padding: 4px 9px; border-radius: 999px; background: #f0f3f7; color: #55657a; font-size: 11px; font-weight: 750; text-transform: capitalize; }
 .dealer-status-paid { color: #176447; background: #eaf8f1; }
 .dealer-status-due, .dealer-status-overdue, .dealer-status-partially-paid { color: #8a5814; background: #fff5df; }
