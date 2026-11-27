@@ -51,31 +51,37 @@ def client():
     return TestClient(app)
 
 
-def test_call_recording_requires_recording_url_and_phone():
+def test_call_recording_requires_contract_fields_and_deduplicates_retries():
     with client() as http:
-        payload = {"event": "call_recording_available", "recording_url": "https://example.test/call.wav", "customer_phone": "+91 9876543210", "call_id": "call-1", "call_started_at": "2026-11-26T10:00:00Z", "call_ended_at": "2026-11-26T10:05:00Z", "duration_seconds": "300"}
+        payload = {"event": "call_recording_available", "recording_url": "https://example.test/call.wav", "customer_phone": "+91 9876543210", "call_id": "call-1", "call_started_at": "2026-11-26T10:00:00Z", "call_ended_at": "2026-11-26T10:05:00Z", "duration_seconds": "300", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         response = http.post("/api/webhooks/telecrm", json=payload, headers={"Authorization": "Bearer test-telecrm-key"})
         assert response.status_code == 200
         assert response.json()["accepted"] is True
         assert response.json()["duplicate"] is False
         assert http.post("/api/webhooks/telecrm", json=payload, headers={"X-TeleCRM-Key": "test-telecrm-key"}).json()["duplicate"] is True
 
-        missing = {"event": "call_recording_available", "recording_url": "https://example.test/call.wav", "customer_phone": "+919876543210", "call_started_at": "2026-11-26T10:00:00Z", "call_ended_at": "2026-11-26T10:05:00Z"}
+        missing = {"event": "call_recording_available", "recording_url": "https://example.test/call.wav", "customer_phone": "+919876543210", "call_started_at": "2026-11-26T10:00:00Z", "call_ended_at": "2026-11-26T10:05:00Z", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         assert http.post("/api/webhooks/telecrm", json=missing, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
 
+        missing_agent = {**missing, "agent_id": None}
+        assert http.post("/api/webhooks/telecrm", json=missing_agent, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
 
-def test_whatsapp_message_requires_phone_and_message_but_keeps_optional_fields_optional():
+
+def test_whatsapp_message_requires_contract_fields_and_keeps_optional_fields_optional():
     with client() as http:
-        payload = {"event": "whatsapp_message_received", "message_id": "incoming-test-1", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z"}
+        payload = {"event": "whatsapp_message_received", "message_id": "incoming-test-1", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         response = http.post("/api/webhooks/telecrm/whatsapp-incoming", json=payload, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 200
         assert response.json()["event"] == "whatsapp_message_received"
 
-        missing = {"event": "whatsapp_message_received", "message_id": "incoming-test-2", "customer_phone": "+919876543210", "message_text": "I am interested"}
+        missing = {"event": "whatsapp_message_received", "message_id": "incoming-test-2", "customer_phone": "+919876543210", "message_text": "I am interested", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         assert http.post("/api/webhooks/telecrm", json=missing, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
 
-        missing_message_id = {"event": "whatsapp_message_received", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z"}
+        missing_message_id = {"event": "whatsapp_message_received", "customer_phone": "+919876543210", "message_text": "I am interested", "received_at": "2026-11-26T10:00:00Z", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         assert http.post("/api/webhooks/telecrm", json=missing_message_id, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
+
+        missing_agent = {**payload, "agent_email": None}
+        assert http.post("/api/webhooks/telecrm", json=missing_agent, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
 
         sent = {"event": "whatsapp_message_sent", "customer_phone": "+919876543210", "message_text": "Later API work"}
         assert http.post("/api/webhooks/telecrm", json=sent, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422
@@ -88,9 +94,9 @@ def test_wrong_telecrm_key_is_rejected_before_database_write():
         assert http.app.state.db.connection_value.rows == {}
 
 
-def test_status_requires_phone_and_status():
+def test_status_requires_contract_fields():
     with client() as http:
-        missing_status = {"event": "whatsapp_message_status", "message_id": "status-test-1", "customer_phone": "+919876543210"}
+        missing_status = {"event": "whatsapp_message_status", "message_id": "status-test-1", "customer_phone": "+919876543210", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_status, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 422
 
@@ -98,6 +104,9 @@ def test_status_requires_phone_and_status():
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=valid, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 200
 
-        missing_message_id = {"event": "whatsapp_message_status", "customer_phone": "+919876543210", "status": "read"}
+        missing_message_id = {"event": "whatsapp_message_status", "customer_phone": "+919876543210", "status": "read", "agent_id": "agent-1", "agent_email": "agent@example.test"}
         response = http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_message_id, headers={"X-TeleCRM-Key": "test-telecrm-key"})
         assert response.status_code == 422
+
+        missing_agent = {**valid, "agent_id": None}
+        assert http.post("/api/webhooks/telecrm/whatsapp-status", json=missing_agent, headers={"X-TeleCRM-Key": "test-telecrm-key"}).status_code == 422

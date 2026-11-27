@@ -94,15 +94,21 @@ def _validate(event: str, payload: dict[str, Any]) -> None:
         _required(payload, "call_started_at")
         _required(payload, "call_ended_at")
         _required(payload, "duration_seconds")
+        _required(payload, "agent_id")
+        _required(payload, "agent_email")
     elif event == "whatsapp_message_received":
         _required(payload, "customer_phone")
         _required(payload, "message_text")
         _required(payload, "message_id")
         _required(payload, "received_at")
+        _required(payload, "agent_id")
+        _required(payload, "agent_email")
     else:
         _required(payload, "customer_phone")
         _required(payload, "message_id")
         _required(payload, "status")
+        _required(payload, "agent_id")
+        _required(payload, "agent_email")
 
 
 async def _store(request: Request, payload: dict[str, Any]) -> dict[str, Any]:

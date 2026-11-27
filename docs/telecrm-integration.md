@@ -31,16 +31,22 @@ X-TeleCRM-Key: <TELECRM_KEY>
 
 `TELECRM_KEY` is configured on the backend deployment. Requests without the
 correct key receive `401`. The endpoint stores the original JSON payload and
-normalized searchable fields in `public.telecrm_events`.
+normalized searchable fields in `public.telecrm_events` in our database.
 
-Retries are safe: the same call or message delivery is stored only once.
+Each payload must include the `event` field shown for its webhook type. When
+provided, the same `call_id` or `message_id` can be retried safely. Repeated
+status updates with the same `message_id` and `status` are deduplicated;
+different status transitions are stored separately.
 
 ## 1. Call recording webhook
 
 Event: `call_recording_available`
 
+The `event` field is required and must be `call_recording_available`.
+
 Required fields: `recording_url`, `customer_phone`, `call_started_at`,
-`call_ended_at`, `duration_seconds`. All other fields are optional.
+`call_ended_at`, `duration_seconds`, `agent_id`, `agent_email`. All other
+fields are optional.
 
 ```json
 {
@@ -83,8 +89,10 @@ Expected response:
 
 Event: `whatsapp_message_received`
 
-Required fields: `customer_phone`, `message_text`, `message_id`, `received_at`.
-All other fields are optional.
+The `event` field is required and must be `whatsapp_message_received`.
+
+Required fields: `customer_phone`, `message_text`, `message_id`, `received_at`,
+`agent_id`, `agent_email`. All other fields are optional.
 
 ```json
 {
@@ -118,13 +126,17 @@ Expected response:
 
 Event: `whatsapp_message_status`
 
-Required fields: `customer_phone`, `message_id`, `status`. Timestamps and
-failure details are stored when supplied.
+The `event` field is required and must be `whatsapp_message_status`.
+
+Required fields: `customer_phone`, `message_id`, `status`, `agent_id`,
+`agent_email`. Timestamps and failure details are stored when supplied.
 
 ```json
 {
   "event": "whatsapp_message_status",
   "message_id": "{{MESSAGE_id}}",
+  "agent_id": "{{assignee_id}}",
+  "agent_email": "{{assignee_email}}",
   "customer_phone": "{{Phone}}",
   "status": "{{MESSAGE_status}}",
   "sent_at": "{{MESSAGE_sentAt}}",
@@ -151,44 +163,26 @@ TeleCRM webhook URL is preferred; the payload `event` value selects the type.
 
 ## Later TeleCRM API work
 
-`whatsapp_message_sent` is not a webhook in the current integration.
-Sending WhatsApp messages will be implemented later as a synchronous API
-integration. The send API endpoint and credentials are not enabled yet.
+`whatsapp_message_sent` is not a webhook in the current integration. Sending
+WhatsApp messages will be implemented later as a synchronous API integration.
+The send API endpoint and credentials are not enabled yet.
 
 ### Get a sent WhatsApp message — planned, not enabled
-
-The future request will use the TeleCRM contract, for example:
-
-```json
-{
-  "event": "whatsapp_message_sent",
-  "message_id": "{{MESSAGE_id}}",
-  "conversation_id": "{{CONVERSATION_id}}",
-  "customer_phone": "{{Phone}}",
-  "customer_name": "{{Name}}",
-  "message_type": "{{MESSAGE_type}}",
-  "message_text": "{{MESSAGE_text}}",
-  "media_url": "{{MESSAGE_mediaUrl}}",
-  "sent_at": "{{MESSAGE_timestamp}}",
-  "agent_id": "{{assignee_id}}",
-  "agent_email": "{{assignee_email}}",
-  "lead_id": "{{lead_id}}"
-}
-```
 
 Expected TeleCRM response:
 
 ```json
 {
   "success": true,
+  "agent_id": "25678910",
   "message_id": "MSG003",
   "conversation_id": "CONV123",
   "direction": "outgoing",
-  "sent_to": "+919876543210",
   "message_type": "text",
   "message": "Sure, how can I help you?",
   "timestamp": "2026-11-25T12:35:00Z",
-  "status": "sent"
+  "status": "sent",
+  "sent_to": "+919876543210"
 }
 ```
 
@@ -198,17 +192,19 @@ The future TeleCRM history API will use:
 
 ```json
 {
+  "agent_id": "25678910",
   "phone": "+919876543210",
   "limit": 50,
   "page": 1
 }
 ```
 
-Expected TeleCRM response:
+Expected TeleCRM response: `status` is included only for outgoing messages.
 
 ```json
 {
   "success": true,
+  "agent_id": "25678910",
   "conversation_id": "CONV123",
   "messages": [
     {
@@ -222,8 +218,23 @@ Expected TeleCRM response:
       "message_id": "MSG002",
       "direction": "outgoing",
       "message_type": "text",
-      "message": "Sure, how can I help you?",
+      "message": "Sure, Which Product?",
       "timestamp": "2026-11-25T12:35:00Z",
+      "status": "read"
+    },
+    {
+      "message_id": "MSG003",
+      "direction": "incoming",
+      "message_type": "text",
+      "message": "I want ceiling fans",
+      "timestamp": "2026-11-25T12:40:00Z"
+    },
+    {
+      "message_id": "MSG004",
+      "direction": "outgoing",
+      "message_type": "text",
+      "message": "Okay Got it!",
+      "timestamp": "2026-11-25T12:43:00Z",
       "status": "sent"
     }
   ]
